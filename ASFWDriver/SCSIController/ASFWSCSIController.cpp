@@ -44,6 +44,7 @@
 #include <DriverKit/OSDictionary.h>
 #include <DriverKit/OSNumber.h>
 
+#include "../Common/DriverKitCompat.hpp"
 #include "../Logging/Logging.hpp"
 #include "../Protocols/SBP2/SCSICommandSet.hpp"
 #include "HbaTaskPolicy.hpp"
@@ -486,6 +487,32 @@ void IMPL(ASFWSCSIController, UserProcessBundledParallelTasks)
     (void)parallelRequestSlotIndicesCount;
     (void)completion;
 }
+
+#if !ASFW_HAS_SCSI_BUNDLED_TASKS
+// Older SCSIControllerDriverKit runtimes have no bundled-task path, so they
+// neither export these dispatch helpers nor send their messages. The generated
+// dispatch still references them; resolve them here so dyld can load the dext.
+// Answering kIOReturnUnsupported matches the opt-out above.
+kern_return_t IOUserSCSIParallelInterfaceController::UserMapBundledParallelTaskCommandAndResponseBuffers_Invoke(
+    const IORPC rpc, OSMetaClassBase* target,
+    UserMapBundledParallelTaskCommandAndResponseBuffers_Handler func)
+{
+    (void)rpc;
+    (void)target;
+    (void)func;
+    return kIOReturnUnsupported;
+}
+
+kern_return_t IOUserSCSIParallelInterfaceController::UserProcessBundledParallelTasks_Invoke(
+    const IORPC rpc, OSMetaClassBase* target,
+    UserProcessBundledParallelTasks_Handler func)
+{
+    (void)rpc;
+    (void)target;
+    (void)func;
+    return kIOReturnUnsupported;
+}
+#endif
 
 // ---------------------------------------------------------------------------
 // The core: execute one SCSI task
