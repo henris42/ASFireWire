@@ -4,8 +4,9 @@
 //
 //  Stand-in for ASFW.app on macOS releases older than the full app supports
 //  (it needs macOS 14). Same bundle identifier, entitlements and embedded dext,
-//  so install.sh and system-extension approval are unchanged. It only activates,
-//  deactivates and reports on the driver; diagnostics need the full app.
+//  so system-extension approval is unchanged. It only activates, deactivates and
+//  reports on the driver, from its window or headless for install.sh
+//  (LoaderCommandLine.swift); diagnostics need the full app.
 //  Built by tools/build-for-macos.sh for ventura and older.
 //
 
@@ -13,6 +14,15 @@ import Combine
 import SwiftUI
 
 @main
+enum ASFWLoaderMain {
+    static func main() {
+        if let command = LoaderCommandLine.command(from: CommandLine.arguments) {
+            exit(LoaderCommandLine.run(command))
+        }
+        ASFWLoaderApp.main()
+    }
+}
+
 struct ASFWLoaderApp: App {
     var body: some Scene {
         WindowGroup {
