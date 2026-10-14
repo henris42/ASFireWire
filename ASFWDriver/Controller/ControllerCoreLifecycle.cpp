@@ -109,12 +109,12 @@ void ConfigureGapCount(ASFW::Driver::HardwareInterface& hw, uint8_t reg1Value) {
             return;
         }
 
+        // Retry the write as is. Toggling LPS here would stop SCLK and reach
+        // the PHY again within milliseconds; TI parts need tens of ms after LPS
+        // before PHY access and target-abort link accesses while it is off.
         ASFW_LOG_PHY("PHY gap write verify failed on attempt %d (readback=0x%02x)",
                      attempt + 1, verify.value_or(0));
-        hw.ClearHCControlBits(ASFW::Driver::HCControlBits::kLPS);
-        IODelay(5);
-        hw.SetHCControlBits(ASFW::Driver::HCControlBits::kLPS);
-        IOSleep(5);
+        IOSleep(1);
     }
 
     ASFW_LOG(Hardware,
