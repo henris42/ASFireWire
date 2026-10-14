@@ -292,7 +292,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
     auto& local = *this->ivars;
     __block kern_return_t kr = kIOReturnSuccess;
 
-    ivars.workQueue->DispatchSync(^{
+    RunOnWorkQueue(ivars, ^{
         using ASFW::Audio::Runtime::WireReleaseReason;
         using ASFW::Audio::Runtime::WireStartPlan;
         using ASFW::Audio::Runtime::WireStopPlan;
@@ -951,7 +951,7 @@ kern_return_t ASFWAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags) {
     auto& local = *this->ivars;
     __block kern_return_t kr = kIOReturnSuccess;
 
-    ivars.workQueue->DispatchSync(^{
+    RunOnWorkQueue(ivars, ^{
         using ASFW::Audio::Runtime::WireState;
         using ASFW::Audio::Runtime::WireStopPlan;
         ivars.runtime.isRunning.store(false, std::memory_order_release);
