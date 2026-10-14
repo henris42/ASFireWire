@@ -19,6 +19,7 @@
 #include <memory>
 #include <optional>
 #include <unordered_map>
+#include <vector>
 
 namespace ASFW::Audio::Session {
 
@@ -56,7 +57,9 @@ public:
     // pointer for as long as they use it; Erase does not free a session in use.
     [[nodiscard]] std::shared_ptr<SessionScheduler> Ensure(uint64_t guid) noexcept;
     [[nodiscard]] std::shared_ptr<SessionScheduler> Find(uint64_t guid) const noexcept;
-    // The device is gone for good: forget its session.
+    // The device is gone for good: forget its session. Its queue drains
+    // asynchronously (the caller may be the Default queue its stages need);
+    // BeginTeardown waits for any drain still in progress.
     void Erase(uint64_t guid) noexcept;
 
     [[nodiscard]] IOReturn Attach(uint64_t guid, AudioClockConfig clock = {}) noexcept;
@@ -106,6 +109,12 @@ private:
     // stage waits (SessionScheduler::Dependencies::stageCancel). Families
     // keep the pointer, so entries live as long as this object.
     std::unordered_map<uint64_t, std::unique_ptr<std::atomic<bool>>> stageCancel_;
+    // Queues of erased sessions, kept until their last block has run.
+    struct Drain {
+        OSSharedPtr<IODispatchQueue> queue;
+        std::shared_ptr<std::atomic<bool>> done;
+    };
+    std::vector<Drain> draining_;
 };
 
 } // namespace ASFW::Audio::Session

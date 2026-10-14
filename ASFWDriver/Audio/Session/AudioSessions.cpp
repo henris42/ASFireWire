@@ -57,6 +57,10 @@ void AudioSessions::BeginTeardown() noexcept {
         for (const auto& [guid, queue] : queues_) {
             queues.push_back(queue);
         }
+        for (const auto& drain : draining_) {
+            queues.push_back(drain.queue);
+        }
+        draining_.clear();
         IOLockUnlock(lock_);
     }
     for (const auto& session : sessions) {
@@ -150,13 +154,30 @@ void AudioSessions::Erase(uint64_t guid) noexcept {
     if (session) {
         session->CancelPendingRestart();
     }
-    if (queue) {
-#ifdef ASFW_HOST_TEST
-        queue->DispatchSync([] {});
-#else
-        queue->DispatchSync(^{});
-#endif
+    if (!queue) {
+        return;
     }
+    // Removal runs on the Default queue, where a stage running on this queue
+    // gets its completions; a synchronous drain would stall both. Drain
+    // asynchronously instead: the block keeps the session alive until the
+    // queue is empty, and BeginTeardown waits for unfinished drains.
+    auto done = std::make_shared<std::atomic<bool>>(false);
+    IOLockLock(lock_);
+    std::erase_if(draining_, [](const Drain& drain) {
+        return drain.done->load(std::memory_order_acquire);
+    });
+    draining_.push_back(Drain{.queue = queue, .done = done});
+    IOLockUnlock(lock_);
+#ifdef ASFW_HOST_TEST
+    queue->DispatchAsync([session, done] {
+        done->store(true, std::memory_order_release);
+    });
+#else
+    queue->DispatchAsync(^{
+        (void)session;
+        done->store(true, std::memory_order_release);
+    });
+#endif
 }
 
 IOReturn AudioSessions::Attach(uint64_t guid, AudioClockConfig clock) noexcept {
