@@ -460,6 +460,19 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
     ASFW::Service::WireLocalRequestDispatch(ctx);
     EnsureRomScanner(ctx);
 
+    if (ctx.deps.busReset) {
+        // Recovery that has given up must end the driver, not leave it spinning
+        // or wedged: Terminate() runs Stop() and the normal teardown.
+        ctx.deps.busReset->BindFatalCallback([this, &ctx](const char* reason) {
+            if (ctx.selfTerminationRequested.exchange(true, std::memory_order_acq_rel)) {
+                return;
+            }
+            const kern_return_t terminateKr = Terminate(0);
+            ASFW_LOG(Controller, "❌ Fatal: %{public}s; terminating (Terminate -> 0x%08x)",
+                     reason, terminateKr);
+        });
+    }
+
     kr = ctx.controller->Start(provider);
     if (kr != kIOReturnSuccess) {
         return failStart(kr, "controller start failed");
