@@ -42,6 +42,16 @@ std::array<uint8_t, 3> MakeAcceptedUnitInfoResponse() {
     return {0x09, 0xFF, 0x30};  // ACCEPTED, unit, UNIT_INFO
 }
 
+// A timer that cannot schedule anything (no timer source).
+class RefusingTimerScheduler final : public ASFW::Scheduling::ITimerScheduler {
+public:
+    [[nodiscard]] ASFW::Scheduling::TimerToken ScheduleAfter(uint64_t, std::function<void()>) override {
+        return ASFW::Scheduling::kInvalidTimerToken;
+    }
+    void Cancel(ASFW::Scheduling::TimerToken) override {}
+    [[nodiscard]] uint64_t NowNs() const noexcept override { return 0; }
+};
+
 class FCPTransportTests : public ::testing::Test {
 protected:
     [[nodiscard]] static ConfigROM MakeROM(Generation generation, uint16_t nodeId) {
@@ -360,6 +370,20 @@ TEST_F(FCPTransportTests, RepeatedInterimDoesNotExtendTheDeadlineAgain) {
     scheduler_.Advance((config_.interimTimeoutMs - 4 * (config_.interimTimeoutMs / 5)) * kMillisecondNs);
     EXPECT_EQ(completionCount, 1);
     EXPECT_EQ(kind, AvcErrorKind::kTimeout);
+}
+
+TEST_F(FCPTransportTests, CommandWithoutAResponseDeadlineFailsInsteadOfWaiting) {
+    RefusingTimerScheduler refusing;
+    auto transport = std::make_shared<FCPTransport>();
+    ASSERT_TRUE(transport->init(&bus_, &bus_, device_.get(), routes_, refusing, config_));
+
+    int completionCount = 0;
+    std::optional<AvcErrorKind> kind;
+    transport->Submit(UnitInfo(), Generation{1}, [&](Reply reply) { ++completionCount; kind = KindOf(reply); });
+    ASSERT_TRUE(bus_.CompleteNextWrite(AsyncStatus::kSuccess));
+    EXPECT_EQ(completionCount, 1);
+    EXPECT_EQ(kind, AvcErrorKind::kTransportError);
+    transport->Shutdown();
 }
 
 TEST_F(FCPTransportTests, ResetRetryWaitsForRevalidatedRouteBeforeResubmission) {
