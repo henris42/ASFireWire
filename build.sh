@@ -58,12 +58,14 @@ SWIFT_TEST_ONLY=false
 SWIFT_COVERAGE=false
 SWIFT_COVERAGE_LCOV="${BUILD_DIR}/swift_coverage.lcov"
 ADHOC=false
+SPEC=""
 usage() {
   cat <<EOF
-Usage: $0 [--verbose] [--no-bump] [--adhoc] [--scheme NAME] [--config CONFIG] [--arch ARCH] [--derived PATH]
+Usage: $0 [--verbose] [--no-bump] [--adhoc] [--spec FILE] [--scheme NAME] [--config CONFIG] [--arch ARCH] [--derived PATH]
   --verbose          Show full xcodebuild output (disables quiet filtering)
   --no-bump          Keep CURRENT_PROJECT_VERSION unchanged
   --adhoc            Regenerate and build with ad-hoc signing (project.adhoc.yml)
+  --spec FILE        Regenerate from another XcodeGen spec (e.g. tools/build-for-macos.sh output)
   --test             Run C++ tests before building
   --test-only        Run C++ tests only (skip xcodebuild)
   --swift-test-only  Run Swift/XCTest tests only (skip main build)
@@ -89,6 +91,7 @@ while [[ $# -gt 0 ]]; do
     --verbose) VERBOSE=true; shift;;
     --no-bump) NO_BUMP=true; shift;;
     --adhoc) ADHOC=true; shift;;
+    --spec) SPEC="$2"; shift 2;;
     --test) RUN_TESTS=true; shift;;
     --test-only) TEST_ONLY=true; shift;;
     --swift-test-only) SWIFT_TEST_ONLY=true; shift;;
@@ -135,10 +138,15 @@ preflight() {
     if $ADHOC; then
       spec="project.adhoc.yml"
     fi
+    if [[ -n "${SPEC}" ]]; then
+      spec="${SPEC}"
+      [[ -f "${spec}" ]] || { err "Spec not found: ${spec}"; exit 1; }
+    fi
     if [[ -f "${spec}" ]]; then
       require_cmd xcodegen
       log "Regenerating ${PROJECT_NAME}.xcodeproj from ${spec}..."
-      xcodegen generate --spec "${spec}" --quiet || { err "xcodegen generate failed"; exit 1; }
+      # A spec stored elsewhere still resolves paths from, and generates into, the repo root.
+      xcodegen generate --spec "${spec}" --project-root . --project . --quiet || { err "xcodegen generate failed"; exit 1; }
     fi
     [[ -f "${PROJECT_NAME}.xcodeproj/project.pbxproj" ]] || { err "Run from project root (missing ${PROJECT_NAME}.xcodeproj)"; exit 1; }
   fi
