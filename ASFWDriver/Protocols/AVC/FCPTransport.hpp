@@ -14,7 +14,8 @@
 //   AwaitingResponse the write reached the target; waiting for the response
 //                    (the first INTERIM response extends the deadline once)
 //   AwaitingRoute    a bus reset interrupted a STATUS/INQUIRY that may be
-//                    replayed once discovery rebinds the unit
+//                    replayed once discovery rebinds the unit (bounded by
+//                    routeTimeoutMs)
 //   Answered         the final response was accepted; it is delivered from the
 //                    work queue, after our write response to it (§6.5)
 //
@@ -90,6 +91,9 @@ struct FCPTransportConfig {
     /// Let a STATUS/INQUIRY interrupted by a bus reset replay once discovery
     /// rebinds the unit (default: fail it with kBusReset).
     bool allowBusResetRetry{false};
+
+    /// How long such a command waits for the rebind (milliseconds).
+    uint32_t routeTimeoutMs{kFCPRouteRevalidateTimeout};
 
     /// Allowlist of command shapes this device may be sent. Empty (the default)
     /// means unrestricted, which is what every ordinary device carries. When

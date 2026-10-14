@@ -75,4 +75,8 @@ constexpr uint32_t kFCPTimeoutAfterInterim = 10000;
 /// (IOFireWireAVCCommand.cpp:325).
 constexpr uint8_t kFCPMaxRetries = 4;
 
+/// How long a STATUS/INQUIRY interrupted by a bus reset waits for discovery
+/// to rebind its unit before it fails with kBusReset (milliseconds).
+constexpr uint32_t kFCPRouteRevalidateTimeout = 5000;
+
 } // namespace ASFW::Protocols::AVC

@@ -490,12 +490,21 @@ void FCPTransport::DisarmTimer() {
 void FCPTransport::OnTimeout(uint64_t epoch) {
     IOLockLock(lock_);
     if (shuttingDown_ || !active_ || active_->timerEpoch != epoch ||
-        !std::holds_alternative<AwaitingResponse>(active_->phase)) {
+        (!std::holds_alternative<AwaitingResponse>(active_->phase) &&
+         !std::holds_alternative<AwaitingRoute>(active_->phase))) {
         IOLockUnlock(lock_);
         return;
     }
     active_->timer = Scheduling::kInvalidTimerToken;
     active_->timerEpoch = 0;
+    if (std::holds_alternative<AwaitingRoute>(active_->phase)) {
+        ASFW_LOG_V1(FCP, "FCPTransport: unit not rebound within %u ms after bus reset",
+                    config_.routeTimeoutMs);
+        Delivery reset = Finish(std::unexpected(ErrorOf(AvcErrorKind::kBusReset)));
+        IOLockUnlock(lock_);
+        Deliver(std::move(reset));
+        return;
+    }
     ASFW_LOG_V1(FCP, "FCPTransport: Command timeout (interim=%d, replays left=%u)",
                 active_->txn.sawInterim ? 1 : 0, active_->txn.retriesLeft);
     // Apple replays on a lost response (IOFireWireAVCCommand.cpp:242-254); a
@@ -540,11 +549,14 @@ void FCPTransport::OnBusReset(uint32_t newGeneration) {
         // DeviceManager invalidates every route at that point, so the replay
         // waits until discovery has bound this GUID to the new generation.
         active_->phase = AwaitingRoute{.resetRoute = attempt ? std::optional{attempt->route} : std::nullopt};
-        IOLockUnlock(lock_);
-        if (handle.value && busOps_) {
-            busOps_->Cancel(handle);
+        // Discovery may never rebind the unit (it left the bus).
+        if (ArmTimer(config_.routeTimeoutMs)) {
+            IOLockUnlock(lock_);
+            if (handle.value && busOps_) {
+                busOps_->Cancel(handle);
+            }
+            return;
         }
-        return;
     }
     Delivery reset = Finish(std::unexpected(ErrorOf(AvcErrorKind::kBusReset)));
     IOLockUnlock(lock_);
@@ -560,13 +572,20 @@ void FCPTransport::OnRouteRevalidated(const Discovery::DeviceRouteToken& route) 
     }
     IOLockLock(lock_);
     const auto* waiting = active_ && !shuttingDown_ ? std::get_if<AwaitingRoute>(&active_->phase) : nullptr;
-    if (waiting == nullptr || !routeRegistry_ || !routeRegistry_->IsCurrent(route) ||
-        !waiting->resetRoute || route.deviceIncarnation != waiting->resetRoute->deviceIncarnation) {
+    if (waiting == nullptr || !routeRegistry_ || !routeRegistry_->IsCurrent(route)) {
         IOLockUnlock(lock_);
+        return;
+    }
+    if (!waiting->resetRoute || route.deviceIncarnation != waiting->resetRoute->deviceIncarnation) {
+        // Another incarnation of the unit: the command was never meant for it.
+        Delivery reset = Finish(std::unexpected(ErrorOf(AvcErrorKind::kBusReset)));
+        IOLockUnlock(lock_);
+        Deliver(std::move(reset));
         return;
     }
     // Only this explicitly configured replay moves a command to a new
     // generation; every other stale submission fails with kBusReset.
+    DisarmTimer();
     active_->txn.generation = route.generation;
     --active_->txn.retriesLeft;
     IOLockUnlock(lock_);
