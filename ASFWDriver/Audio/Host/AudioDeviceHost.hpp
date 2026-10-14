@@ -143,6 +143,10 @@ public:
     /// Timeout for the clock-status health read (DiceAudioBackend's
     /// kHealthBridgeTimeoutMs).
     static constexpr uint32_t kHealthReadTimeoutMs = 1000;
+    /// How long a second, concurrent BeginTeardown waits for the first. The
+    /// first is bounded by the gate (2 s) and the queue drain, whose blocks
+    /// abort their waits once teardown is latched.
+    static constexpr uint32_t kSecondaryTeardownWaitMs = 10000;
 
 #ifdef ASFW_HOST_TEST
     void SetBeforePublishHookForTesting(std::function<void()> hook) noexcept {
