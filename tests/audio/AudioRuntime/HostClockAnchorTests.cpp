@@ -108,6 +108,18 @@ TEST(HostClockAnchorTests, RejectsOnlyInvalidHostMetadata) {
     EXPECT_EQ(control.hostClockAnchor.generation.load(), 1U);
 }
 
+// A writer that stopped mid-update leaves `sequence` odd; the reader must
+// give up instead of spinning on the shared block forever.
+TEST(HostClockAnchorTests, ReaderGivesUpOnStuckWriter) {
+    AudioTransportControlBlock control{};
+    ASSERT_TRUE(control.PublishHostClockAnchor(512, 100, 300).accepted);
+    control.hostClockAnchor.sequence.fetch_add(1);
+
+    HostClockAnchorSample anchor{};
+    EXPECT_FALSE(control.hostClockAnchor.TryReadLatest(0, anchor));
+    EXPECT_EQ(anchor.generation, 0U);
+}
+
 // Epic 4 (HARDWARE_TIMELINE_OWNERSHIP.md): an anchor carries the timeline
 // epoch it was projected in, so the HAL publish point can refuse one whose
 // epoch has ended.
