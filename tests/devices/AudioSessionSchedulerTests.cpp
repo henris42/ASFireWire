@@ -403,6 +403,21 @@ TEST_F(SchedulerTest, BusResetDuringAReconcileQueuesOneFollowUpRestart) {
     EXPECT_TRUE(rig.sessions.IsStreaming(rig.guid));
 }
 
+TEST_F(SchedulerTest, EditsArrivingDuringEveryPassDoNotHoldTheOwnerForever) {
+    // Every pass raises another restart: the owner stops after its pass limit.
+    // Hooks fire once, so this one re-installs itself.
+    std::function<void()> raise = [&] {
+        rig.hooks["device.program_rx"] = raise;
+        (void)rig.sessions.RequestRestart(rig.guid, DuplexRestartReason::kBusResetRebind);
+    };
+    rig.hooks["device.program_rx"] = raise;
+    ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
+    EXPECT_EQ(Count("D prepare"),
+              static_cast<int>(ASFW::Audio::Session::SessionScheduler::kMaxReconcilePasses));
+    EXPECT_FALSE(rig.sessions.IsReconciling(rig.guid));
+    rig.hooks.erase("device.program_rx");
+}
+
 TEST_F(SchedulerTest, RestartObserverWaitsForQueuedReconcile) {
     std::promise<void> held;
     std::promise<void> release;

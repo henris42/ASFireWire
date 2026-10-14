@@ -572,11 +572,12 @@ IOReturn SessionScheduler::Submit(Edit&& edit, AudioClockConfig* targetOut, Wait
         return kIOReturnSuccess;
     }
     if (reconciling_) {
-        // Another caller is reconciling; it loops until it has seen this edit.
+        // Another caller is reconciling; it loops until it has seen this edit,
+        // or stops after kMaxReconcilePasses and leaves it to this caller.
         const uint64_t deadline = UptimeMilliseconds() + kWaitTimeoutMs;
         ASFW_LOG(Audio, "[StopTrace] owner=session guid=%016llx ticket=%llu completed=%llu phase=wait-reconcile",
                  guid_, ticket, completed_);
-        while (completed_ < ticket) {
+        while (completed_ < ticket && reconciling_) {
             IOLockUnlock(lock_);
             if (TeardownRequested()) {
                 return kIOReturnAborted;
@@ -589,18 +590,23 @@ IOReturn SessionScheduler::Submit(Edit&& edit, AudioClockConfig* targetOut, Wait
             IOSleep(1);
             IOLockLock(lock_);
         }
-        const Result* result = FindResultLocked(ticket);
-        const IOReturn status = result != nullptr ? result->status : actual_.lastStatus;
-        if (targetOut != nullptr) {
-            *targetOut = result != nullptr ? result->target : wanted_.clock;
+        if (completed_ >= ticket) {
+            const Result* result = FindResultLocked(ticket);
+            const IOReturn status = result != nullptr ? result->status : actual_.lastStatus;
+            if (targetOut != nullptr) {
+                *targetOut = result != nullptr ? result->target : wanted_.clock;
+            }
+            IOLockUnlock(lock_);
+            return status;
         }
-        IOLockUnlock(lock_);
-        return status;
+        ASFW_LOG(Audio, "[Session] owner stopped before ticket=%llu GUID=%llx; reconciling here",
+                 ticket, guid_);
     }
 
     reconciling_ = true;
     std::optional<Result> mine;
-    while (true) {
+    bool leftover = false;
+    for (uint32_t pass = 1;; ++pass) {
         const uint64_t covering = requested_;
         const Wanted snapshot = wanted_;
         wanted_.clockDirty = false;
@@ -630,10 +636,28 @@ IOReturn SessionScheduler::Submit(Edit&& edit, AudioClockConfig* targetOut, Wait
         if (requested_ == covering) {
             break;
         }
+        if (pass >= kMaxReconcilePasses) {
+            // Edits keep arriving: stop here rather than hold this caller
+            // forever. A waiting caller takes over; a restart nobody waits
+            // for is deferred below.
+            leftover = wanted_.restart;
+            ASFW_LOG(Audio, "[Session] reconcile pass limit GUID=%llx covered=%llu requested=%llu",
+                     guid_, covering, requested_);
+            break;
+        }
     }
     reconciling_ = false;
+    const DuplexRestartReason leftoverReason = wanted_.restartReason;
     IOLockUnlock(lock_);
 
+    if (leftover) {
+        const uint32_t quietMs = RestartQuietPeriodMs();
+        if (quietMs != 0) {
+            (void)DeferRestart(leftoverReason, 0, quietMs);
+        } else {
+            ASFW_LOG(Audio, "[Session] restart left to the next request GUID=%llx", guid_);
+        }
+    }
     if (targetOut != nullptr) {
         *targetOut = mine->target;
     }

@@ -12,7 +12,8 @@
 // Serialization. The caller whose request finds no reconcile running runs it,
 // on its own thread; requests that arrive meanwhile only edit what is wanted
 // and wait, and the running caller loops until one reconcile has seen every
-// edit (coalescing). Every caller is off the driver's Default queue (the nub's
+// edit (coalescing), up to kMaxReconcilePasses; a caller still waiting then
+// takes over. Every caller is off the driver's Default queue (the nub's
 // queue or a backend queue), which is where the bus completions the
 // reconcile waits for arrive.
 //
@@ -119,6 +120,8 @@ public:
     static constexpr uint32_t kMaxFaultRestartFailures = 3;
     // How long a caller waits for the reconcile that covers its request.
     static constexpr uint32_t kWaitTimeoutMs = 15000;
+    // Reconciles one caller runs back to back for edits that arrived meanwhile.
+    static constexpr uint32_t kMaxReconcilePasses = 3;
 
     SessionScheduler(uint64_t guid, Dependencies dependencies) noexcept;
     ~SessionScheduler() noexcept;
