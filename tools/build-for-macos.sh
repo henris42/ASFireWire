@@ -114,6 +114,8 @@ install -m 0644 ASFWDriver/ASFWDriver.entitlements "$STAGE/Entitlements/ASFWDriv
 } > "$STAGE/BUILDINFO.txt"
 
 (cd "$OUT" && ditto -c -k --keepParent "$NAME" "$NAME.zip" && rm -rf "$NAME")
-(cd "$OUT" && { grep -v "  $NAME.zip\$" SHA256SUMS 2>/dev/null || true; shasum -a 256 "$NAME.zip"; } > SHA256SUMS.new && mv SHA256SUMS.new SHA256SUMS)
+# Only the newest build per OS is kept; superseded ones only confuse testing.
+find "$OUT" -maxdepth 1 -name 'ASFW-*.zip' ! -name "$NAME.zip" -print -delete | sed 's|^|== Pruned |'
+(cd "$OUT" && shasum -a 256 "$NAME.zip" > SHA256SUMS)
 
 echo "== Packaged $OUT/$NAME.zip (${COMMIT}${DIRTY})"
