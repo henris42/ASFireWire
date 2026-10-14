@@ -322,10 +322,34 @@ void ASFWDriver::free() {
     super::free();
 }
 
+#if ASFW_REQUIRE_ARMING
+namespace {
+// Backport builds stay inert unless the controller carries an "asfw-armed"
+// property (OpenCore DeviceProperties on its PCI path). A dext wedged in Start()
+// can stall boot; removing the property disarms it without a rescue shell.
+bool ProviderIsArmed(IOService* provider) {
+    OSDictionary* properties = nullptr;
+    if (provider == nullptr || provider->CopyProperties(&properties) != kIOReturnSuccess ||
+        properties == nullptr) {
+        return false;
+    }
+    const bool armed = properties->getObject("asfw-armed") != nullptr;
+    properties->release();
+    return armed;
+}
+} // namespace
+#endif
+
 kern_return_t IMPL(ASFWDriver, Start) {
     auto kr = Start(provider, SUPERDISPATCH);
     if (kr != kIOReturnSuccess)
         return kr;
+#if ASFW_REQUIRE_ARMING
+    if (!ProviderIsArmed(provider)) {
+        ASFW_LOG(Controller, "ASFWDriver::Start(): no asfw-armed property on the controller; not starting");
+        return kIOReturnNotPermitted;
+    }
+#endif
     if (!ivars || !ivars->context)
         return kIOReturnNoMemory;
     ivars->powerProvider = provider;

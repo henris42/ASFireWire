@@ -42,14 +42,23 @@ APP_KIND=full
 [[ "${MACOS%%.*}" -ge 14 ]] || APP_KIND=loader
 
 mkdir -p "$(dirname "$SPEC")"
-python3 - "$SPEC" "$MACOS" "$DRIVERKIT" "$APP_KIND" <<'PY'
+# The dext refuses to start unless the controller has an "asfw-armed" property
+# (OpenCore DeviceProperties); ASFW_ARMING=0 builds without that gate.
+ARMING="${ASFW_ARMING:-1}"
+
+python3 - "$SPEC" "$MACOS" "$DRIVERKIT" "$APP_KIND" "$ARMING" <<'PY'
 import re, sys
-out, macos, driverkit, app_kind = sys.argv[1:]
+out, macos, driverkit, app_kind, arming = sys.argv[1:]
 s = open("project.yml").read()
 s, n_mac = re.subn(r'(MACOSX_DEPLOYMENT_TARGET: )"[0-9.]+"', rf'\g<1>"{macos}"', s)
 s, n_dk = re.subn(r'(DRIVERKIT_DEPLOYMENT_TARGET: )"[0-9.]+"', rf'\g<1>"{driverkit}"', s)
 if n_mac == 0 or n_dk == 0:
     sys.exit("project.yml: deployment target keys not found")
+if arming == "1":
+    s, n_arm = re.subn(r'(\n( *)- "ASFW_MOTU_V1_VALIDATION=\$\(ASFW_MOTU_V1_VALIDATION\)"\n)',
+                       r'\1\2- "ASFW_REQUIRE_ARMING=1"\n', s, count=1)
+    if n_arm != 1:
+        sys.exit("project.yml: driver preprocessor definitions not found")
 if app_kind == "loader":
     # Only the installer pieces of the app, which need nothing past macOS 12.
     s, n_src = re.subn(r'(\n  ASFW:\n    type: application\n(?:.*\n)*?    sources:\n)(?:      #.*\n)?      - path: ASFW\n',
@@ -70,7 +79,7 @@ PY
 # Leave the committed project matching project.yml whatever happens below.
 trap 'xcodegen generate --spec project.yml --quiet || echo "warning: could not restore ASFW.xcodeproj" >&2' EXIT
 
-echo "== Building for macOS ${MACOS} / DriverKit ${DRIVERKIT} (app: ${APP_KIND})"
+echo "== Building for macOS ${MACOS} / DriverKit ${DRIVERKIT} (app: ${APP_KIND}, arming: ${ARMING})"
 ./build.sh --config Release --spec "$SPEC" "$@"
 
 APP="build/DerivedData/Build/Products/Release/ASFW.app"
@@ -115,6 +124,7 @@ install -m 0644 ASFWDriver/ASFWDriver.entitlements "$STAGE/Entitlements/ASFWDriv
   echo "macOS min:   $MACOS"
   echo "DriverKit:   $DRIVERKIT"
   echo "app:         $APP_KIND"
+  echo "arming:      $([[ "$ARMING" == 1 ]] && echo "required (asfw-armed property)" || echo off)"
   echo "archs:       $(lipo -archs "$DEXT_BIN")"
   echo "xcode:       $(xcodebuild -version | tr '\n' ' ')"
   echo "driverkit sdk: $(xcrun --sdk driverkit --show-sdk-version)"
