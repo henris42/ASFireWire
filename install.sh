@@ -52,6 +52,9 @@ Options:
 
 Environment override for advanced users:
   ASFW_INSTALL_DIR        Destination directory (default: /Applications).
+
+Read INSTALL.md first: arming the controller, what each NEXT: line means,
+and how to recover a Mac that hangs.
 EOF
 }
 

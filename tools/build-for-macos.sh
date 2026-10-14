@@ -113,6 +113,7 @@ rm -rf "$STAGE" "$OUT/$NAME.zip"
 mkdir -p "$STAGE/Entitlements"
 ditto --rsrc --extattr --acl "$APP" "$STAGE/ASFW.app"
 install -m 0755 install.sh "$STAGE/install.sh"
+install -m 0644 INSTALL.md "$STAGE/INSTALL.md"
 install -m 0644 ASFW/App.entitlements "$STAGE/Entitlements/App.entitlements"
 install -m 0644 ASFWDriver/ASFWDriver.entitlements "$STAGE/Entitlements/ASFWDriver.entitlements"
 
