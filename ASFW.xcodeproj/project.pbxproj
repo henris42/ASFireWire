@@ -4554,7 +4554,7 @@
 				ASFW_AVC_MULTIRATE_VALIDATION = 1;
 				ASFW_DICE_MULTIRATE_VALIDATION = 1;
 				ASFW_MOTU_V1_VALIDATION = 0;
-				CLANG_CXX_LANGUAGE_STANDARD = "gnu++26";
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++23";
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = ASFWDriver/ASFWDriver.entitlements;
 				CODE_SIGN_STYLE = Automatic;
@@ -4584,6 +4584,11 @@
 				LIBRARY_SEARCH_PATHS = "$(inherited)";
 				MARKETING_VERSION = 0.5.0;
 				ONLY_ACTIVE_ARCH = NO;
+				OTHER_CPLUSPLUSFLAGS = (
+					"$(inherited)",
+					"-include",
+					new,
+				);
 				OTHER_LDFLAGS = "-framework DriverKit -framework PCIDriverKit -framework AudioDriverKit -framework SCSIControllerDriverKit";
 				PRODUCT_BUNDLE_IDENTIFIER = net.asfw.driver;
 				PRODUCT_NAME = net.asfw.driver;
@@ -4644,7 +4649,7 @@
 				ASFW_AVC_MULTIRATE_VALIDATION = 1;
 				ASFW_DICE_MULTIRATE_VALIDATION = 1;
 				ASFW_MOTU_V1_VALIDATION = 0;
-				CLANG_CXX_LANGUAGE_STANDARD = "gnu++26";
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++23";
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = ASFWDriver/ASFWDriver.Debug.entitlements;
 				CODE_SIGN_STYLE = Automatic;
@@ -4673,6 +4678,11 @@
 				INFOPLIST_KEY_CFBundleDisplayName = "ASFireWire Driver";
 				LIBRARY_SEARCH_PATHS = "$(inherited)";
 				MARKETING_VERSION = 0.5.0;
+				OTHER_CPLUSPLUSFLAGS = (
+					"$(inherited)",
+					"-include",
+					new,
+				);
 				OTHER_LDFLAGS = "-framework DriverKit -framework PCIDriverKit -framework AudioDriverKit -framework SCSIControllerDriverKit";
 				PRODUCT_BUNDLE_IDENTIFIER = net.asfw.driver;
 				PRODUCT_NAME = net.asfw.driver;

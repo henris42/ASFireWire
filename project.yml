@@ -153,7 +153,13 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_FILE: ASFWDriver/Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: "ASFireWire Driver"
-        CLANG_CXX_LANGUAGE_STANDARD: gnu++26
+        CLANG_CXX_LANGUAGE_STANDARD: gnu++23
+        # DriverKit's safe_allocation.h forward-declares placement new without
+        # libc++'s ABI tag; seeing <new> first keeps the C++23 redeclaration legal.
+        OTHER_CPLUSPLUSFLAGS:
+          - "$(inherited)"
+          - "-include"
+          - "new"
         CLANG_ENABLE_MODULES: YES
         EXCLUDED_SOURCE_FILE_NAMES: "*.md"
         FRAMEWORK_SEARCH_PATHS:
