@@ -180,6 +180,17 @@ void SelfIDCapture::Disarm(HardwareInterface& hw) {
         // Per OHCI §11.1: Writing 0 to SelfIDBuffer disables Self-ID DMA
         // Do NOT write to SelfIDCount - it's hardware-managed per §11.2
         if (auto access = hw.TryBeginAccess()) {
+            // Stop the link receiving Self-IDs first: with linkEnable and
+            // rcvSelfID still set, the next bus reset would DMA Self-ID
+            // quadlets to physical address 0, which nothing catches on a
+            // machine without an IOMMU. LinkControl needs LPS (SCLK domain).
+            const uint32_t hcControl = access.Read(Register32::kHCControl);
+            if (hcControl != 0xFFFFFFFFu) {
+                access.Write(Register32::kHCControlClear, HCControlBits::kLinkEnable);
+                if ((hcControl & HCControlBits::kLPS) != 0U) {
+                    access.Write(Register32::kLinkControlClear, LinkControlBits::kRcvSelfID);
+                }
+            }
             access.WriteAndFlush(Register32::kSelfIDBuffer, 0);
         }
     }
