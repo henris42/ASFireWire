@@ -54,9 +54,13 @@ public:
     }
 
     [[nodiscard]] uint64_t NowMs() const noexcept override {
+        // A clock stuck at 0 would never reach a deadline. Without a timebase,
+        // count ticks as nanoseconds: still monotonic, so deadlines expire.
         mach_timebase_info_data_t timebase{};
-        if (mach_timebase_info(&timebase) != KERN_SUCCESS || timebase.denom == 0) {
-            return 0;
+        if (mach_timebase_info(&timebase) != KERN_SUCCESS || timebase.denom == 0 ||
+            timebase.numer == 0) {
+            timebase.numer = 1;
+            timebase.denom = 1;
         }
         const unsigned __int128 nanos =
             static_cast<unsigned __int128>(mach_absolute_time()) * timebase.numer / timebase.denom;

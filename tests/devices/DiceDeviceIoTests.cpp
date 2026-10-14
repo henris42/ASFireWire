@@ -178,4 +178,22 @@ TEST(DiceDeviceIoTests, MissingCompletionHitsTheSafetyDeadlineInsteadOfHanging) 
     EXPECT_EQ((rig.timer.NowNs() - before) / 1'000'000ULL, DiceDeviceIo::kSafetyDeadlineMs);
 }
 
+// A clock that never advances must not turn the safety deadline into a hang.
+TEST(DiceDeviceIoTests, MissingCompletionGivesUpEvenWhenTheClockIsStuck) {
+    struct StuckClock final : ::ASFW::Audio::DICE::DiceWaitClock {
+        void SleepMs(uint32_t) noexcept override {}
+        void Backoff(uint32_t) noexcept override { ++backoffs; }
+        [[nodiscard]] uint64_t NowMs() const noexcept override { return 0; }
+        uint32_t backoffs{0};
+    };
+    IoRig rig;
+    StuckClock stuck;
+    DiceDeviceIo dio{rig.io, rig.transaction, stuck};
+    rig.bus.DropNext(OpKind::Read, kDiceBaseAddressLo + rig.TxBase());
+    const auto count = dio.ReadQuad(rig.TxBase() + TxOffset::kNumber);
+    ASSERT_FALSE(count.has_value());
+    EXPECT_EQ(count.error(), kIOReturnTimeout);
+    EXPECT_EQ(stuck.backoffs, DiceDeviceIo::kMaxAwaitBackoffs);
+}
+
 } // namespace

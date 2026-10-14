@@ -33,6 +33,10 @@ public:
     // layer times out on its own long before this; reaching it means the
     // completion could not be delivered.
     static constexpr uint32_t kSafetyDeadlineMs = 2000;
+    // Backoffs before the wait gives up even if the clock does not advance.
+    // Every backoff past the seventh sleeps at least 1 ms, so this is never
+    // reached before the deadline on a working clock.
+    static constexpr uint32_t kMaxAwaitBackoffs = kSafetyDeadlineMs + 8;
 
     DiceDeviceIo(Protocols::Ports::ProtocolRegisterIO& io,
                  DICETransaction& transaction,

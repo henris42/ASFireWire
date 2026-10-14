@@ -41,7 +41,7 @@ struct NoValue {};
 bool DiceDeviceIo::AwaitCompletion(const std::atomic<bool>& done, const char* what) {
     const uint64_t startMs = clock_.NowMs();
     for (uint32_t attempt = 0; !done.load(std::memory_order_acquire); ++attempt) {
-        if (clock_.NowMs() - startMs >= kSafetyDeadlineMs) {
+        if (clock_.NowMs() - startMs >= kSafetyDeadlineMs || attempt >= kMaxAwaitBackoffs) {
             ASFW_LOG_ERROR(DICE,
                            "DiceDeviceIo: %{public}s did not complete within %u ms; "
                            "was the bring-up called on the bus completion queue?",
