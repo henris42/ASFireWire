@@ -225,18 +225,20 @@ uint64_t AudioDeviceHost::OutcomeCount(HostEvent event, HostOutcome outcome) con
     return counters_[e][o].load(std::memory_order_relaxed);
 }
 
-void AudioDeviceHost::Dispatch(std::function<void()> work) noexcept {
+bool AudioDeviceHost::Dispatch(std::function<void()> work) noexcept {
     if (!workQueue_) {
-        // No queue: run inline rather than drop the work (the backends did the
-        // same). Callers are never on the Default queue.
-        work();
-        return;
+        // No queue: drop the work. Run inline, it would block the caller
+        // (possibly the Default queue its own bus completions need) in the
+        // session's stage waits.
+        ASFW_LOG_ERROR(Audio, "[AudioHost] no work queue; dropping queued work");
+        return false;
     }
 #ifdef ASFW_HOST_TEST
     workQueue_->DispatchAsync(work);
 #else
     workQueue_->DispatchAsync(^{ work(); });
 #endif
+    return true;
 }
 
 bool AudioDeviceHost::TryBeginRecovery(uint64_t guid) noexcept {
@@ -426,7 +428,7 @@ void AudioDeviceHost::OnDeviceResumed(uint64_t guid) noexcept {
     }
     Record(guid, family, HostEvent::Rebind, HostOutcome::Queued);
 
-    Dispatch([this, guid, family] {
+    const bool queued = Dispatch([this, guid, family] {
         // Teardown drains this queue; a block queued just before the drain
         // must not touch the device (FW-61).
         if (Stopping() || sessions_.IsCancelled(guid)) {
@@ -438,6 +440,10 @@ void AudioDeviceHost::OnDeviceResumed(uint64_t guid) noexcept {
         Record(guid, family, HostEvent::Rebind, RestartOutcome(status), status);
         FinishRecovery(guid);
     });
+    if (!queued) {
+        Record(guid, family, HostEvent::Rebind, HostOutcome::Failed, kIOReturnNoResources);
+        FinishRecovery(guid);
+    }
 }
 
 void AudioDeviceHost::OnRuntimeFault(uint64_t guid, DuplexRestartReason reason) noexcept {
@@ -472,7 +478,7 @@ void AudioDeviceHost::OnRuntimeFault(uint64_t guid, DuplexRestartReason reason) 
     }
     Record(guid, family, HostEvent::RuntimeFault, HostOutcome::Queued, kIOReturnSuccess, observedRun, detail);
 
-    Dispatch([this, guid, reason, observedRun, adapter, family] {
+    const bool queued = Dispatch([this, guid, reason, observedRun, adapter, family] {
         char blockDetail[48];
         snprintf(blockDetail, sizeof(blockDetail), "reason=%u", static_cast<unsigned>(reason));
         if (Stopping() || sessions_.IsCancelled(guid)) {
@@ -500,6 +506,11 @@ void AudioDeviceHost::OnRuntimeFault(uint64_t guid, DuplexRestartReason reason) 
         Record(guid, family, HostEvent::RuntimeFault, RestartOutcome(status), status, observedRun, blockDetail);
         FinishRecovery(guid);
     });
+    if (!queued) {
+        Record(guid, family, HostEvent::RuntimeFault, HostOutcome::Failed, kIOReturnNoResources,
+               observedRun, detail);
+        FinishRecovery(guid);
+    }
 }
 
 // --- Device events (§4.4) -------------------------------------------------
@@ -530,7 +541,10 @@ void AudioDeviceHost::OnDeviceEvent(uint64_t guid, DeviceEvent event, uint32_t d
         return;
     }
     Record(guid, family, HostEvent::DeviceEvent, HostOutcome::ClockProbe, kIOReturnSuccess, 0, text);
-    Dispatch([this, guid, family, detail] { ProbeClock(guid, family, detail); });
+    if (!Dispatch([this, guid, family, detail] { ProbeClock(guid, family, detail); })) {
+        Record(guid, family, HostEvent::DeviceEvent, HostOutcome::ProbeFailed, kIOReturnNoResources, 0,
+               text);
+    }
 }
 
 void AudioDeviceHost::ProbeClock(uint64_t guid, const char* family, uint32_t detail) noexcept {

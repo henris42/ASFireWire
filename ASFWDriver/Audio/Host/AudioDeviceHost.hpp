@@ -181,7 +181,8 @@ private:
     [[nodiscard]] FamilyAdapter* AdapterFor(AudioBackendKind kind) const noexcept;
     [[nodiscard]] bool TryBeginRecovery(uint64_t guid) noexcept;
     void FinishRecovery(uint64_t guid) noexcept;
-    void Dispatch(std::function<void()> work) noexcept;
+    /// Queue `work` on the host queue. False (work dropped) without a queue.
+    [[nodiscard]] bool Dispatch(std::function<void()> work) noexcept;
     void ProbeClock(uint64_t guid, const char* family, uint32_t detail) noexcept;
     [[nodiscard]] bool Stopping() const noexcept { return stopping_.load(std::memory_order_acquire); }
 
