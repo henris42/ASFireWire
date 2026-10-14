@@ -36,6 +36,8 @@
 
 #include "EfcProtocol.hpp"
 
+#include <DriverKit/IOLib.h>
+
 #include <array>
 #include <atomic>
 #include <cstddef>
@@ -88,10 +90,16 @@ inline std::atomic_flag& Gate() noexcept {
 
 class ScopedGate final {
 public:
+    // Spins before yielding. Slots are only touched to copy or assign four
+    // weak_ptrs, so the gate is normally free within a few spins; if the
+    // holder was preempted, sleep instead of burning the CPU it needs.
+    static constexpr uint32_t kSpinsBeforeYield = 128;
+
     ScopedGate() noexcept {
-        while (Gate().test_and_set(std::memory_order_acquire)) {
-            // Slots are only touched to copy or assign four weak_ptrs, so the
-            // holder is never descheduled here in practice.
+        for (uint32_t spins = 0; Gate().test_and_set(std::memory_order_acquire); ++spins) {
+            if (spins >= kSpinsBeforeYield) {
+                IOSleep(1);
+            }
         }
     }
     ~ScopedGate() { Gate().clear(std::memory_order_release); }
