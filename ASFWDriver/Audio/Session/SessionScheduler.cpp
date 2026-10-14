@@ -877,7 +877,7 @@ FamilyDriver& SessionScheduler::BindFamily(IDeviceProtocol& protocol) noexcept {
     // Callers reach here only for a protocol whose AsFamilyDriver is non-null
     // (DeviceHandle::Known).
     FamilyDriver& family = *protocol.AsFamilyDriver();
-    family.SetTeardownCancelToken(deps_.teardown);
+    family.SetTeardownCancelToken(deps_.stageCancel != nullptr ? deps_.stageCancel : deps_.teardown);
     return family;
 }
 

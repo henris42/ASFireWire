@@ -98,6 +98,9 @@ public:
         IIsochDuplexHostTransport& host;
         Driver::HardwareInterface& hardware;
         const std::atomic<bool>* teardown;
+        // Owned by AudioSessions: `teardown`, or the device retired. Bound
+        // to the family so its stage waits give up on either. Null: teardown.
+        const std::atomic<bool>* stageCancel;
         std::atomic<uint64_t>& teardownAborts;
         BindingSourceProvider bindingSource;
         // Owned by AudioSessions, so a guard installed later reaches every
@@ -207,7 +210,7 @@ private:
     [[nodiscard]] IOReturn Reconcile(const Wanted& wanted) noexcept;
     [[nodiscard]] IOReturn StartStreams(const Wanted& wanted, const Discovery::DeviceRecord& record,
                                         const std::shared_ptr<IDeviceProtocol>& protocol) noexcept;
-    // The protocol's FamilyDriver, bound to the service-teardown token.
+    // The protocol's FamilyDriver, bound to the stage-cancel token.
     [[nodiscard]] FamilyDriver& BindFamily(IDeviceProtocol& protocol) noexcept;
     [[nodiscard]] IOReturn StopStreams(const Discovery::DeviceRecord& record,
                                        const std::shared_ptr<IDeviceProtocol>& protocol) noexcept;

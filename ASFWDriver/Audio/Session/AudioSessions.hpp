@@ -82,6 +82,8 @@ public:
 
 private:
     [[nodiscard]] bool TeardownRequested() const noexcept;
+    // The device's stage-cancel flag, created on first use. Lock held.
+    [[nodiscard]] std::atomic<bool>* StageCancelLocked(uint64_t guid) noexcept;
 
     Discovery::DeviceRegistry& registry_;
     AudioRuntimeRegistry& runtime_;
@@ -100,6 +102,10 @@ private:
     std::unordered_map<uint64_t, std::shared_ptr<SessionScheduler>> sessions_;
     // One queue per device; owned here so a session cannot destroy its own queue.
     std::unordered_map<uint64_t, OSSharedPtr<IODispatchQueue>> queues_;
+    // Per device: true while teardown or retirement should end its family's
+    // stage waits (SessionScheduler::Dependencies::stageCancel). Families
+    // keep the pointer, so entries live as long as this object.
+    std::unordered_map<uint64_t, std::unique_ptr<std::atomic<bool>>> stageCancel_;
 };
 
 } // namespace ASFW::Audio::Session
