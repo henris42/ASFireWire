@@ -1035,11 +1035,12 @@ LocalCSRWriteResult HardwareInterface::WriteLocalIRMResource(uint32_t selectCode
         access.WriteAndFlush(Register32::kCSRControl, selectCode & 0x3u);
     }
     
-    constexpr int kMaxTries = 10000;
+    constexpr int kMaxTries = 1000; // 5 ms of 5 us polls; a CSR lock takes microseconds
     for (int i = 0; i < kMaxTries; ++i) {
         auto access = TryBeginAccess();
         if (!access) return {LocalCSRLockResult::Status::HardwareUnavailable};
         uint32_t ctrl = access.Read(Register32::kCSRControl);
+        if (ctrl == 0xFFFFFFFFu) return {LocalCSRLockResult::Status::HardwareUnavailable};
         if (ctrl & 0x80000000u) {
             // OHCI places the previous value into CSRData upon completion.
             const uint32_t actualOld = access.Read(Register32::kCSRData);
@@ -1093,11 +1094,12 @@ LocalCSRReadResult HardwareInterface::ReadLocalIRMResource(uint32_t selectCode) 
         access.WriteAndFlush(Register32::kCSRControl, selectCode & 0x3u);
     }
     
-    constexpr int kMaxTries = 10000;
+    constexpr int kMaxTries = 1000; // 5 ms of 5 us polls; a CSR lock takes microseconds
     for (int i = 0; i < kMaxTries; ++i) {
         auto access = TryBeginAccess();
         if (!access) return {LocalCSRLockResult::Status::HardwareUnavailable, 0};
         uint32_t ctrl = access.Read(Register32::kCSRControl);
+        if (ctrl == 0xFFFFFFFFu) return {LocalCSRLockResult::Status::HardwareUnavailable, 0};
         if (ctrl & 0x80000000u) {
             return {LocalCSRLockResult::Status::Success, access.Read(Register32::kCSRData)};
         }
@@ -1125,11 +1127,12 @@ LocalCSRLockResult HardwareInterface::CompareSwapLocalIRMResource(uint32_t selec
         access.WriteAndFlush(Register32::kCSRControl, selectCode & 0x3u);
     }
     
-    constexpr int kMaxTries = 10000;
+    constexpr int kMaxTries = 1000; // 5 ms of 5 us polls; a CSR lock takes microseconds
     for (int i = 0; i < kMaxTries; ++i) {
         auto access = TryBeginAccess();
         if (!access) return {LocalCSRLockResult::Status::HardwareUnavailable, 0, false};
         uint32_t ctrl = access.Read(Register32::kCSRControl);
+        if (ctrl == 0xFFFFFFFFu) return {LocalCSRLockResult::Status::HardwareUnavailable, 0, false};
         if (ctrl & 0x80000000u) {
             const uint32_t oldValue = access.Read(Register32::kCSRData);
             return {LocalCSRLockResult::Status::Success, oldValue, (oldValue == compareValue)};
