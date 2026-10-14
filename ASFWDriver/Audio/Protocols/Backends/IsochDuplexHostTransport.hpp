@@ -95,6 +95,11 @@ class IsochDuplexHostTransport final : public IIsochDuplexHostTransport {
                    ? &motuRxDiagnosticCaptures_[stream] : nullptr;
     }
     void SetTimingLossCallback(Driver::IsochService::TimingLossCallback callback) noexcept;
+    /// Service teardown: an IRM reservation in progress gives up (see
+    /// DuplexIRMReservations::SetCancelToken).
+    void SetCancelToken(const std::atomic<bool>* cancel) noexcept {
+        reservations_.SetCancelToken(cancel);
+    }
 
     [[nodiscard]] kern_return_t BeginSplitDuplex(uint64_t guid) noexcept override;
     [[nodiscard]] kern_return_t

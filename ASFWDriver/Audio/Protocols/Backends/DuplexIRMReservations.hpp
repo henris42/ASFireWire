@@ -82,10 +82,16 @@ class DuplexIRMReservations final {
     DuplexIRMReservations(const DuplexIRMReservations&) = delete;
     DuplexIRMReservations& operator=(const DuplexIRMReservations&) = delete;
 
+    /// A reservation waiting on the IRM gives up with kIOReturnAborted once
+    /// `cancel` reads true (service teardown). Releases are never cancelled:
+    /// they hand bus resources back. Null: wait out the timeout.
+    void SetCancelToken(const std::atomic<bool>* cancel) noexcept { cancel_ = cancel; }
+
     [[nodiscard]] kern_return_t Reserve(IRM::IRMClient& client, uint8_t channel,
                                         uint32_t packetBandwidthUnits) noexcept {
-        return MapStatus(ReserveSpecific(client, channel,
-                                         ChargeFor(client, packetBandwidthUnits)));
+        const IRM::AllocationStatus status =
+            ReserveSpecific(client, channel, ChargeFor(client, packetBandwidthUnits));
+        return cancelled_ ? kIOReturnAborted : MapStatus(status);
     }
 
     [[nodiscard]] IRMReservationResult ReserveAny(IRM::IRMClient& client,
@@ -126,8 +132,11 @@ class DuplexIRMReservations final {
                 },
                 kWaitTimeoutMs,
                 kIOReturnTimeout,
-                nullptr,
+                cancel_,
                 kWaitPollMs);
+            if (snapshotRes.wasCancelled) {
+                return refuse(IsochReserveFailure::kSnapshotFailed, kIOReturnAborted);
+            }
 
             const auto [snapshotStatus, snapshot] = (snapshotRes.status == kIOReturnTimeout)
                 ? std::make_pair(IRM::AllocationStatus::Timeout, IRM::ResourceSnapshot{})
@@ -158,6 +167,9 @@ class DuplexIRMReservations final {
             if (status == IRM::AllocationStatus::Success) {
                 return {.status = kIOReturnSuccess, .channel = channel, .failure = IsochReserveFailure::kNone,
                         .charge = charge, .availableUnits = available};
+            }
+            if (cancelled_) {
+                return refuse(IsochReserveFailure::kSnapshotFailed, kIOReturnAborted, available);
             }
             // The ledger said this channel was free and the allocation still
             // failed: another initiator took it in between. Try the next
@@ -275,6 +287,7 @@ class DuplexIRMReservations final {
         // bandwidth as one lifecycle-owned resource before establishing a PCR.
         // The entry records the charged total, because the release has to hand
         // back exactly what was taken even if the gap count has moved since.
+        cancelled_ = false;
         const auto res = WaitForAsyncResult<IRM::AllocationStatus>(
             [&client, channel, charge](auto callback) {
                 client.AllocateResources(
@@ -285,8 +298,13 @@ class DuplexIRMReservations final {
             },
             kWaitTimeoutMs,
             kIOReturnTimeout,
-            nullptr,
+            cancel_,
             kWaitPollMs);
+        if (res.wasCancelled) {
+            // A late success is not recorded; the next bus reset frees it.
+            cancelled_ = true;
+            return IRM::AllocationStatus::Failed;
+        }
 
         const IRM::AllocationStatus status = (res.status == kIOReturnTimeout)
             ? IRM::AllocationStatus::Timeout
@@ -354,6 +372,8 @@ class DuplexIRMReservations final {
     // for playback and capture by IsochDuplexHostTransport's two instances.
     std::array<Entry, kMaxAudioStreamsPerDirection> entries_{};
     size_t count_{0};
+    const std::atomic<bool>* cancel_{nullptr};
+    bool cancelled_{false};  // the last ReserveSpecific was cancelled
 };
 
 class DuplexIRMReservationPair final {
@@ -401,6 +421,11 @@ class DuplexIRMReservationPair final {
     void ReleaseAll() noexcept {
         capture_.ReleaseAll();
         playback_.ReleaseAll();
+    }
+
+    void SetCancelToken(const std::atomic<bool>* cancel) noexcept {
+        playback_.SetCancelToken(cancel);
+        capture_.SetCancelToken(cancel);
     }
 
     void InvalidateAfterGenerationChange() noexcept {

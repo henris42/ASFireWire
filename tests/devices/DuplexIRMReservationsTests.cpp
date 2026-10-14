@@ -15,6 +15,7 @@
 #include "../support/MAudioSpecialHappyPathFixture.inc"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -186,6 +187,34 @@ private:
     uint32_t nextHandle_{1};
     std::vector<RecordedOp> operations_;
     std::vector<std::pair<uint32_t, std::vector<uint8_t>>> lockOperands_;
+};
+
+// A bus whose IRM never answers: every transaction stays in flight.
+class SilentFireWireBus final : public IFireWireBus {
+public:
+    AsyncHandle ReadBlock(Generation, NodeId, FWAddress, uint32_t, FwSpeed,
+                          InterfaceCompletionCallback callback) override {
+        pending_.push_back(std::move(callback));
+        return AsyncHandle{.value = static_cast<uint32_t>(pending_.size())};
+    }
+    AsyncHandle WriteBlock(Generation, NodeId, FWAddress, std::span<const uint8_t>, FwSpeed,
+                           InterfaceCompletionCallback callback) override {
+        pending_.push_back(std::move(callback));
+        return AsyncHandle{.value = static_cast<uint32_t>(pending_.size())};
+    }
+    AsyncHandle Lock(Generation, NodeId, FWAddress, LockOp, std::span<const uint8_t>, uint32_t,
+                     FwSpeed, InterfaceCompletionCallback callback) override {
+        pending_.push_back(std::move(callback));
+        return AsyncHandle{.value = static_cast<uint32_t>(pending_.size())};
+    }
+    bool Cancel(AsyncHandle) override { return false; }
+    FwSpeed GetSpeed(NodeId) const override { return FwSpeed::S400; }
+    uint32_t HopCount(NodeId, NodeId) const override { return 1; }
+    Generation GetGeneration() const override { return Generation{1}; }
+    NodeId GetLocalNodeID() const override { return NodeId{0}; }
+
+private:
+    std::vector<InterfaceCompletionCallback> pending_;
 };
 
 // --- Tests ---
@@ -567,6 +596,22 @@ TEST(DuplexIRMReservationsTests, DuplexChannelsAdditionalStreamsUseArrays) {
     EXPECT_NE(ch.PlaybackChannel(0), ch.PlaybackChannel(1));
     EXPECT_NE(ch.CaptureChannel(0), ch.PlaybackChannel(0));
     EXPECT_NE(ch.CaptureChannel(1), ch.PlaybackChannel(1));
+}
+
+// Service teardown must not wait out the IRM timeout for an IRM that never
+// answers: a reservation gives up as soon as the cancel token is set.
+TEST(DuplexIRMReservationsTests, ReservationGivesUpWhenTeardownCancels) {
+    SilentFireWireBus bus;
+    IRMClient irm(bus);
+    irm.SetIRMNode(0x03, Generation{1});
+    std::atomic<bool> teardown{true};
+    ASFW::Audio::Backends::DuplexIRMReservations reservations;
+    reservations.SetCancelToken(&teardown);
+
+    const auto result = reservations.ReserveAny(irm, uint64_t{1} << 0U, 532U);
+    EXPECT_EQ(result.status, kIOReturnAborted);
+    EXPECT_EQ(reservations.Reserve(irm, 0, 532U), kIOReturnAborted);
+    EXPECT_EQ(reservations.Count(), 0U);
 }
 
 } // namespace
