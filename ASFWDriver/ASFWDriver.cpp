@@ -973,14 +973,27 @@ void ASFWDriver::InterruptOccurred_Impl(ASFWDriver_InterruptOccurred_Args) {
                                                    ctx.statusPublisher,
                                                    ctx.deps.asyncController.get());
         });
-    if (stillPending != 0U && interrupts != nullptr) {
-        // An event that will not acknowledge. Returning with it pending would
-        // leave the driver deaf; make the controller send a fresh MSI instead.
-        ASFW_LOG_ERROR(Controller,
-                       "InterruptOccurred: events 0x%08x still pending after %d passes; "
-                       "retriggering the interrupt",
-                       stillPending, ASFW::Driver::kMaxInterruptPasses);
-        interrupts->RetriggerPendingInterrupt(&hardware);
+    if (stillPending == 0U) {
+        ctx.irqConsecutiveRetriggers = 0;
+    } else if (interrupts != nullptr) {
+        if (++ctx.irqConsecutiveRetriggers <= ASFW::Driver::kMaxConsecutiveRetriggers) {
+            // An event that will not acknowledge. Returning with it pending would
+            // leave the driver deaf; make the controller send a fresh MSI instead.
+            ASFW_LOG_ERROR(Controller,
+                           "InterruptOccurred: events 0x%08x still pending after %d passes; "
+                           "retriggering the interrupt",
+                           stillPending, ASFW::Driver::kMaxInterruptPasses);
+            interrupts->RetriggerPendingInterrupt(&hardware);
+        } else {
+            // Retriggering did not clear them either. Mask those events rather
+            // than take MSIs forever; the rest of the controller keeps working.
+            const uint32_t stuck = stillPending & ~ASFW::Driver::IntMaskBits::kMasterIntEnable;
+            ASFW_LOG_ERROR(Controller,
+                           "InterruptOccurred: events 0x%08x stuck after %u retriggers; masking them",
+                           stuck, ASFW::Driver::kMaxConsecutiveRetriggers);
+            interrupts->MaskInterrupts(&hardware, stuck);
+            ctx.irqConsecutiveRetriggers = 0;
+        }
     }
 }
 

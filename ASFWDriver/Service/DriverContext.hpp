@@ -37,6 +37,7 @@ struct ServiceContext {
     // Interrupt callback progress is sampled only by the watchdog diagnostics.
     std::atomic<uint64_t> irqEntries{0}, irqExits{0};
     uint32_t irqProbeTicks{0}, irqPendingSamples{0}, irqProbeReports{0};
+    uint32_t irqConsecutiveRetriggers{0}; // interrupt queue only
     uint64_t irqProbeLastEntries{0};
     ASFW::Driver::ControllerCore::Dependencies deps;
     ASFW::Driver::ControllerConfig config{}; // immutable identity/static config
