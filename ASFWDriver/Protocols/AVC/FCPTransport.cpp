@@ -315,7 +315,12 @@ void FCPTransport::OnWriteComplete(WriteAttempt attempt, Async::AsyncStatus stat
     // The response deadline starts when the command reached the target; Apple
     // arms its timer from writeDone (IOFireWireAVCCommand.cpp:76-90).
     active_->phase = AwaitingResponse{.attempt = attempt};
-    ArmTimer(config_.timeoutMs);
+    if (!ArmTimer(config_.timeoutMs)) {
+        Delivery failed = Finish(std::unexpected(ErrorOf(AvcErrorKind::kTransportError)));
+        IOLockUnlock(lock_);
+        Deliver(std::move(failed));
+        return;
+    }
     IOLockUnlock(lock_);
 }
 
@@ -403,7 +408,12 @@ void FCPTransport::OnFCPResponse(uint16_t srcNodeID,
         }
         active_->txn.sawInterim = true;
         active_->phase = AwaitingResponse{.attempt = *attempt, .interim = true};
-        ArmTimer(config_.interimTimeoutMs);
+        if (!ArmTimer(config_.interimTimeoutMs)) {
+            Delivery failed = Finish(std::unexpected(ErrorOf(AvcErrorKind::kTransportError)));
+            IOLockUnlock(lock_);
+            Deliver(std::move(failed));
+            return;
+        }
         IOLockUnlock(lock_);
         ASFW_LOG_V2(FCP, "FCPTransport: INTERIM; waiting up to %u ms for the final response",
                     config_.interimTimeoutMs);
@@ -446,19 +456,23 @@ void FCPTransport::OnFCPResponse(uint16_t srcNodeID,
 // Timeouts
 //==============================================================================
 
-void FCPTransport::ArmTimer(uint32_t timeoutMs) {
+bool FCPTransport::ArmTimer(uint32_t timeoutMs) {
     DisarmTimer();
     const uint64_t epoch = ++nextTimerEpoch_;
     active_->timerEpoch = epoch;
     const auto self = weak_from_this().lock();
-    if (!self || !timerScheduler_) {
-        return;
+    if (self && timerScheduler_) {
+        active_->timer = timerScheduler_->ScheduleAfter(
+            static_cast<uint64_t>(timeoutMs) * 1'000'000ULL, [self, epoch] { self->OnTimeout(epoch); });
     }
-    active_->timer = timerScheduler_->ScheduleAfter(
-        static_cast<uint64_t>(timeoutMs) * 1'000'000ULL, [self, epoch] { self->OnTimeout(epoch); });
     if (active_->timer == Scheduling::kInvalidTimerToken) {
-        ASFW_LOG_V1(FCP, "FCPTransport: Failed to schedule the response deadline");
+        // Without a deadline a lost response would hold the unit forever.
+        ASFW_LOG_ERROR(FCP, "FCPTransport: Failed to schedule the response deadline; failing command id=%u",
+                       active_->txn.id);
+        active_->timerEpoch = 0;
+        return false;
     }
+    return true;
 }
 
 void FCPTransport::DisarmTimer() {

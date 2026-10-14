@@ -229,7 +229,9 @@ private:
     [[nodiscard]] static std::optional<WriteAttempt> AttemptOf(const Phase& phase) noexcept;
     [[nodiscard]] static bool ResponseMatches(const Transaction& txn, std::span<const uint8_t> response);
 
-    void ArmTimer(uint32_t timeoutMs);  // lock held
+    /// False when no deadline could be scheduled; the caller must finish
+    /// the transaction rather than leave it without one.
+    [[nodiscard]] bool ArmTimer(uint32_t timeoutMs);  // lock held
     void DisarmTimer();                 // lock held
 
     /// Take the active transaction out with `result` for delivery. Lock held.
