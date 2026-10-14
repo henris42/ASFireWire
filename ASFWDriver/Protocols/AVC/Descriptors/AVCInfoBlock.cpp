@@ -61,7 +61,7 @@ Parsed<AVCInfoBlock> AVCInfoBlock::Parse(std::span<const uint8_t> bytes,
                     if (!child) return std::unexpected(child.error());
                     children.push_back(std::move(*child));
                     // A cursor on the unconsumed suffix, keeping the absolute offset.
-                    fields = ParseReader(remaining->subspan(used), std::add_sat(childBase, used));
+                    fields = ParseReader(remaining->subspan(used), AddSat(childBase, used));
                 }
                 consumed = outer.Offset() - baseOffset;
                 return AVCInfoBlock(static_cast<uint16_t>(consumed - 2), primaryLength, type,

@@ -163,7 +163,7 @@ private:
             if (bytes.size() < 2) { FailRead(Avc::AvcError::Of(Avc::AvcErrorKind::kOperandsTooShort)); Pump(); return; }
             // descriptor_length excludes itself (TA 2002013 §5). Saturating, so
             // no declared length can wrap into a small "complete" total.
-            reading.declaredTotal = std::add_sat<size_t>(Descriptors::ParseReader(bytes).BE16().value_or(0), 2);
+            reading.declaredTotal = Descriptors::AddSat<size_t>(Descriptors::ParseReader(bytes).BE16().value_or(0), 2);
             if (reading.declaredTotal > DescriptorAccessor::kMaxDescriptorBytes) {
                 FailRead(Avc::AvcError::Of(Avc::AvcErrorKind::kMalformedOperands)); Pump(); return;
             }
@@ -172,7 +172,7 @@ private:
             FailRead(Avc::AvcError::Of(Avc::AvcErrorKind::kMalformedOperands)); Pump(); return;
         }
         data_.insert(data_.end(), bytes.begin(), bytes.end()); // Own before callback returns.
-        reading.offset = std::add_sat(reading.offset, bytes.size());
+        reading.offset = Descriptors::AddSat(reading.offset, bytes.size());
         // Apple MusicSubunitController.cpp:929-937 uses declared length even
         // when read_result_status is inaccurate. No additional read at EOF.
         if (reading.offset == reading.declaredTotal) {

@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <limits>
 #include <numeric>
 #include <span>
 #include <type_traits>
@@ -29,6 +30,18 @@ inline constexpr size_t kMaxInfoBlockDepth = 32;
 inline constexpr size_t kMaxTextListNodes = 32;
 inline constexpr size_t kMaxTextListDepth = 32;
 
+/// std::add_sat where the library has it (C++26); a builtin otherwise, so the
+/// driver also builds as C++23 for older DriverKit toolchains.
+template <std::unsigned_integral T>
+[[nodiscard]] constexpr T AddSat(T a, T b) noexcept {
+#if defined(__cpp_lib_saturation_arithmetic)
+    return std::add_sat(a, b);
+#else
+    T sum{};
+    return __builtin_add_overflow(a, b, &sum) ? std::numeric_limits<T>::max() : sum;
+#endif
+}
+
 /// A big-endian field of the descriptor's wire layout, as a host value.
 template <std::unsigned_integral T>
 [[nodiscard]] constexpr T FromBigEndian(T wire) noexcept {
@@ -42,7 +55,7 @@ public:
     constexpr explicit ParseReader(std::span<const uint8_t> bytes, size_t base = 0)
         : bytes_(bytes), base_(base) {}
     /// Absolute offset. Saturating, so no length can wrap it into a small value.
-    [[nodiscard]] constexpr size_t Offset() const { return std::add_sat(base_, offset_); }
+    [[nodiscard]] constexpr size_t Offset() const { return AddSat(base_, offset_); }
     [[nodiscard]] constexpr size_t Remaining() const { return bytes_.size() - offset_; }
     [[nodiscard]] constexpr Parsed<std::span<const uint8_t>> Take(size_t count) {
         if (count > Remaining()) return std::unexpected(ParseError{Offset(), ParseErrorKind::Truncated});

@@ -257,7 +257,7 @@ Parsed<MusicSubunitStatus> MusicSubunitDescriptorParser::ParseStatusDescriptor(
                 break;
         }
 
-        offset = std::add_sat(offset, consumed);
+        offset = AddSat(offset, consumed);
     }
 
     AssignMusicPlugLabels(status);

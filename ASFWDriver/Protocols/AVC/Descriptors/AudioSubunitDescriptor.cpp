@@ -34,7 +34,7 @@ Parsed<void> TextEntry(ParseReader entry, uint16_t position, TextDatabase& datab
             auto block = AVCInfoBlock::Parse(*bytes, used, base);
             if (!block) return std::unexpected(block.error());
             if (block->GetType() == kInfoBlockRawText) database[position] = Text(block->GetPrimaryData());
-            entry = ParseReader(bytes->subspan(used), std::add_sat(base, used));
+            entry = ParseReader(bytes->subspan(used), AddSat(base, used));
         }
         return {};
     });
