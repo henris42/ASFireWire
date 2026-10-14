@@ -324,6 +324,9 @@ void AudioDeviceHost::RefreshPublication(uint64_t guid) noexcept {
     const auto committed = input.committed;
     adapter->Describe(input, [this, guid, route, family, admission, committed](DescribeResult result) {
         if (admission->AbortIfStopping()) {
+            // Teardown gave up waiting for this completion: the host may be
+            // gone, so touch nothing of it.
+            if (admission->IsAbandoned()) return;
             Record(guid, family, HostEvent::Publish, HostOutcome::RefusedTeardown, kIOReturnAborted);
             return;
         }
@@ -331,6 +334,7 @@ void AudioDeviceHost::RefreshPublication(uint64_t guid) noexcept {
         if (beforePublishHookForTesting_) beforePublishHookForTesting_();
 #endif
         if (admission->AbortIfStopping()) {
+            if (admission->IsAbandoned()) return;
             Record(guid, family, HostEvent::Publish, HostOutcome::RefusedTeardown, kIOReturnAborted);
             return;
         }
@@ -604,7 +608,14 @@ void AudioDeviceHost::BeginTeardown() noexcept {
 
     if (!teardownStarted_.exchange(true, std::memory_order_acq_rel)) {
         // Close admission and wait for admitted entry points and publications.
-        gate_.CloseAndWait();
+        // A Describe whose completion is queued behind this caller never
+        // exits; give up after the gate's bound rather than deadlock. Its late
+        // completion sees the gate abandoned and returns without touching us.
+        const bool gateDrained = gate_.CloseAndWait();
+        if (!gateDrained) {
+            ASFW_LOG_ERROR(Audio, "[AudioHost] teardown: in-flight publication did not exit "
+                           "within %ums; abandoning it", PublicationGate::kCloseTimeoutMs);
+        }
         const uint64_t startMs = UptimeMilliseconds();
         // Drain queued work before hardware detaches; each block checks
         // stopping_ before it can touch the device (FW-61).
@@ -619,17 +630,18 @@ void AudioDeviceHost::BeginTeardown() noexcept {
         const uint64_t endMs = UptimeMilliseconds();
         teardownComplete_.store(true, std::memory_order_release);
 
-        char detail[160];
+        char detail[192];
         snprintf(detail, sizeof(detail),
-                 "drain=%llums publishRefused=%llu rebindCancelled=%llu faultCancelled=%llu "
-                 "eventCancelled=%llu gateRejects=%llu",
-                 endMs >= startMs ? endMs - startMs : 0ULL,
+                 "drain=%llums gate=%s publishRefused=%llu rebindCancelled=%llu "
+                 "faultCancelled=%llu eventCancelled=%llu gateRejects=%llu",
+                 endMs >= startMs ? endMs - startMs : 0ULL, gateDrained ? "drained" : "timeout",
                  OutcomeCount(HostEvent::Publish, HostOutcome::RefusedTeardown),
                  OutcomeCount(HostEvent::Rebind, HostOutcome::Cancelled),
                  OutcomeCount(HostEvent::RuntimeFault, HostOutcome::Cancelled),
                  OutcomeCount(HostEvent::DeviceEvent, HostOutcome::Cancelled),
                  gate_.RejectCount());
-        Record(0, kNoFamily, HostEvent::Teardown, HostOutcome::Drained, kIOReturnSuccess, 0, detail);
+        Record(0, kNoFamily, HostEvent::Teardown, HostOutcome::Drained,
+               gateDrained ? kIOReturnSuccess : kIOReturnTimeout, 0, detail);
         return;
     }
 

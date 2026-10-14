@@ -33,6 +33,7 @@
 #include <cstdint>
 #include <functional>
 #include <future>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -435,6 +436,31 @@ TEST(AudioDeviceHostTests, DescribeCompletingAfterTeardownBeganIsRefused) {
     EXPECT_TRUE(NoEndpointConfig(f.runtime, kGuid));
     EXPECT_TRUE(f.host.IsTeardownCompleteForTesting());
     EXPECT_EQ(f.host.OutcomeCount(HostEvent::Teardown, HostOutcome::Drained), 1U);
+}
+
+// A Describe whose completion can only run after teardown returns (it is
+// queued behind the tearing-down caller) must not deadlock teardown. The gate
+// gives up after its bound, and the completion, delivered after the host is
+// gone, touches nothing of it.
+TEST(AudioDeviceHostTests, TeardownGivesUpOnDescribeThatNeverCompletes) {
+    DescribeDone pending{};
+    {
+        auto f = std::make_unique<HostFixture>();
+        f->SeedDiceDevice(kGuid);
+        f->adapter.onDescribe = [&pending](const DescribeInput&, DescribeDone done) {
+            pending = std::move(done);
+        };
+        f->host.RefreshPublication(kGuid);
+        ASSERT_TRUE(static_cast<bool>(pending));
+
+        const auto start = std::chrono::steady_clock::now();
+        f->host.BeginTeardown();
+        const auto elapsed = std::chrono::steady_clock::now() - start;
+        EXPECT_LT(elapsed, kWaitLimit);
+        EXPECT_TRUE(f->host.IsTeardownCompleteForTesting());
+        EXPECT_EQ(f->host.OutcomeCount(HostEvent::Teardown, HostOutcome::Drained), 1U);
+    }
+    pending(DescribeResult{MakeDescription("Late Description", 2, 2)});
 }
 
 // ---------------------------------------------------------------------------
