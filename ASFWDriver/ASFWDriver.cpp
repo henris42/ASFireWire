@@ -8,6 +8,7 @@
 
 #define _LIBCPP_NO_ABI_TAG 1
 #include "Audio/Protocols/AVC/DiscoveryCoordinator.hpp"
+#include "Common/DriverKitCompat.hpp"
 #include <DriverKit/DriverKit.h>
 #include <DriverKit/IOBufferMemoryDescriptor.h>
 #include <DriverKit/IODispatchQueue.h>
@@ -647,11 +648,10 @@ kern_return_t IMPL(ASFWDriver, SetPowerState) {
             // (after Start() returns) — this callback is the earliest reliable
             // point. Idempotent, so unconditional on every On is fine.
             const kern_return_t pmKr = ChangePowerState(kIOServicePowerCapabilityOn);
-#if __ENVIRONMENT_DRIVERKIT_VERSION_MIN_REQUIRED__ >= 240200
+#if ASFW_HAS_SET_POWER_OVERRIDE
             const kern_return_t ovKr = SetPowerOverride(true);
 #else
-            // SetPowerOverride first shipped in DriverKit 24.2 (macOS 15.2); an
-            // older runtime lacks the symbol and dyld refuses to load the dext.
+            // Older runtimes lack SetPowerOverride (Common/DriverKitCompat.hpp).
             // Without it the last nub going away can still power the controller off.
             const kern_return_t ovKr = kIOReturnUnsupported;
 #endif
