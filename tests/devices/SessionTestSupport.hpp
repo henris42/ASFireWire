@@ -315,7 +315,11 @@ public:
         return true;
     }
 
-    void SetTeardownCancelToken(const std::atomic<bool>*) noexcept override {}
+    void SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept override {
+        cancelToken = cancel;
+    }
+    // The token the session bound for this family's stage waits.
+    const std::atomic<bool>* cancelToken{nullptr};
 
     IOReturn LoadGeometry() override { return Stage("geometry", "D geometry"); }
 

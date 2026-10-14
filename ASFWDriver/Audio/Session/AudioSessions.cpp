@@ -48,6 +48,9 @@ void AudioSessions::BeginTeardown() noexcept {
     std::vector<OSSharedPtr<IODispatchQueue>> queues;
     if (lock_ != nullptr) {
         IOLockLock(lock_);
+        for (const auto& [guid, cancel] : stageCancel_) {
+            cancel->store(true, std::memory_order_release);
+        }
         for (const auto& [guid, session] : sessions_) {
             sessions.push_back(session);
         }
@@ -72,6 +75,14 @@ bool AudioSessions::TeardownRequested() const noexcept {
     return teardown_ != nullptr && teardown_->load(std::memory_order_acquire);
 }
 
+std::atomic<bool>* AudioSessions::StageCancelLocked(uint64_t guid) noexcept {
+    auto& slot = stageCancel_[guid];
+    if (!slot) {
+        slot = std::make_unique<std::atomic<bool>>(TeardownRequested());
+    }
+    return slot.get();
+}
+
 std::shared_ptr<SessionScheduler> AudioSessions::Ensure(uint64_t guid) noexcept {
     if (guid == 0 || lock_ == nullptr) {
         return nullptr;
@@ -93,6 +104,7 @@ std::shared_ptr<SessionScheduler> AudioSessions::Ensure(uint64_t guid) noexcept 
                       .host = host_,
                       .hardware = hardware_,
                       .teardown = teardown_,
+                      .stageCancel = StageCancelLocked(guid),
                       .teardownAborts = teardownAborts_,
                       .bindingSource = bindingSource_,
                       .startGuard = &startGuard_,
@@ -182,12 +194,25 @@ IOReturn AudioSessions::RequestRestart(uint64_t guid, DuplexRestartReason reason
 }
 
 void AudioSessions::Retire(uint64_t guid) noexcept {
+    if (guid != 0 && lock_ != nullptr) {
+        // The device is gone: a stage waiting for it gives up now.
+        IOLockLock(lock_);
+        StageCancelLocked(guid)->store(true, std::memory_order_release);
+        IOLockUnlock(lock_);
+    }
     if (const auto session = Ensure(guid)) {
         session->Retire();
     }
 }
 
 void AudioSessions::Present(uint64_t guid) noexcept {
+    if (guid != 0 && lock_ != nullptr) {
+        IOLockLock(lock_);
+        if (const auto it = stageCancel_.find(guid); it != stageCancel_.end()) {
+            it->second->store(TeardownRequested(), std::memory_order_release);
+        }
+        IOLockUnlock(lock_);
+    }
     if (const auto session = Find(guid)) {
         session->Present();
     }

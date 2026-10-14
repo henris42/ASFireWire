@@ -494,6 +494,24 @@ TEST_F(SchedulerTest, RetiredDeviceAbortsTheStartAndRefusesNewOnes) {
 }
 
 
+// Retirement must end a family stage waiting for the departed device, not
+// only teardown: the stage token the session binds follows both.
+TEST_F(SchedulerTest, RetirementCancelsTheFamilyStageToken) {
+    ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
+    const std::atomic<bool>* token = Device().cancelToken;
+    ASSERT_NE(token, nullptr);
+    EXPECT_FALSE(token->load());
+
+    rig.sessions.Retire(rig.guid);
+    EXPECT_TRUE(token->load());
+    rig.sessions.Present(rig.guid);
+    EXPECT_FALSE(token->load());
+
+    rig.cancel.store(true, std::memory_order_release);
+    rig.sessions.BeginTeardown();
+    EXPECT_TRUE(token->load());
+}
+
 // ---------------------------------------------------------------------------
 // Carried over from the deleted AudioDuplexCoordinatorTests: behaviour the
 // session goldens do not pin.
