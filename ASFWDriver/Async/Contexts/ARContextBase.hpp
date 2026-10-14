@@ -294,9 +294,20 @@ kern_return_t ARContextBase<Derived, Tag>::Arm(uint32_t commandPtr) noexcept {
         IOSleep(1);  // 1ms delay
     }
 
+    // Not active yet is not fatal (it may start after the first bus reset), but
+    // a controller that reads all ones or a context that died will never run.
+    const uint32_t control = this->ReadControl();
+    if (control == 0xFFFFFFFFu) {
+        ASFW_LOG(Async, "%{public}s: arm failed, ContextControl reads all-ones", this->ContextNameCString());
+        return kIOReturnNoDevice;
+    }
+    if ((control & Driver::kContextControlDeadBit) != 0U) {
+        ASFW_LOG(Async, "%{public}s: arm failed, context dead (ContextControl=0x%08x)",
+                 this->ContextNameCString(), control);
+        return kIOReturnDMAError;
+    }
     ASFW_LOG(Async, "%{public}s: armed (info: not active yet after 50ms, may activate after reset)",
              this->ContextNameCString());
-    // Not fatal - hardware may start later
     return kIOReturnSuccess;
 }
 
