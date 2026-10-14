@@ -354,6 +354,13 @@ InterruptSnapshot HardwareInterface::CaptureInterruptSnapshot(uint64_t timestamp
     auto access = const_cast<HardwareInterface*>(this)->TryBeginAccess();
     if (!access) return snapshot;
     snapshot.intEvent = access.Read(Register32::kIntEvent);
+    if (snapshot.intEvent == 0xFFFFFFFFu) {
+        // All ones is a dead or ejected controller, not every event at once
+        // (Linux irq_handler: !~event). The HCControl probe latches
+        // hardware-gone if so; either way report no events.
+        (void)access.Read(Register32::kHCControl);
+        snapshot.intEvent = 0;
+    }
     snapshot.intMask = 0;
     return snapshot;
 }
