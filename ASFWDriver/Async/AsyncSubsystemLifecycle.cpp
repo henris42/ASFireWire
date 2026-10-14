@@ -63,8 +63,6 @@ uint64_t GetCurrentMonotonicTimeUsec() {
     return (ticks * timebase.numer) / timebase.denom / 1000;
 }
 
-constexpr uint32_t kAsyncInterruptMask = 0x0000000Du;
-constexpr uint32_t kLinkControlRcvPhyPktBit = 1u << 12;
 // TODO(ASFW-Topology): Replace the compatibility S100 default with topology-driven speed
 // selection once the async startup path can query the negotiated link speed.
 // Replace with topology-based speed queries when TopologyManager is available.
@@ -445,8 +443,11 @@ void AsyncSubsystem::ResetWatchdogCounters() noexcept {
 void AsyncSubsystem::FinalizeStart() {
     busResetCapture_ = std::make_unique<Debug::BusResetPacketCapture>();
 
-    hardware_->SetInterruptMask(kAsyncInterruptMask, true);
-    hardware_->SetLinkControlBits(kLinkControlRcvPhyPktBit);
+    // No MMIO here: this runs before ControllerCore's soft reset and LPS.
+    // LinkControl is a link (SCLK) register; touching it while LPS is clear
+    // makes TI OHCI parts target-abort, which can hang the machine. The
+    // controller programs the interrupt mask and kDefaultLinkControl
+    // (rcvPhyPkt included) once the link is powered.
 
     // Report DMA cache mode (always uncached since kIOMemoryMapCacheModeInhibit works reliably)
     ASFW_LOG_TYPE(Async, OS_LOG_TYPE_INFO, "AsyncSubsystem::Start complete (DMA always uncached)");
@@ -573,7 +574,11 @@ void AsyncSubsystem::Teardown(bool disableHardware) {
     acceptingSubmissions_.store(false, std::memory_order_release);
     if (disableHardware && hardware_) {
         hardware_->SetInterruptMask(0xFFFFFFFFu, false);
-        hardware_->ClearLinkControlBits(kLinkControlRcvPhyPktBit);
+        // LinkControl is only accessible while the link is powered (LPS).
+        const uint32_t hcControl = hardware_->ReadHCControl();
+        if (hcControl != 0xFFFFFFFFu && (hcControl & Driver::HCControlBits::kLPS) != 0U) {
+            hardware_->ClearLinkControlBits(Driver::LinkControlBits::kRcvPhyPkt);
+        }
     }
 
     // CRITICAL: Deactivate completion queue BEFORE stopping contexts
