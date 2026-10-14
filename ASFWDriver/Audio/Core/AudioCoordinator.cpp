@@ -58,6 +58,7 @@ AudioCoordinator::AudioCoordinator(IOService* driver,
     });
     deviceManager_.RegisterDeviceObserver(this);
     hostTransport_.SetTimingLossCallback([this](uint64_t guid) { HandleHostTimingLoss(guid); });
+    hostTransport_.SetCancelToken(&teardownRequested_);
     ASFW_LOG(Audio, "AudioCoordinator: Registered device observer");
 }
 
