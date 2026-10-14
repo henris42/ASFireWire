@@ -887,11 +887,14 @@ static bool WaitForRegister(ReadFn&& read32, uint32_t mask, bool expectSet, uint
     if (pollIntervalUsec == 0) {
         pollIntervalUsec = 100;
     }
+    if (timeoutUsec == 0) {
+        timeoutUsec = 1'000'000; // no unbounded waits: 0 means the 1 s default
+    }
 
     uint64_t waited = 0;
     uint64_t attempts = 0;
 
-    while (timeoutUsec == 0 || waited < timeoutUsec) {
+    while (waited < timeoutUsec) {
         const uint32_t value = read32();
         attempts++;
 
