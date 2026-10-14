@@ -325,12 +325,17 @@ void SeedInitialInterruptMask(ASFW::Driver::HardwareInterface& hw,
 // programPhyEnable left the bus without a reset whenever the previous instance had
 // already cleared that bit (HCControl=0x004c0000): setting linkEnable alone did not
 // reset the bus, and the 828 Mk3 stayed unseen until the cable was replugged.
-void ForceInitialBusReset(ASFW::Driver::HardwareInterface& hw) {
+kern_return_t ForceInitialBusReset(ASFW::Driver::HardwareInterface& hw) {
     ASFW_LOG(Hardware, "Forcing bus reset via PHY to guarantee Config ROM shadow activation");
     const bool forced = hw.InitiateBusReset(false);
     if (!forced) {
+        if (hw.HardwareGone()) {
+            ASFW_LOG(Hardware, "❌ Forced bus reset failed: controller gone");
+            return kIOReturnNoDevice;
+        }
         ASFW_LOG(Hardware, "WARNING: Forced bus reset failed; will rely on auto reset");
     }
+    return kIOReturnSuccess;
 }
 
 kern_return_t ArmAsyncReceiveContexts(ASFW::Async::IAsyncControllerPort* asyncController) {
@@ -780,7 +785,9 @@ kern_return_t ControllerCore::EnableInterruptsAndStartBus() {
     ASFW_LOG(Hardware,
              "Setting linkEnable + BIBimageValid atomically - will trigger auto bus reset");
     hw.SetHCControlBits(HCControlBits::kLinkEnable | HCControlBits::kBibImageValid);
-    ForceInitialBusReset(hw);
+    if (const kern_return_t resetKr = ForceInitialBusReset(hw); resetKr != kIOReturnSuccess) {
+        return resetKr;
+    }
 
     const kern_return_t armStatus = ArmAsyncReceiveContexts(deps_.asyncController.get());
     if (armStatus != kIOReturnSuccess) {
