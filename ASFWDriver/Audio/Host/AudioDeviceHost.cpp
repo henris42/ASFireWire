@@ -649,7 +649,12 @@ void AudioDeviceHost::BeginTeardown() noexcept {
 #ifdef ASFW_HOST_TEST
     if (onSecondaryTeardownWaitingHookForTesting_) onSecondaryTeardownWaitingHookForTesting_();
 #endif
-    while (!teardownComplete_.load(std::memory_order_acquire)) {
+    for (uint32_t waitedMs = 0; !teardownComplete_.load(std::memory_order_acquire); ++waitedMs) {
+        if (waitedMs >= kSecondaryTeardownWaitMs) {
+            ASFW_LOG_ERROR(Audio, "[AudioHost] teardown: first caller did not finish within %ums; "
+                           "giving up", kSecondaryTeardownWaitMs);
+            return;
+        }
         IOSleep(1);
     }
 }
