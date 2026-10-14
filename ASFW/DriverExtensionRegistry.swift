@@ -93,7 +93,9 @@ enum DriverInstallSettings {
 enum DriverExtensionRegistryInspector {
     private static let driverServiceName = "ASFWDriver"
     private static let driverServerName = "net.asfw.driver"
-    private static let pciMatch = "0x590111c1"
+    // The controllers ASFWDriverService matches (ASFWDriver/Info.plist).
+    private static let pciPrimaryMatch = "0x000011c1&0x0000FFFF 0x0000104c&0x0000FFFF"
+    private static let pciClassMatch = "0x0c001000&0xffffff00"
 
     static func snapshot() -> DriverExtensionRegistrySnapshot {
         let server = serverState()
@@ -120,7 +122,8 @@ enum DriverExtensionRegistryInspector {
             return false
         }
         let mutableMatching = matching as NSMutableDictionary
-        mutableMatching["IOPCIMatch"] = pciMatch
+        mutableMatching["IOPCIPrimaryMatch"] = pciPrimaryMatch
+        mutableMatching["IOPCIClassMatch"] = pciClassMatch
         let service = IOServiceGetMatchingService(
             kIOMainPortDefault,
             matching
