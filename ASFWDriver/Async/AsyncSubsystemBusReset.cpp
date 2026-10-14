@@ -83,13 +83,13 @@ void AsyncSubsystem::RearmATContexts() {
         // still on the interrupt workloop.
         for (uint32_t attempt = 0; attempt < 100; ++attempt) {
             nodeIdReg = hardware_->ReadNodeID();
-            if ((nodeIdReg & kNodeIDValidBit) != 0) {
-                break;
+            if (nodeIdReg == 0xFFFFFFFFu || (nodeIdReg & kNodeIDValidBit) != 0) {
+                break; // all ones: controller gone, waiting longer will not help
             }
             IODelay(100); // 100 µs
         }
 
-        const bool idValid = (nodeIdReg & kNodeIDValidBit) != 0;
+        const bool idValid = nodeIdReg != 0xFFFFFFFFu && (nodeIdReg & kNodeIDValidBit) != 0;
         if (!idValid) {
             if (generationTracker_) {
                 generationTracker_->OnSelfIDComplete(0);
