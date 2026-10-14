@@ -420,6 +420,50 @@ TEST_F(FCPTransportTests, ResetRetryWaitsForRevalidatedRouteBeforeResubmission) 
     EXPECT_EQ(completionCount, 1);
 }
 
+TEST_F(FCPTransportTests, ResetRetryFailsWhenTheUnitIsNeverRebound) {
+    config_.allowBusResetRetry = true;
+    config_.maxRetries = 1;
+    config_.routeTimeoutMs = 50;
+    Reinit();
+
+    int completionCount = 0;
+    std::optional<AvcErrorKind> kind;
+    Send([&](Reply reply) { ++completionCount; kind = KindOf(reply); }, CommandType::kStatus);
+    bus_.SetGeneration(Generation{2});
+    routes_.InvalidateLiveMappingsForBusReset();
+    transport_->OnBusReset(2);
+    EXPECT_EQ(completionCount, 0);
+
+    scheduler_.Advance(config_.routeTimeoutMs * kMillisecondNs);
+    EXPECT_EQ(completionCount, 1);
+    EXPECT_EQ(kind, AvcErrorKind::kBusReset);
+    EXPECT_EQ(bus_.WriteCount(), 1U);
+}
+
+TEST_F(FCPTransportTests, ResetRetryFailsWhenAnotherIncarnationIsBound) {
+    config_.allowBusResetRetry = true;
+    config_.maxRetries = 1;
+    Reinit();
+
+    int completionCount = 0;
+    std::optional<AvcErrorKind> kind;
+    Send([&](Reply reply) { ++completionCount; kind = KindOf(reply); }, CommandType::kStatus);
+    bus_.SetGeneration(Generation{2});
+    routes_.InvalidateLiveMappingsForBusReset();
+    transport_->OnBusReset(2);
+
+    // The unit left and a new incarnation of the GUID was bound.
+    routes_.RetireDevice(kGuid);
+    (void)routes_.UpsertFromROM(MakeROM(Generation{2}, 3), {});
+    const auto route = routes_.CurrentRoute(kGuid);
+    ASSERT_TRUE(route.has_value());
+    transport_->OnRouteRevalidated(*route);
+
+    EXPECT_EQ(completionCount, 1);
+    EXPECT_EQ(kind, AvcErrorKind::kBusReset);
+    EXPECT_EQ(bus_.WriteCount(), 1U);
+}
+
 TEST_F(FCPTransportTests, QueuedAvcSubmissionKeepsItsRequestedGeneration) {
     Send([](Reply) {});
     ASSERT_EQ(bus_.WriteCount(), 1U);
