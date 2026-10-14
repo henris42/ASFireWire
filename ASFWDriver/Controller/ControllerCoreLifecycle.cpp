@@ -174,9 +174,13 @@ bool ConfigurePhyOperationalRegisters(ASFW::Driver::HardwareInterface& hw,
     return true;
 }
 
-bool ConfigurePhyRegisters(ASFW::Driver::HardwareInterface& hw,
-                           const ASFW::Driver::ControllerConfig& config,
-                           const ASFW::Driver::RolePolicy& policy) {
+// kIOReturnNoDevice when the PHY never answers; otherwise success, with
+// phyConfigOk telling whether the 1394a enhancements could be programmed.
+kern_return_t ConfigurePhyRegisters(ASFW::Driver::HardwareInterface& hw,
+                                    const ASFW::Driver::ControllerConfig& config,
+                                    const ASFW::Driver::RolePolicy& policy,
+                                    bool& phyConfigOk) {
+    phyConfigOk = false;
     hw.SetHCControlBits(ASFW::Driver::HCControlBits::kProgramPhyEnable);
     ASFW_LOG_PHY("Opened PHY programming gate (programPhyEnable=1)");
     IODelay(1000);
@@ -186,20 +190,23 @@ bool ConfigurePhyRegisters(ASFW::Driver::HardwareInterface& hw,
         ASFW_LOG(Hardware, "PHY probe failed on first attempt; retrying with LPS toggle");
         hw.ClearHCControlBits(ASFW::Driver::HCControlBits::kLPS);
         IODelay(5000);
-        hw.SetHCControlBits(ASFW::Driver::HCControlBits::kLPS);
-        IOSleep(50);
+        // Wait for LPS and let it settle before the PHY is touched again.
+        if (const kern_return_t lpsKr = EnableLinkPowerStatus(hw); lpsKr != kIOReturnSuccess) {
+            return lpsKr;
+        }
         phyId = hw.ReadPhyRegister(1);
     }
 
     if (!phyId) {
-        ASFW_LOG(Hardware, "PHY probe failed after retry; relying on firmware defaults");
-        return false;
+        ASFW_LOG(Hardware, "❌ PHY probe failed after retry; PHY not responding");
+        return kIOReturnNoDevice;
     }
 
     const uint8_t reg1Value = phyId.value();
     ASFW_LOG_PHY("PHY probe OK (reg1=0x%02x)", reg1Value);
     ConfigureGapCount(hw, reg1Value);
-    return ConfigurePhyOperationalRegisters(hw, config, policy);
+    phyConfigOk = ConfigurePhyOperationalRegisters(hw, config, policy);
+    return kIOReturnSuccess;
 }
 
 void FinalizePhyLinkConfiguration(ASFW::Driver::HardwareInterface& hw,
@@ -690,7 +697,10 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
 
     bool phyConfigOk = false;
     if (programPhyEnableSupported) {
-        phyConfigOk = ConfigurePhyRegisters(hw, config_, rolePolicy_);
+        if (const kern_return_t phyKr = ConfigurePhyRegisters(hw, config_, rolePolicy_, phyConfigOk);
+            phyKr != kIOReturnSuccess) {
+            return phyKr;
+        }
     }
 
     phyConfigOk_ = phyConfigOk;
