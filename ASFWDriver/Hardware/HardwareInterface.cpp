@@ -91,6 +91,11 @@ kern_return_t HardwareInterface::Attach(IOService* owner, IOService* provider) {
     uint16_t vendorId = 0, deviceId = 0;
     pci->ConfigurationRead16(kIOPCIConfigurationOffsetVendorID, &vendorId);
     pci->ConfigurationRead16(kIOPCIConfigurationOffsetDeviceID, &deviceId);
+    if (vendorId == 0xFFFF) {
+        ASFW_LOG(Hardware, "❌ PCI config space reads all-ones; device not accessible");
+        pci->Close(owner);
+        return kIOReturnNoDevice;
+    }
 
     quirk_agere_lsi_ = (vendorId == 0x11c1 && (deviceId == 0x5901 || deviceId == 0x5900));
     if (quirk_agere_lsi_) {
