@@ -1,5 +1,13 @@
 # ASFireWire
 
+## Note
+
+This is a backport of the driver to Monterey and newer, targeted mainly to those who cannot update to Tahoe.
+
+This is an interim solution, and will not be maintained in the future. Also we can test only limited HW.
+
+## Overview
+
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=mrmidi_ASFW&metric=alert_status&token=3ca1b3d10414117bb3e75b1779090b4ea47f1585)](https://sonarcloud.io/summary/new_code?id=mrmidi_ASFW) [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/mrmidi/ASFireWire)
 
 ASFireWire restores FireWire (IEEE 1394) functionality removed from macOS Tahoe (26).
