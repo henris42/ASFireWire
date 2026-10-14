@@ -85,6 +85,13 @@ done
 app_min=$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP/Contents/Info.plist")
 [[ "$app_min" == "$MACOS" ]] || { echo "error: app LSMinimumSystemVersion $app_min, expected $MACOS" >&2; exit 1; }
 
+# install.sh signs the dext with ASFWDriver.entitlements; DriverKit lets the dext
+# open only the PCI devices that entitlement lists, so it must match the personality.
+DEXT_PLIST="${DEXT_BIN%/*}/Info.plist"
+match=$(/usr/libexec/PlistBuddy -c 'Print :IOKitPersonalities:ASFWDriverService:IOPCIPrimaryMatch' "$DEXT_PLIST")
+entitled=$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.driverkit.transport.pci:0:IOPCIPrimaryMatch' ASFWDriver/ASFWDriver.entitlements)
+[[ "$match" == "$entitled" ]] || { echo "error: IOPCIPrimaryMatch '$match' != entitlement '$entitled'" >&2; exit 1; }
+
 VERSION=$(head -n 1 VERSION.txt | tr -d '[:space:]')
 BUILD=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Contents/Info.plist")
 COMMIT=$(git rev-parse --short HEAD)
