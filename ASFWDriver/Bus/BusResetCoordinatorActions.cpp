@@ -337,6 +337,22 @@ void BusResetCoordinator::RequestSoftwareReset(ResetRequest request) {
         return;
     }
 
+    if (request.kind == ResetRequestKind::Recovery) {
+        if (recoveryExhausted_) {
+            return;
+        }
+        if (++consecutiveRecoveryResets_ > kMaxConsecutiveRecoveryResets) {
+            recoveryExhausted_ = true;
+            ASFW_LOG(BusReset,
+                     "❌ %u recovery resets without a topology (last: %{public}s); giving up",
+                     kMaxConsecutiveRecoveryResets, request.reason.c_str());
+            if (fatalCallback_) {
+                fatalCallback_("bus reset recovery exhausted");
+            }
+            return;
+        }
+    }
+
     if (request.kind == ResetRequestKind::Delegation && request.phyConfig.has_value() &&
         request.phyConfig->forceRootNodeID.has_value()) {
         const uint8_t newTarget = *request.phyConfig->forceRootNodeID;

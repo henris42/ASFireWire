@@ -160,6 +160,10 @@ void BusResetCoordinator::BindCallbacks(TopologyReadyCallback onTopology) {
     topologyCallback_ = std::move(onTopology);
 }
 
+void BusResetCoordinator::BindFatalCallback(FatalCallback onFatal) {
+    fatalCallback_ = std::move(onFatal);
+}
+
 BusResetCoordinator::ResetDiagnostics BusResetCoordinator::Diagnostics() const {
     return ResetDiagnostics{
         .driverStartId = diagnosticsInstanceId_,
