@@ -51,6 +51,10 @@ kern_return_t EnableLinkPowerStatus(ASFW::Driver::HardwareInterface& hw) {
     for (int lpsRetry = 0; lpsRetry < 3; lpsRetry++) {
         IOSleep(50);
         const uint32_t hcControl = hw.ReadHCControl();
+        if (hcControl == 0xFFFFFFFFU) {
+            ASFW_LOG(Hardware, "✗ HCControl reads all-ones while enabling LPS; controller gone");
+            return kIOReturnNoDevice;
+        }
         if ((hcControl & ASFW::Driver::HCControlBits::kLPS) != 0U) {
             lpsAchieved = true;
             break;
