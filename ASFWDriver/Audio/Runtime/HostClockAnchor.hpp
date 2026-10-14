@@ -39,6 +39,10 @@ struct HostClockAnchorPublishResult final {
 };
 
 struct HostClockAnchorState {
+    // A reader gives up after this many torn or in-progress reads: the writer
+    // lives in another process and may stop with `sequence` odd.
+    static constexpr uint32_t kMaxReadAttempts = 64;
+
     // Single-writer, cross-process latest-value mailbox. `sequence` is odd
     // while the producer replaces the sample and even when the fields form a
     // consistent snapshot. Intermediate anchors may be overwritten before the
@@ -99,7 +103,7 @@ struct HostClockAnchorState {
     [[nodiscard]] bool TryReadLatest(
         uint64_t afterGeneration,
         HostClockAnchorSample& out) const noexcept {
-        for (;;) {
+        for (uint32_t attempt = 0; attempt < kMaxReadAttempts; ++attempt) {
             const uint64_t sequenceBefore =
                 sequence.load(std::memory_order_acquire);
             if ((sequenceBefore & 1u) != 0) {
@@ -129,6 +133,7 @@ struct HostClockAnchorState {
                 return true;
             }
         }
+        return false;
     }
 };
 
