@@ -45,6 +45,10 @@ final class ASFWMCPHost<Driver: ASFWDriverControlling> {
         self.core = core
     }
 
+    // Swift 6.3 (Xcode 26) crashes in EarlyPerfInliner on this class's implicit
+    // deinit in x86_64 Release builds; keep the optimizer out.
+    @_optimize(none) deinit {}
+
     func start() async throws -> ASFWMCPHostStatus {
         try await start(configuration: ASFWMCPHostConfiguration())
     }
