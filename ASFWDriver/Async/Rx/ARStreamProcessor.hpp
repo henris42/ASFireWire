@@ -147,6 +147,9 @@ ARStreamStats ProcessARStream(Ctx& ctx,
                             ASFW_LOG(Async,
                                      "[%{public}s] failed to consume stitched packet (%zu bytes, kr=0x%08x)",
                                      ctxLabel, stitched->totalLength, consumeKr);
+                            // Nothing advanced, so Dequeue() would present the
+                            // same bytes again and this loop would never end.
+                            return stats;
                         }
                         // Normal boundary mechanism, not an anomaly: recurs
                         // per-buffer during sustained inbound transfer, so
