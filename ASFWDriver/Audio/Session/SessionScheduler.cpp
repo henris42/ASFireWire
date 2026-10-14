@@ -377,6 +377,7 @@ IOReturn SessionScheduler::DeferRestart(DuplexRestartReason reason, uint64_t obs
     pending_.observedRun = untied ? 0 : observedRun;
     if (!merged) {
         pending_.runAtRequest = actual_.run;
+        pending_.rearms = 0;
     }
     pending_.active = true;
     const uint64_t generation = ++pending_.generation;
@@ -423,9 +424,11 @@ void SessionScheduler::FirePendingRestart(uint64_t generation) noexcept {
         IOLockUnlock(lock_);
         return;
     }
-    if (reconciling_) {
+    if (reconciling_ && pending_.rearms < kMaxPendingRearms) {
         // A reconcile is rebuilding the streams now; wait out another period
         // rather than restart behind it (TCAT: "unless one is running").
+        // Past the limit, queue behind the running reconcile instead.
+        ++pending_.rearms;
         IOLockUnlock(lock_);
         const uint32_t quietMs = RestartQuietPeriodMs();
         if (quietMs != 0) {
