@@ -26,6 +26,11 @@ namespace ASFW::Driver {
 /// few means an event that will not clear.
 inline constexpr int kMaxInterruptPasses = 8;
 
+/// Consecutive interrupts that may end with events still pending, each followed
+/// by a retrigger, before those events are masked. Without a cap an event that
+/// never acknowledges retriggers forever: an MSI storm on the interrupt queue.
+inline constexpr uint32_t kMaxConsecutiveRetriggers = 4;
+
 /// Runs `handle` on `capture()` snapshots until `capture().intEvent & enabledMask()`
 /// is zero. Returns the enabled events still pending when it gives up, or zero.
 template <typename Capture, typename EnabledMask, typename Handle>
