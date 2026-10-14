@@ -122,6 +122,8 @@ public:
     static constexpr uint32_t kWaitTimeoutMs = 15000;
     // Reconciles one caller runs back to back for edits that arrived meanwhile.
     static constexpr uint32_t kMaxReconcilePasses = 3;
+    // Quiet periods a pending restart waits out behind running reconciles.
+    static constexpr uint32_t kMaxPendingRearms = 3;
 
     SessionScheduler(uint64_t guid, Dependencies dependencies) noexcept;
     ~SessionScheduler() noexcept;
@@ -257,6 +259,7 @@ private:
         uint64_t observedRun{0};
         uint64_t runAtRequest{0};   // covered once another run has started
         uint64_t generation{0};     // bumped per request; a stale timer is a no-op
+        uint32_t rearms{0};         // periods waited out behind a running reconcile
         Scheduling::TimerToken timer{Scheduling::kInvalidTimerToken};
     };
     PendingRestart pending_{};
