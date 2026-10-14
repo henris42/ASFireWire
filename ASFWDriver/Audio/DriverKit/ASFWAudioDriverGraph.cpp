@@ -12,6 +12,7 @@
 #include "ASFWAvcLevelControl.h"
 #include "Config/AudioProfileRegistry.hpp"
 #include "../../Common/TimingUtils.hpp"
+#include "../../Common/DriverKitCompat.hpp"
 #include "../../Common/DriverKitOwnership.hpp"
 #include "../../Shared/Isoch/AudioTimingGeometry.hpp"
 #include "../../Audio/Wire/AMDTP/AmdtpRateGeometry.hpp"
@@ -412,7 +413,9 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
 
     // Restore the user's stream format under the stable GUID-based device UID.
     // HandleChangeSampleRate still validates rates against the published formats.
+#if ASFW_HAS_ADK_RESTORE_AND_LATENCY
     ivars.audioDevice->SetWantsStreamFormatsRestored(true);
+#endif
 
     const uint32_t current_period = ivars.audioDevice->GetZeroTimestampPeriod();
     ASFW_LOG(Audio, "ASFWAudioDriver: IOUserAudioDevice created. GetZeroTimestampPeriod() confirmed: %u frames", current_period);
@@ -614,10 +617,16 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
             ASFW_LOG(Audio, "ASFWAudioDriver: Failed to create input stream");
             return kIOReturnNoMemory;
         }
+#if ASFW_HAS_ADK_RESTORE_AND_LATENCY
         ASFW_LOG(Audio,
                  "ASFWAudioDriver: ADK object ids inputStream=%u owner=%u",
                  ivars.inputStream->GetObjectID(),
                  ivars.inputStream->GetOwnerObjectID());
+#else
+        ASFW_LOG(Audio,
+                 "ASFWAudioDriver: ADK object ids inputStream=%u",
+                 ivars.inputStream->GetObjectID());
+#endif
 
         auto inputName = OSSharedPtr(OSString::withCString(ivars.device.inputPlugName), OSNoRetain);
         if (!inputName) {
@@ -656,10 +665,16 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
             ASFW_LOG(Audio, "ASFWAudioDriver: Failed to create output stream");
             return kIOReturnNoMemory;
         }
+#if ASFW_HAS_ADK_RESTORE_AND_LATENCY
         ASFW_LOG(Audio,
                  "ASFWAudioDriver: ADK object ids outputStream=%u owner=%u",
                  ivars.outputStream->GetObjectID(),
                  ivars.outputStream->GetOwnerObjectID());
+#else
+        ASFW_LOG(Audio,
+                 "ASFWAudioDriver: ADK object ids outputStream=%u",
+                 ivars.outputStream->GetObjectID());
+#endif
 
         auto outputName = OSSharedPtr(OSString::withCString(ivars.device.outputPlugName), OSNoRetain);
         if (!outputName) {
@@ -704,6 +719,7 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         return kIOReturnNotReady;
     }
 
+#if ASFW_HAS_ADK_RESTORE_AND_LATENCY
     if (ivars.outputStream && !requireAdkSuccess(
                                   "outputStream.SetLatency",
                                   ivars.outputStream->SetLatency(0))) {
@@ -714,6 +730,7 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
                                  ivars.inputStream->SetLatency(0))) {
         return error;
     }
+#endif
 
     if (ivars.inputStream) {
         error = ivars.audioDevice->AddStream(ivars.inputStream.get());
@@ -809,7 +826,9 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     // Confirmed AV/C controls opt in to the host's durable settings store.
     // Restoration travels through the same checked write/readback callbacks.
     // Other families keep their existing physical-control authority policy.
+#if ASFW_HAS_ADK_RESTORE_AND_LATENCY
     ivars.audioDevice->SetWantsControlsRestored(ivars.device.avcControlCount != 0);
+#endif
     ASFW_LOG(Audio, "[AvcControl] restoration controls=%u streamFormats=1 descriptors=%u initialValues=discovery hostRestoreSource=unspecified", ivars.device.avcControlCount != 0, ivars.device.avcControlCount);
     ASFW_LOG(Audio, "[AvcControl] init-state guid=0x%016llx sampleRate=%.0f source=nub hostRestore=requested completion=not-observable", ivars.device.guid, ivars.device.currentSampleRate);
     for (uint32_t index = 0; index < ivars.device.avcControlCount; ++index) {
