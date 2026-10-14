@@ -441,6 +441,38 @@ TEST(BusResetCoordinatorTests, StuckActiveATContextDoesNotStallResetForever) {
     EXPECT_FALSE(rig.hardware.TestBusResetIssued());
 }
 
+// A controller whose NodeID never turns valid after Self-ID used to keep the
+// FSM polling in Rearming forever, with async held off for the reset so no
+// transaction timeout could fire either.
+TEST(BusResetCoordinatorTests, NodeIDThatNeverTurnsValidDoesNotStallRearmingForever) {
+    BusResetTestRig rig;
+    rig.Initialize();
+    // Park the cycle in QuiescingAT so NodeID can go bad after Self-ID decode.
+    rig.hardware.SetTestRegister(
+        Register32FromOffsetUnchecked(DMAContextHelpers::AsReqTrContextControlSet),
+        kContextControlActiveBit);
+
+    rig.StartResetCycle();
+    const auto rawCapture = MakeRawSelfIDCapture(
+        7U, {MakeBaseSelfID(0U, 63U, true, true), MakeBaseSelfID(1U, 63U)});
+    rig.PrimeCapture(rawCapture, 7U);
+    rig.TriggerStickyCompletion();
+    rig.AdvanceMs(50U);
+    ASSERT_EQ(rig.coordinator.GetState(), BusResetCoordinator::State::QuiescingAT);
+
+    rig.hardware.SetTestRegister(Register32::kNodeID, 0U); // valid bit clear
+    rig.AdvanceMs(100U);
+    rig.AdvanceMs(150U);
+    EXPECT_EQ(rig.coordinator.GetState(), BusResetCoordinator::State::Rearming);
+    EXPECT_TRUE(rig.async.completeGenerations.empty());
+
+    rig.AdvanceMs(1000U);
+    EXPECT_NE(rig.coordinator.GetState(), BusResetCoordinator::State::Rearming);
+    EXPECT_EQ(rig.async.completeGenerations, std::vector<uint8_t>({7U}));
+    EXPECT_EQ(rig.coordinator.Diagnostics().lastRecoveryReasonCode,
+              BusResetCoordinator::RecoveryReasonCode::NodeIDTimeout);
+}
+
 // Each failed cycle used to queue another recovery reset with no overall cap,
 // so a controller that never produces a topology was reset every few seconds
 // forever. Past the cap recovery stops and the driver is told to give up, once.

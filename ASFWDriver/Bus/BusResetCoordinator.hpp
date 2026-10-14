@@ -154,6 +154,7 @@ class BusResetCoordinator {
         ReadyForDiscoveryFailed = 5,
         ManualResetWatchdog = 6,
         ATQuiesceTimeout = 7,
+        NodeIDTimeout = 8,
     };
 
     struct ResetDiagnostics {
