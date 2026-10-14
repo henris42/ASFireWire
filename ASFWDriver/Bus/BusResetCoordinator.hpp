@@ -68,6 +68,8 @@ class BusResetCoordinatorTestPeer;
 class BusResetCoordinator {
   public:
     using TopologyReadyCallback = std::function<void(const TopologySnapshot&)>;
+    /// Called once when bus-reset recovery gives up; the driver should stop.
+    using FatalCallback = std::function<void(const char* reason)>;
 
     enum class State : uint8_t {
         Idle,               // Normal operation, no reset in progress
@@ -112,6 +114,7 @@ class BusResetCoordinator {
 
     /// Register the topology publication callback used after a stable reset completes.
     void BindCallbacks(TopologyReadyCallback onTopology);
+    void BindFatalCallback(FatalCallback onFatal);
 
     /// Return the most recent reset metrics snapshot.
     const BusResetMetrics& Metrics() const { return metrics_; }
@@ -365,6 +368,7 @@ class BusResetCoordinator {
     uint64_t firstIrqTime_{0};
     uint64_t busResetClearTime_{0};
     TopologyReadyCallback topologyCallback_;
+    FatalCallback fatalCallback_;
 
     std::atomic<bool> deferredRunScheduled_{false};
     HardwareInterface* hardware_{nullptr};
@@ -393,6 +397,12 @@ class BusResetCoordinator {
     uint32_t delegateRetryCount_{0};
     static constexpr uint32_t kMaxDelegateRetries = 5;
     bool delegateSuppressed_{false};
+    // Recovery resets requested since a reset last produced a topology. A
+    // controller whose Self-ID or NodeID never comes good would otherwise be
+    // reset every few seconds forever.
+    uint32_t consecutiveRecoveryResets_{0};
+    static constexpr uint32_t kMaxConsecutiveRecoveryResets = 5;
+    bool recoveryExhausted_{false};
     uint32_t lastResumeGeneration_{0xFFFFFFFFU};
 
     // Discovery delay for slow-booting devices (DICE/Saffire).

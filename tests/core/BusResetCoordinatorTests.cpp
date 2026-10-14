@@ -46,6 +46,10 @@ class BusResetCoordinatorTestPeer {
         coordinator.ConsumeSelfIDLatch();
     }
 
+    static constexpr uint32_t MaxConsecutiveRecoveryResets() {
+        return BusResetCoordinator::kMaxConsecutiveRecoveryResets;
+    }
+
     static void RequestRecoveryReset(BusResetCoordinator& coordinator, bool longReset = false) {
         coordinator.RequestSoftwareReset(
             {BusResetCoordinator::ResetRequestKind::Recovery,
@@ -435,6 +439,28 @@ TEST(BusResetCoordinatorTests, StuckActiveATContextDoesNotStallResetForever) {
     EXPECT_NE(rig.coordinator.Metrics().lastFailureReason->find("AT quiesce timeout"),
               std::string::npos);
     EXPECT_FALSE(rig.hardware.TestBusResetIssued());
+}
+
+// Each failed cycle used to queue another recovery reset with no overall cap,
+// so a controller that never produces a topology was reset every few seconds
+// forever. Past the cap recovery stops and the driver is told to give up, once.
+TEST(BusResetCoordinatorTests, RecoveryResetsWithoutTopologyAreCappedThenFatal) {
+    BusResetTestRig rig;
+    rig.Initialize();
+    std::vector<std::string> fatalReasons;
+    rig.coordinator.BindFatalCallback(
+        [&fatalReasons](const char* reason) { fatalReasons.emplace_back(reason); });
+
+    for (uint32_t i = 0; i < BusResetCoordinatorTestPeer::MaxConsecutiveRecoveryResets(); ++i) {
+        BusResetCoordinatorTestPeer::RequestRecoveryReset(rig.coordinator);
+    }
+    EXPECT_TRUE(fatalReasons.empty());
+    EXPECT_TRUE(BusResetCoordinatorTestPeer::HasPendingSoftwareReset(rig.coordinator));
+
+    BusResetCoordinatorTestPeer::RequestRecoveryReset(rig.coordinator);
+    BusResetCoordinatorTestPeer::RequestRecoveryReset(rig.coordinator);
+    ASSERT_EQ(fatalReasons.size(), 1U);
+    EXPECT_EQ(fatalReasons.front(), "bus reset recovery exhausted");
 }
 
 TEST(BusResetCoordinatorTests, StableResetDelaysDiscoveryByAppleScanDelay) {

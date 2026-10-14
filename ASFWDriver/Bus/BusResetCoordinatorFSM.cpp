@@ -180,6 +180,8 @@ BusResetCoordinator::StepResult BusResetCoordinator::StepRestoringConfigROM() {
     BuildTopology();
 
     if (cycle_.acceptedTopology.has_value()) {
+        consecutiveRecoveryResets_ = 0;
+        recoveryExhausted_ = false;
         MaybeRequestTopologyDrivenReset();
     }
 
