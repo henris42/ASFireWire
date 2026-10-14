@@ -18,6 +18,7 @@ namespace {
 
 constexpr uint32_t kDeferredPollMs = 1;
 constexpr uint32_t kSelfIDTimeoutMs = 1000;
+constexpr uint32_t kNodeIDValidTimeoutMs = 1000;
 // Upper bound on waiting for the AT contexts to drop ACTIVE after RUN is
 // cleared. Linux context_stop() gives up after ~10 ms (1000 × 10 µs), logs
 // "DMA context still active" and carries on with the reset
@@ -230,8 +231,23 @@ BusResetCoordinator::StepResult BusResetCoordinator::StepClearingBusReset() {
 
 BusResetCoordinator::StepResult BusResetCoordinator::StepRearming() {
     if (!G_NodeIDValid()) {
-        YieldAndReschedule(kDeferredPollMs, "Waiting for NodeID valid");
-        return StepResult::Yield;
+        const bool gone = (hardware_ == nullptr) || hardware_->HardwareGone();
+        const uint64_t waitedNs = MonotonicNow() - stateEntryTime_;
+        if (!gone && waitedNs < static_cast<uint64_t>(kNodeIDValidTimeoutMs) * 1'000'000ULL) {
+            YieldAndReschedule(kDeferredPollMs, "Waiting for NodeID valid");
+            return StepResult::Yield;
+        }
+        // Finish the cycle anyway so async work (held off for the reset) can
+        // time out instead of waiting forever; recovery is capped.
+        RecordRecoveryReason(gone ? "NodeID unreadable: controller gone" : "NodeID valid timeout");
+        RecordRecoveryReasonCode(RecoveryReasonCode::NodeIDTimeout);
+        if (!gone) {
+            RequestSoftwareReset(
+                {ResetRequestKind::Recovery, ResetFlavor::Short, std::nullopt, "NodeID timeout"});
+        } else if (fatalCallback_ && !recoveryExhausted_) {
+            recoveryExhausted_ = true;
+            fatalCallback_("controller gone during bus reset");
+        }
     }
 
     if (hardware_ != nullptr) {
