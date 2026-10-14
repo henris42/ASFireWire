@@ -343,6 +343,25 @@ TEST_F(FCPTransportTests, InterimResponseExtendsDeadlineWithoutCompletingCommand
     EXPECT_EQ(completionCount, 1);
 }
 
+TEST_F(FCPTransportTests, RepeatedInterimDoesNotExtendTheDeadlineAgain) {
+    std::optional<AvcErrorKind> kind;
+    int completionCount = 0;
+    Send([&](Reply reply) { ++completionCount; kind = KindOf(reply); });
+    ASSERT_TRUE(bus_.CompleteNextWrite(AsyncStatus::kSuccess));
+
+    constexpr std::array<uint8_t, 3> interim{0x0F, 0xFF, 0x30};
+    transport_->OnFCPResponse(2, 1, interim);
+    for (int i = 0; i < 4; ++i) {
+        scheduler_.Advance((config_.interimTimeoutMs / 5) * kMillisecondNs);
+        transport_->OnFCPResponse(2, 1, interim);
+    }
+    EXPECT_EQ(completionCount, 0);
+    // The deadline still counts from the first INTERIM.
+    scheduler_.Advance((config_.interimTimeoutMs - 4 * (config_.interimTimeoutMs / 5)) * kMillisecondNs);
+    EXPECT_EQ(completionCount, 1);
+    EXPECT_EQ(kind, AvcErrorKind::kTimeout);
+}
+
 TEST_F(FCPTransportTests, ResetRetryWaitsForRevalidatedRouteBeforeResubmission) {
     config_.allowBusResetRetry = true;
     config_.maxRetries = 1;

@@ -12,7 +12,7 @@
 //
 //   Writing          the command block write is in flight
 //   AwaitingResponse the write reached the target; waiting for the response
-//                    (an INTERIM response extends the deadline)
+//                    (the first INTERIM response extends the deadline once)
 //   AwaitingRoute    a bus reset interrupted a STATUS/INQUIRY that may be
 //                    replayed once discovery rebinds the unit
 //   Answered         the final response was accepted; it is delivered from the
@@ -190,6 +190,8 @@ private:
     };
     struct AwaitingResponse {
         WriteAttempt attempt;
+        /// An INTERIM arrived: the deadline was extended, and is not again.
+        bool interim{false};
     };
     struct AwaitingRoute {
         std::optional<Discovery::DeviceRouteToken> resetRoute;

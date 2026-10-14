@@ -393,8 +393,16 @@ void FCPTransport::OnFCPResponse(uint16_t srcNodeID,
     }
 
     if (payload[0] == static_cast<uint8_t>(ASFW::AVC::ResponseCode::kInterim)) {
+        // One extension per write: a target repeating INTERIM must not hold
+        // the transaction (and every command queued behind it) forever.
+        if (const auto* awaiting = std::get_if<AwaitingResponse>(&active_->phase);
+            awaiting != nullptr && awaiting->interim) {
+            IOLockUnlock(lock_);
+            ASFW_LOG_V2(FCP, "FCPTransport: repeated INTERIM; deadline not extended");
+            return;
+        }
         active_->txn.sawInterim = true;
-        active_->phase = AwaitingResponse{.attempt = *attempt};
+        active_->phase = AwaitingResponse{.attempt = *attempt, .interim = true};
         ArmTimer(config_.interimTimeoutMs);
         IOLockUnlock(lock_);
         ASFW_LOG_V2(FCP, "FCPTransport: INTERIM; waiting up to %u ms for the final response",
