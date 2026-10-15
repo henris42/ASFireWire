@@ -8,6 +8,7 @@
 #
 #   tools/build-for-macos.sh monterey            # -> $DIST_DIR/monterey/
 #   DIST_DIR=/tmp/out tools/build-for-macos.sh sequoia
+#   ASFW_DYLD_CACHE=~/dk12/dyld tools/build-for-macos.sh monterey   # + symbol check
 #
 # The full app needs macOS 14. Below that, ASFW.app is ASFWLoader instead: the
 # same bundle, entitlements and dext, with only activate/deactivate/status.
@@ -101,6 +102,34 @@ match=$(/usr/libexec/PlistBuddy -c 'Print :IOKitPersonalities:ASFWDriverService:
 entitled=$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.driverkit.transport.pci:0:IOPCIPrimaryMatch' ASFWDriver/ASFWDriver.entitlements)
 [[ "$match" == "$entitled" ]] || { echo "error: IOPCIPrimaryMatch '$match' != entitlement '$entitled'" >&2; exit 1; }
 
+# Arm at match time as well: with IOPropertyMatch the personality only matches a
+# controller that carries asfw-armed = <01>, so an unarmed machine never launches
+# the dext at all and Apple's driver takes the card without a server timeout.
+# The Start() gate stays as a second line. install.sh signs the dext on the target.
+if [[ "$ARMING" == 1 ]]; then
+  python3 - "$DEXT_PLIST" <<'PLIST'
+import plistlib, sys
+path = sys.argv[1]
+armed = {"asfw-armed": b"\x01"}
+with open(path, "rb") as f:
+    plist = plistlib.load(f)
+plist["IOKitPersonalities"]["ASFWDriverService"]["IOPropertyMatch"] = armed
+with open(path, "wb") as f:
+    plistlib.dump(plist, f)
+with open(path, "rb") as f:
+    assert plistlib.load(f)["IOKitPersonalities"]["ASFWDriverService"]["IOPropertyMatch"] == armed
+PLIST
+fi
+
+# With a copy of the target's DriverKit dyld cache directory, refuse to package a
+# dext that would die in dyld there (see tools/check-dext-symbols.sh).
+if [[ -n "${ASFW_DYLD_CACHE:-}" ]]; then
+  for arch in $(lipo -archs "$DEXT_BIN"); do
+    tools/check-dext-symbols.sh "$DEXT_BIN" "$ASFW_DYLD_CACHE" "$arch" \
+      || { echo "error: $arch dext has imports the runtime in $ASFW_DYLD_CACHE lacks" >&2; exit 1; }
+  done
+fi
+
 VERSION=$(head -n 1 VERSION.txt | tr -d '[:space:]')
 BUILD=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Contents/Info.plist")
 COMMIT=$(git rev-parse --short HEAD)
@@ -125,7 +154,8 @@ install -m 0644 ASFWDriver/ASFWDriver.entitlements "$STAGE/Entitlements/ASFWDriv
   echo "macOS min:   $MACOS"
   echo "DriverKit:   $DRIVERKIT"
   echo "app:         $APP_KIND"
-  echo "arming:      $([[ "$ARMING" == 1 ]] && echo "required (asfw-armed property)" || echo off)"
+  echo "arming:      $([[ "$ARMING" == 1 ]] && echo "required (asfw-armed = <01> on the controller; IOPropertyMatch + Start gate)" || echo off)"
+  echo "symbols:     $([[ -n "${ASFW_DYLD_CACHE:-}" ]] && echo "checked against $ASFW_DYLD_CACHE" || echo "not checked against a target cache")"
   echo "archs:       $(lipo -archs "$DEXT_BIN")"
   echo "xcode:       $(xcodebuild -version | tr '\n' ' ')"
   echo "driverkit sdk: $(xcrun --sdk driverkit --show-sdk-version)"
