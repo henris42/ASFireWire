@@ -20,15 +20,19 @@ Each build comes as `ASFW-<version>-<macos>-b<build>.zip` and contains:
 2. **Log in to the desktop.** Driver activation needs the logged-in user's session.
    Use Terminal on the Mac itself, not a bare ssh session (see "Over ssh" below).
 3. **Arm the controller.** These builds will not touch the FireWire controller unless
-   OpenCore gives it an `asfw-armed` property. Without it the driver installs, logs
-   `no asfw-armed property on the controller; not starting`, and leaves the card to
-   Apple's driver. That is a good first test.
+   OpenCore gives it an `asfw-armed` property with the one-byte value `01`. Without
+   it the driver's personality does not even match the controller: the driver
+   installs and activates, but is never launched, and Apple's driver takes the card
+   as if ASFW were not there (`ioreg -rc IOUserService | grep -i asfw` prints
+   nothing). That is a good first test. The driver also checks the property again
+   in `Start()`, so a build that somehow matched anyway still refuses to run.
    - Find the PCI path of the FireWire controller, for example with
      [gfxutil](https://github.com/acidanthera/gfxutil): `gfxutil | grep -i 104c:8025`
      for the TI XIO2213B. It sits behind the card's bridge, so expect something like
      `PciRoot(0x0)/Pci(0x1C,0x4)/Pci(0x0,0x0)/Pci(0x0,0x0)`.
    - In OpenCore `config.plist`, under `DeviceProperties` > `Add` > *that path*, add the
-     key `asfw-armed`, type **Data**, value `01`. Reboot.
+     key `asfw-armed`, type **Data**, value exactly `01` (one byte; `0001` or a
+     string does not arm). Reboot.
    - Check: `ioreg -rc IOPCIDevice | grep -i asfw-armed`
    - **To disarm, delete that key and reboot.** The EFI partition can be edited from
      another OS if this one no longer boots.
