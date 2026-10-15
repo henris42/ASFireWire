@@ -160,6 +160,10 @@ targets:
           - "$(inherited)"
           - "-include"
           - "new"
+          # A dext process never runs static destructors (it is killed, never
+          # exits), so skip the __cxa_atexit registration for function-local
+          # statics: the symbol is missing from libc++ before DriverKit 22.
+          - "-fno-c++-static-destructors"
         CLANG_ENABLE_MODULES: YES
         EXCLUDED_SOURCE_FILE_NAMES: "*.md"
         FRAMEWORK_SEARCH_PATHS:

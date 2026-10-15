@@ -4590,6 +4590,7 @@
 					"$(inherited)",
 					"-include",
 					new,
+					"-fno-c++-static-destructors",
 				);
 				OTHER_LDFLAGS = "-framework DriverKit -framework PCIDriverKit -framework AudioDriverKit -framework SCSIControllerDriverKit";
 				PRODUCT_BUNDLE_IDENTIFIER = net.asfw.driver;
@@ -4684,6 +4685,7 @@
 					"$(inherited)",
 					"-include",
 					new,
+					"-fno-c++-static-destructors",
 				);
 				OTHER_LDFLAGS = "-framework DriverKit -framework PCIDriverKit -framework AudioDriverKit -framework SCSIControllerDriverKit";
 				PRODUCT_BUNDLE_IDENTIFIER = net.asfw.driver;
