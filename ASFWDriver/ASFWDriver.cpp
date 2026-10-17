@@ -367,6 +367,7 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
     }
     ctx.lifecycle->MarkStageComplete(StartStage::kDependenciesReady);
     const auto failStart = [&ctx](kern_return_t status, const char* detail) {
+        ASFW_LOG(Controller, "ASFWDriver::Start() failed at %{public}s: 0x%08x", detail, status);
         if (ctx.lifecycle) {
             if (const auto plan = ctx.lifecycle->BeginFailedStart(detail, mach_absolute_time())) {
                 if (plan->runTeardown) {
@@ -412,11 +413,6 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
     }
     ctx.lifecycle->MarkStageComplete(StartStage::kProviderOpened);
 
-#ifndef ASFW_HOST_TEST
-    // Arm only after Attach succeeds. A revocation can then only fence an
-    // already-open hardware incarnation; it cannot race a later Attach().
-    ArmProviderTerminationNotifications(*this, provider, ctx);
-#endif
     // Populate the shared host timebase before any interrupt can fire. The
     // InterruptOccurred handler converts the DriverKit mach-tick timestamp to
     // nanoseconds via ASFW::Timing::hostTicksToNanos(), which needs
@@ -549,6 +545,16 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
     if (!ctx.lifecycle->CompleteStart("runtime start complete", mach_absolute_time())) {
         return failStart(kIOReturnError, "runtime start completion rejected");
     }
+
+#ifndef ASFW_HOST_TEST
+    // Arm only after the last failStart(). Enabling the source queues an initial
+    // delivery for the already-matching provider; a failed start that tears the
+    // source down with that delivery still queued lets DriverKit invoke the
+    // freed OSAction (seen on DriverKit 21: DidAction on 0xeeee... after the
+    // interrupt setup failed). Arming after Attach also means a revocation can
+    // only fence an already-open hardware incarnation.
+    ArmProviderTerminationNotifications(*this, provider, ctx);
+#endif
 
     // NOTE: do NOT call ChangePowerState/SetPowerOverride here. The kernel
     // joins a dext into the PM tree only after Start() returns
