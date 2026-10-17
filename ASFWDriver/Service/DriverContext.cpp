@@ -403,13 +403,22 @@ kern_return_t DriverWiring::PrepareInterrupts(ASFWDriver& service, IOService* pr
             return kIOReturnBadArgument;
         }
 
+        // MSI-X, then MSI, then the legacy INTx line. The OHCI function of TI
+        // XIO2213B/TSB82AA2 cards has no MSI capability at all (Power Management
+        // only), so both calls fail there. Without ConfigureInterrupts, index 0 of
+        // the provider is its INTx vector; the handler already ignores a shared
+        // line's interrupts that leave IntEvent clear.
+        const char* mode = "MSI-X";
         auto status = pci->ConfigureInterrupts(kIOInterruptTypePCIMessagedX, 1, 1, 0);
         if (status != kIOReturnSuccess) {
+            mode = "MSI";
             status = pci->ConfigureInterrupts(kIOInterruptTypePCIMessaged, 1, 1, 0);
-            if (status != kIOReturnSuccess) {
-                return status;
-            }
         }
+        if (status != kIOReturnSuccess) {
+            mode = "INTx";
+        }
+        ASFW_LOG(Controller, "PrepareInterrupts: using %{public}s interrupts (last status 0x%08x)",
+                 mode, status);
     }
 
     if (!ctx.interruptAction) {
