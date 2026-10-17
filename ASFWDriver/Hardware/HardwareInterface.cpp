@@ -1,6 +1,7 @@
 #include "HardwareInterface.hpp"
 
 #include <algorithm>
+#include <bit>
 
 #include "../Async/Interfaces/IAsyncControllerPort.hpp"
 #include "../Bus/IRM/IRMCSRConstants.hpp"
@@ -747,10 +748,29 @@ HardwareInterface::AllocateDMA(size_t length, uint64_t options, size_t alignment
         return std::nullopt;
     }
 
+    // Callers carve every buffer from one device address, so it must be one
+    // physical segment. A dext cannot pass kIOMemoryPhysicallyContiguous; xnu
+    // allocates contiguously only when alignment exceeds the page size
+    // (IOBufferMemoryDescriptor.cpp -> IOKernelAllocateWithPhysicalRestrict),
+    // so ask for that whenever the buffer can span a page. 32 KiB covers both
+    // 4 KiB and 16 KiB pages. A buffer within one page just must not straddle
+    // one, which aligning it to its own size guarantees. Without this, a 1.6 MB
+    // slab came back as 393 scattered pages on macOS 12.
+    constexpr size_t kSmallestPageSize = 4096;
+    constexpr size_t kContiguousAlignment = 32768;
+    if (length > kSmallestPageSize) {
+        alignment = std::max(alignment, kContiguousAlignment);
+    } else {
+        alignment = std::max(alignment, std::bit_ceil(length));
+    }
+
     IOBufferMemoryDescriptor* buffer = nullptr;
     kern_return_t kr = IOBufferMemoryDescriptor::Create(options, length, alignment, &buffer);
     if (kr != kIOReturnSuccess || buffer == nullptr) {
-        ASFW_LOG_V0(Hardware, "IOBufferMemoryDescriptor::Create failed: 0x%08x", kr);
+        ASFW_LOG_V0(Hardware,
+                    "IOBufferMemoryDescriptor::Create failed: 0x%08x (%zu bytes, alignment %zu%{public}s)",
+                    kr, length, alignment,
+                    length > kSmallestPageSize ? ", physically contiguous; memory may be fragmented" : "");
         return std::nullopt;
     }
 
