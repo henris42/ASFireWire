@@ -149,12 +149,15 @@ install -m 0644 ASFWDriver/ASFWDriver.entitlements "$STAGE/Entitlements/ASFWDriv
 # transport.pci also lists com.apple.developer.driverkit.builtin as a string.
 # AppleACPIPlatform marks every PCI device that has an ACPI node, which VMware's
 # DSDT gives to all of them. Only install.sh's ad-hoc signature uses this copy.
+# The string must come BEFORE the match dictionary: IOPCIFamily stops scanning
+# the array at the first dictionary that matches (verified on macOS 12, b46).
+STAGED_ENT="$STAGE/Entitlements/ASFWDriver.entitlements"
 /usr/libexec/PlistBuddy \
-  -c 'Add :com.apple.developer.driverkit.transport.pci: string com.apple.developer.driverkit.builtin' \
-  "$STAGE/Entitlements/ASFWDriver.entitlements"
-[[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.driverkit.transport.pci:1' \
-      "$STAGE/Entitlements/ASFWDriver.entitlements")" == com.apple.developer.driverkit.builtin ]] \
-  || { echo "error: builtin entitlement not added" >&2; exit 1; }
+  -c 'Add :com.apple.developer.driverkit.transport.pci:0 string com.apple.developer.driverkit.builtin' \
+  "$STAGED_ENT"
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.driverkit.transport.pci:0' "$STAGED_ENT")" == com.apple.developer.driverkit.builtin \
+   && "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.driverkit.transport.pci:1:IOPCIPrimaryMatch' "$STAGED_ENT")" == "$match" ]] \
+  || { echo "error: packaged entitlement order is not (builtin, match dict)" >&2; exit 1; }
 
 {
   echo "name:        $NAME"
@@ -165,7 +168,8 @@ install -m 0644 ASFWDriver/ASFWDriver.entitlements "$STAGE/Entitlements/ASFWDriv
   echo "DriverKit:   $DRIVERKIT"
   echo "app:         $APP_KIND"
   echo "arming:      $([[ "$ARMING" == 1 ]] && echo "required (asfw-armed = <01> on the controller; IOPropertyMatch + Start gate)" || echo off)"
-  echo "entitlements: transport.pci (0x11c1, 0x104c) + builtin"
+  echo "entitlements: transport.pci = (builtin, {0x11c1, 0x104c}) - string first"
+  echo "dma:         buffers over 4 KiB allocated physically contiguous (alignment 32 KiB)"
   echo "interrupts:  MSI-X -> MSI -> INTx"
   echo "symbols:     $([[ -n "${ASFW_DYLD_CACHE:-}" ]] && echo "checked against $ASFW_DYLD_CACHE" || echo "not checked against a target cache")"
   echo "archs:       $(lipo -archs "$DEXT_BIN")"
