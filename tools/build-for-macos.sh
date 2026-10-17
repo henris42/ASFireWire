@@ -145,6 +145,16 @@ install -m 0755 install.sh "$STAGE/install.sh"
 install -m 0644 INSTALL.md "$STAGE/INSTALL.md"
 install -m 0644 ASFW/App.entitlements "$STAGE/Entitlements/App.entitlements"
 install -m 0644 ASFWDriver/ASFWDriver.entitlements "$STAGE/Entitlements/ASFWDriver.entitlements"
+# IOPCIDevice refuses a dext the match on a controller marked "built-in" unless
+# transport.pci also lists com.apple.developer.driverkit.builtin as a string.
+# AppleACPIPlatform marks every PCI device that has an ACPI node, which VMware's
+# DSDT gives to all of them. Only install.sh's ad-hoc signature uses this copy.
+/usr/libexec/PlistBuddy \
+  -c 'Add :com.apple.developer.driverkit.transport.pci: string com.apple.developer.driverkit.builtin' \
+  "$STAGE/Entitlements/ASFWDriver.entitlements"
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.driverkit.transport.pci:1' \
+      "$STAGE/Entitlements/ASFWDriver.entitlements")" == com.apple.developer.driverkit.builtin ]] \
+  || { echo "error: builtin entitlement not added" >&2; exit 1; }
 
 {
   echo "name:        $NAME"
@@ -155,6 +165,8 @@ install -m 0644 ASFWDriver/ASFWDriver.entitlements "$STAGE/Entitlements/ASFWDriv
   echo "DriverKit:   $DRIVERKIT"
   echo "app:         $APP_KIND"
   echo "arming:      $([[ "$ARMING" == 1 ]] && echo "required (asfw-armed = <01> on the controller; IOPropertyMatch + Start gate)" || echo off)"
+  echo "entitlements: transport.pci (0x11c1, 0x104c) + builtin"
+  echo "interrupts:  MSI-X -> MSI -> INTx"
   echo "symbols:     $([[ -n "${ASFW_DYLD_CACHE:-}" ]] && echo "checked against $ASFW_DYLD_CACHE" || echo "not checked against a target cache")"
   echo "archs:       $(lipo -archs "$DEXT_BIN")"
   echo "xcode:       $(xcodebuild -version | tr '\n' ' ')"
