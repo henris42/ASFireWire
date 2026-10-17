@@ -600,6 +600,7 @@ kern_return_t IMPL(ASFWDriver, Stop) {
             // queued timer callback returns.
             auto* timer = ivars->wakeVerifyTimer;
             auto* action = ivars->wakeVerifyAction;
+            IODispatchQueue* queue = ivars->context ? ivars->context->workQueue.get() : nullptr;
             ivars->wakeVerifyTimer = nullptr;
             ivars->wakeVerifyAction = nullptr;
             ASFW_LOG(Controller, "[Teardown] wake verify cancel requested source=%p action=%p", timer, action);
@@ -607,12 +608,12 @@ kern_return_t IMPL(ASFWDriver, Stop) {
             const kern_return_t kr = timer->Cancel(^{
                 ASFW_LOG(Controller, "[Teardown] wake verify cancel completed source=%p action=%p", timer, action);
                 timer->release();
-                ASFW::Common::CancelAndReleaseOwnedAction(action, "wake verify", done);
+                ASFW::Common::CancelAndReleaseOwnedAction(action, "wake verify", done, queue);
             });
             if (kr != kIOReturnSuccess) {
                 ASFW_LOG_ERROR(Controller, "[Teardown] wake verify cancel failed kr=0x%x", kr);
                 timer->release();
-                ASFW::Common::CancelAndReleaseOwnedAction(action, "wake verify", done);
+                ASFW::Common::CancelAndReleaseOwnedAction(action, "wake verify", done, queue);
             }
         }
         ivars->powerProvider = nullptr;

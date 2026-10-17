@@ -50,6 +50,7 @@ kern_return_t WatchdogCoordinator::Prepare(
         return kr != kIOReturnSuccess ? kr : kIOReturnNoResources;
     }
     timer_ = OSSharedPtr(timer, OSNoRetain);
+    queue_ = workQueue;
 
     OSAction* action = nullptr;
     kr = service.CreateActionAsyncWatchdogTimerFired(0, &action);
@@ -95,21 +96,23 @@ void WatchdogCoordinator::Reset() {
     if (timer_) {
         IOTimerDispatchSource* timer = timer_.detach();
         OSAction* action = action_.detach();
+        IODispatchQueue* queue = queue_.get();
         ASFW_LOG(Controller, "[Teardown] watchdog cancel requested source=%p action=%p", timer, action);
         auto done = teardownCompletion_ ? teardownCompletion_->Begin() : std::function<void()>{};
         const kern_return_t kr = timer->Cancel(^{
             ASFW_LOG(Controller, "[Teardown] watchdog cancel completed source=%p action=%p", timer, action);
             timer->release();
-            ASFW::Common::CancelAndReleaseOwnedAction(action, "watchdog", done);
+            ASFW::Common::CancelAndReleaseOwnedAction(action, "watchdog", done, queue);
         });
         if (kr != kIOReturnSuccess) {
             ASFW_LOG_ERROR(Controller, "[Teardown] watchdog cancel failed kr=0x%x", kr);
             timer->release();
-            ASFW::Common::CancelAndReleaseOwnedAction(action, "watchdog", done);
+            ASFW::Common::CancelAndReleaseOwnedAction(action, "watchdog", done, queue);
         }
     } else {
         action_.reset();
     }
+    queue_.reset();
     ztsLogDivider_ = 0;
     consumerDiagnosticsDivider_ = 0;
     lastDrainEligible_ = true;

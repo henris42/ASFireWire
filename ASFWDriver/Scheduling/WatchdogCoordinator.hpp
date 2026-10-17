@@ -52,6 +52,7 @@ class WatchdogCoordinator {
     void TickIsochReceive(ASFW::Isoch::IsochReceiveContext* isochReceiveContext);
     void TickIsochTransmit(ASFW::Isoch::IsochTransmitContext* isochTransmitContext);
 
+    OSSharedPtr<IODispatchQueue> queue_;
     OSSharedPtr<IOTimerDispatchSource> timer_;
     OSSharedPtr<OSAction> action_;
     uint32_t ztsLogDivider_{0};

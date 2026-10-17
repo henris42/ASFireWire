@@ -48,17 +48,18 @@ void ServiceContext::DisarmProviderNotifications() {
         // DriverKit reports that all queued notification handlers completed.
         auto* source = providerNotifications.detach();
         auto* action = providerNotificationAction.detach();
+        IODispatchQueue* queue = workQueue.get();
         ASFW_LOG(Controller, "[Teardown] provider notifications cancel requested source=%p action=%p", source, action);
         auto done = teardownCompletion->Begin();
         const kern_return_t kr = source->Cancel(^{
             ASFW_LOG(Controller, "[Teardown] provider notifications cancel completed source=%p action=%p", source, action);
             source->release();
-            ASFW::Common::CancelAndReleaseOwnedAction(action, "provider notifications", done);
+            ASFW::Common::CancelAndReleaseOwnedAction(action, "provider notifications", done, queue);
         });
         if (kr != kIOReturnSuccess) {
             ASFW_LOG_ERROR(Controller, "[Teardown] provider notifications cancel failed kr=0x%x", kr);
             source->release();
-            ASFW::Common::CancelAndReleaseOwnedAction(action, "provider notifications", done);
+            ASFW::Common::CancelAndReleaseOwnedAction(action, "provider notifications", done, queue);
         }
         return;
     }

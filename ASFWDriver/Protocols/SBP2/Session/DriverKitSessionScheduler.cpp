@@ -111,17 +111,18 @@ void DriverKitSessionScheduler::Reset() noexcept {
     if (timer_) {
         auto* timer = timer_.detach();
         auto* action = action_.detach();
+        IODispatchQueue* queue = workQueue_.get();
         ASFW_LOG(Controller, "[Teardown] SBP2 timer cancel requested source=%p action=%p", timer, action);
         auto done = teardownCompletion_ ? teardownCompletion_->Begin() : std::function<void()>{};
         const kern_return_t kr = timer->Cancel(^{
             ASFW_LOG(Controller, "[Teardown] SBP2 timer cancel completed source=%p action=%p", timer, action);
             timer->release();
-            ASFW::Common::CancelAndReleaseOwnedAction(action, "SBP2 timer", done);
+            ASFW::Common::CancelAndReleaseOwnedAction(action, "SBP2 timer", done, queue);
         });
         if (kr != kIOReturnSuccess) {
             ASFW_LOG_ERROR(Controller, "[SBP2Timer] cancellation failed: 0x%x", kr);
             timer->release();
-            ASFW::Common::CancelAndReleaseOwnedAction(action, "SBP2 timer", done);
+            ASFW::Common::CancelAndReleaseOwnedAction(action, "SBP2 timer", done, queue);
         }
     } else {
         action_.reset();

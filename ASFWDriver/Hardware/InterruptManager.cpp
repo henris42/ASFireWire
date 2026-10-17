@@ -87,18 +87,21 @@ void InterruptManager::Teardown() {
     // 2026-07-11 IOSharedInterruptController panic.)
     IOInterruptDispatchSource* source = source_.detach();
     OSAction* handler = handler_.detach();
+    // An INTx shared with another device can have queued a callback behind the
+    // caller (teardown inside Start()); release the action behind it.
+    IODispatchQueue* queue = queue_.get();
     ASFW_LOG(Controller, "[Teardown] interrupt cancel requested source=%p action=%p", source, handler);
     auto done = teardownCompletion_ ? teardownCompletion_->Begin() : std::function<void()>{};
     const kern_return_t kr = source->Cancel(^{
         ASFW_LOG(Controller, "[Teardown] interrupt cancel completed source=%p action=%p", source, handler);
         source->release();
-        ASFW::Common::CancelAndReleaseOwnedAction(handler, "interrupt", done);
+        ASFW::Common::CancelAndReleaseOwnedAction(handler, "interrupt", done, queue);
     });
     if (kr != kIOReturnSuccess) {
         ASFW_LOG_ERROR(Controller, "[Teardown] interrupt cancel failed kr=0x%x", kr);
         // Completion will never run; fall back to direct release.
         source->release();
-        ASFW::Common::CancelAndReleaseOwnedAction(handler, "interrupt", done);
+        ASFW::Common::CancelAndReleaseOwnedAction(handler, "interrupt", done, queue);
     }
     queue_.reset();
 }
