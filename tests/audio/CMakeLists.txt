@@ -210,6 +210,11 @@ add_audio_test(AudioDriverConfigPolicyTests
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AudioDriverConfigPolicy.cpp"
 )
 
+# Core Audio device name: unit serial from the GUID extension
+add_audio_test(UnitSerialLabelTests
+    UnitSerialLabelTests.cpp
+)
+
 
 
 # Direct ADK audio skeleton tests (AudioRuntime files)

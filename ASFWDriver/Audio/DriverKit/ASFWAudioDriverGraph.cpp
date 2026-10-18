@@ -9,6 +9,7 @@
 
 #include "ASFWAudioDevice.h"
 #include "ASFWAudioDriverPrivate.hpp"
+#include "UnitSerialLabel.hpp"
 #include "ASFWAvcLevelControl.h"
 #include "Config/AudioProfileRegistry.hpp"
 #include "../../Common/TimingUtils.hpp"
@@ -423,12 +424,22 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
              "ASFWAudioDriver: ADK object ids device=%u",
              ivars.audioDevice->GetObjectID());
 
-    // Label every published Core Audio device at the common graph boundary.
-    // Keep the underlying model name and persistent device/model UIDs intact.
+    // Label every published Core Audio device at the common graph boundary:
+    // "<model> #<unit serial> — ASFW". The serial (UnitSerialLabel.hpp) tells
+    // two units of the same model apart in the Sound pane and in DAWs. Keep
+    // the underlying model name and persistent device/model UIDs intact.
     constexpr char driverNameSuffix[] = " — ASFW";
-    char displayName[sizeof(ivars.device.deviceName) + sizeof(driverNameSuffix)]{};
+    char unitSerial[24] = {};
+    const size_t serialLength = ASFW::Isoch::Audio::FormatUnitSerial(ivars.device.vendorId, ivars.device.guid,
+                                                 unitSerial, sizeof(unitSerial));
+    char displayName[sizeof(ivars.device.deviceName) + 2 + sizeof(unitSerial) + sizeof(driverNameSuffix)]{};
     strlcpy(displayName, ivars.device.deviceName, sizeof(displayName));
+    if (serialLength != 0) {
+        strlcat(displayName, " #", sizeof(displayName));
+        strlcat(displayName, unitSerial, sizeof(displayName));
+    }
     strlcat(displayName, driverNameSuffix, sizeof(displayName));
+    ASFW_LOG(Audio, "ASFWAudioDriver: Core Audio device name '%{public}s'", displayName);
     auto name = OSSharedPtr(OSString::withCString(displayName), OSNoRetain);
     if (!name) {
         ASFW_LOG(Audio, "ASFWAudioDriver: Failed to create device name string");
