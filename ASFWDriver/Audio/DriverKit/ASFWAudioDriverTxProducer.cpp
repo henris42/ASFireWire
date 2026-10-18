@@ -17,6 +17,7 @@
 
 #include "ASFWAudioDevice.h"
 #include "ASFWAudioDriverPrivate.hpp"
+#include "../Protocols/MOTU/MotuExperiments.hpp"
 #include "../../Common/TimingUtils.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../Wire/IEC61883/Syt.hpp"
@@ -644,6 +645,22 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                 timing.disposition =
                     ASFW::Protocols::Audio::AMDTP::
                         AmdtpPacketDisposition::Data;
+                // Experiment (MotuExperiments.hpp): hold the first data packet
+                // back by N packets past the prefill, as NO-DATA, so the moment
+                // data starts moves while everything else stays.
+                if (const uint32_t extra =
+                        ASFW::Audio::Motu::MotuExperiments::extraNoDataPackets.load(std::memory_order_relaxed);
+                    motuSphActive && extra != 0 &&
+                    nextPacketToPrepare < static_cast<uint64_t>(numSlots) + extra) {
+                    if (nextPacketToPrepare == numSlots) {
+                        ASFW_LOG(DirectAudio,
+                                 "[MotuExperiment] holding data back: NO-DATA until packet %llu (%u ms after the prefill)",
+                                 static_cast<unsigned long long>(numSlots) + extra, extra / 8);
+                    }
+                    timing.txClockValid = false;
+                    timing.disposition =
+                        ASFW::Protocols::Audio::AMDTP::AmdtpPacketDisposition::NoData;
+                }
                 const uint32_t txDelay =
                     directControl->txTransferDelayTicks.load(
                         std::memory_order_relaxed);

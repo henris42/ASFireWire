@@ -9,6 +9,7 @@
 // device's own front panel, and a rate write moved the hardware rate display.
 
 #include "MotuProtocol.hpp"
+#include "MotuExperiments.hpp"
 
 #include "../Duplex/FamilyStageWait.hpp"
 
@@ -655,11 +656,17 @@ void MotuProtocol::ApplyFetchingModeIfNeeded(bool enable,
         }, std::move(callback));
         return;
     }
-    if (!IsV3() && !NeedsFetchingModeWrite(unitSwVersion_)) {
+    const bool forced = !IsV3() && !NeedsFetchingModeWrite(unitSwVersion_) &&
+                        Audio::Motu::MotuExperiments::Has(Audio::Motu::kMotuExperimentForceFetchEnable);
+    if (!IsV3() && !NeedsFetchingModeWrite(unitSwVersion_) && !forced) {
         if (callback) {
             callback(kIOReturnSuccess);
         }
         return;
+    }
+    if (forced) {
+        ASFW_LOG(Audio, "MotuProtocol: experiment: writing fetch-enable=%u on a model Linux exempts (version 0x%x)",
+                 enable ? 1U : 0U, unitSwVersion_);
     }
     const auto* model = Encoding::Motu::FindModel(unitSwVersion_);
     const bool spartan = model && model->fetch == Encoding::Motu::FetchRule::Spartan;

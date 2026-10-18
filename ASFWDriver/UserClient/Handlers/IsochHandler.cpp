@@ -13,6 +13,7 @@
 #include "../../Isoch/IsochReceiveContext.hpp"
 #include "../../Logging/LogConfig.hpp"
 #include "../../Logging/Logging.hpp"
+#include "../../Audio/Protocols/MOTU/MotuExperiments.hpp"
 #include "../../Protocols/AVC/AVCDiscovery.hpp"
 #include "../../Protocols/AVC/CMP/CMPClient.hpp"
 #include "../../Protocols/AVC/Commands/GeneralCommands.hpp"
@@ -42,6 +43,24 @@ kern_return_t IsochHandler::MotuCapture(IOUserClientMethodArguments* args) {
         args->structureOutput = OSData::withBytes(output.data(), output.size());
         if (!args->structureOutput) return kIOReturnNoMemory;
     }
+    return kIOReturnSuccess;
+}
+
+// Scalar inputs: flags (MotuExperimentFlag bits), extra NO-DATA packets after
+// the prefill. Process-wide; applied at the next stream start.
+kern_return_t IsochHandler::SetMotuExperiment(IOUserClientMethodArguments* args) {
+    if (!args || !args->scalarInput || args->scalarInputCount != 2) return kIOReturnBadArgument;
+    const auto flags = static_cast<uint32_t>(args->scalarInput[0]);
+    const auto extra = static_cast<uint32_t>(args->scalarInput[1]);
+    if (flags & ~(ASFW::Audio::Motu::kMotuExperimentForceFetchEnable |
+                  ASFW::Audio::Motu::kMotuExperimentCaptureOnly) || extra > 8000 * 60) {
+        return kIOReturnBadArgument;
+    }
+    ASFW::Audio::Motu::MotuExperiments::flags.store(flags, std::memory_order_relaxed);
+    ASFW::Audio::Motu::MotuExperiments::extraNoDataPackets.store(extra, std::memory_order_relaxed);
+    ASFW_LOG(UserClient, "[MotuExperiment] flags=0x%x (forceFetchEnable=%u captureOnly=%u) extraNoDataPackets=%u; applies at the next stream start",
+             flags, (flags & ASFW::Audio::Motu::kMotuExperimentForceFetchEnable) ? 1U : 0U,
+             (flags & ASFW::Audio::Motu::kMotuExperimentCaptureOnly) ? 1U : 0U, extra);
     return kIOReturnSuccess;
 }
 

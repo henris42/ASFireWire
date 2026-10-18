@@ -8,6 +8,7 @@
 // cross-validated with Linux dice-stream.c:326-374 and dice-interface.h:120-125.
 
 #include "RestartRoutine.hpp"
+#include "../Protocols/MOTU/MotuExperiments.hpp"
 #include "SessionClock.hpp"
 
 #include "../Protocols/Backends/DirectRxFormatDescriptor.hpp"
@@ -505,9 +506,18 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
         receiveStarted = true;
         return std::nullopt;
     };
+    const bool captureOnly = Audio::Motu::MotuExperiments::Has(Audio::Motu::kMotuExperimentCaptureOnly);
     auto startTransmit = [&](const char* step) -> std::optional<std::expected<RunningSession, RestartFailure>> {
         if (TeardownRequested()) {
             return aborted(step);
+        }
+        if (captureOnly) {
+            // Experiment (MotuExperiments.hpp): the device gets its channels
+            // and its RX activation but never a packet from us.
+            ASFW_LOG(Audio, "[Session] experiment: capture only, host transmit not started GUID=%llx (%{public}s)",
+                     guid, step);
+            transmitStarted = true;
+            return std::nullopt;
         }
         const kern_return_t status = host.StartPreparedTransmit();
         if (status != kIOReturnSuccess) {
@@ -590,7 +600,7 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
         if (!stillWanted()) return superseded("TransmitTimingReady");
         const auto elapsed = UptimeMilliseconds() - readyStartMs;
         if (elapsed >= readiness.minimumHostRunMs &&
-            (!readiness.requireTransmitTiming || request.binding->IsTransmitTimingReady())) break;
+            (!readiness.requireTransmitTiming || captureOnly || request.binding->IsTransmitTimingReady())) break;
         if (elapsed >= readiness.timeoutMs) return rollback(kIOReturnTimeout, "TransmitTimingReady");
         IOSleep(1);
     }
