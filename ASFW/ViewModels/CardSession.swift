@@ -102,6 +102,7 @@ final class CardWorkspace: ObservableObject {
     private var driverVM: DriverViewModel?
     private var cancellables = Set<AnyCancellable>()
     private var selectedForward: AnyCancellable?
+    private var sessionForwards: [UInt64: AnyCancellable] = [:]
 
     var selectedSession: CardSession? {
         selectedCardID.flatMap { sessions[$0] }
@@ -134,10 +135,13 @@ final class CardWorkspace: ObservableObject {
         for (id, session) in sessions where !newIDs.contains(id) {
             session.stop()
             sessions.removeValue(forKey: id)
+            sessionForwards.removeValue(forKey: id)
         }
         for card in newCards where sessions[card.id] == nil {
             let session = CardSession(card: card)
             sessions[card.id] = session
+            sessionForwards[card.id] = session.objectWillChange
+                .sink { [weak self] _ in self?.objectWillChange.send() }
             if let driverVM {
                 session.start(driverVM: driverVM)
             }

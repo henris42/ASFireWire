@@ -248,7 +248,7 @@ struct ModernContentView: View {
     private func detail(for section: SidebarSection?) -> some View {
         switch section {
         case .overview:
-            OverviewView(viewModel: driverVM,
+            OverviewView(viewModel: driverVM, workspace: workspace,
                          requireNewerBuild: $requireNewerBuild)
         case .audio:
             AudioDebugView()

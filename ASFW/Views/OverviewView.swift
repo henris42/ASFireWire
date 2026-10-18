@@ -9,6 +9,8 @@ import SwiftUI
 
 struct OverviewView: View {
     @ObservedObject var viewModel: DriverViewModel
+    /// The controllers the driver claims and their app sessions.
+    @ObservedObject var workspace: CardWorkspace
     @Binding var requireNewerBuild: Bool
     
     var body: some View {
@@ -93,14 +95,62 @@ struct OverviewView: View {
                 .padding()
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
                 
-                // Info Card
+                // Controllers Card: what the driver actually claims right now.
                 VStack(alignment: .leading, spacing: 12) {
-                    Label("Information", systemImage: "info.circle")
+                    Label("Controllers", systemImage: "pcicard")
                         .font(.headline)
-                    
-                    InfoRow(label: "Target Hardware", value: "pci11c1,5901 (Agere FW800)")
+
+                    if workspace.cards.isEmpty {
+                        Text("No FireWire controller is driven by ASFW. The driver must be activated and the controller armed (asfw-armed) for it to match.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(workspace.cards) { card in
+                            let session = workspace.sessions[card.id]
+                            let connected = session?.debugVM.isConnected ?? false
+                            HStack(alignment: .top, spacing: 10) {
+                                Image(systemName: connected ? "checkmark.circle.fill" : "xmark.circle")
+                                    .foregroundStyle(connected ? Color.green : Color.secondary)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(card.displayName)
+                                        .font(.system(.body, design: .monospaced))
+                                    Text(card.pciPath)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    if !connected, let error = session?.connector.lastError {
+                                        Text(error)
+                                            .font(.caption)
+                                            .foregroundStyle(.orange)
+                                    }
+                                }
+                            }
+                        }
+                    }
                     InfoRow(label: "Protocol", value: "IEEE 1394 OHCI 1.1")
                     InfoRow(label: "Bundle ID", value: "net.asfw.driver")
+                }
+                .padding()
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+
+                // Connection Log Card: the app side of each driver connection
+                // (open, close reasons, failed calls). Also in os_log `net.asfw.app`.
+                VStack(alignment: .leading, spacing: 12) {
+                    Label("Connection Log", systemImage: "text.alignleft")
+                        .font(.headline)
+                    if viewModel.logMessages.isEmpty {
+                        Text("Nothing yet.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        VStack(alignment: .leading, spacing: 2) {
+                            ForEach(viewModel.logMessages.suffix(40)) { entry in
+                                Text("\(entry.formattedTime) [\(entry.source.rawValue)] \(entry.message)")
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundStyle(entry.level.color)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                    }
                 }
                 .padding()
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
