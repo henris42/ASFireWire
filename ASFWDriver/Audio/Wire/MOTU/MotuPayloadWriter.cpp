@@ -6,6 +6,9 @@
 #include "MotuPayloadWriter.hpp"
 
 #include "../AMDTP/PcmSlotCodec.hpp"
+#include "../../../Logging/Logging.hpp"
+
+#include <cstdio>
 
 namespace ASFW::Encoding::Motu {
 
@@ -28,6 +31,8 @@ constexpr uint32_t kCipHeaderBytes = 8;
 } // namespace
 
 void MotuPayloadWriter::Configure(const MotuPayloadStreamConfig& streamConfig) noexcept {
+    dumpedPackets_ = 0;
+    dumpedAudiblePackets_ = 0;
     streamConfig_ = streamConfig;
 }
 
@@ -133,6 +138,10 @@ void MotuPayloadWriter::WriteFloat32Interleaved(
         }
 
         ++written;
+        if (frameInPacket + 1 == snap.framesInPacket &&
+            (dumpedPackets_ < kDumpPackets || (!muted && dumpedAudiblePackets_ < kDumpPackets))) {
+            DumpFilledPacket(snap, muted);
+        }
     }
 
     counters_.framesVisited.fetch_add(visited, std::memory_order_relaxed);
@@ -144,6 +153,49 @@ void MotuPayloadWriter::WriteFloat32Interleaved(
     if (muted) {
         counters_.framesMuted.fetch_add(written, std::memory_order_relaxed);
     }
+}
+
+void MotuPayloadWriter::DumpFilledPacket(const PacketSlotSnapshot& snap, bool muted) noexcept {
+    if (snap.packetBytes == nullptr || snap.packetSizeBytes < kCipHeaderBytes || snap.dbs == 0) {
+        return;
+    }
+    ++dumpedPackets_;
+    if (!muted) {
+        ++dumpedAudiblePackets_;
+    }
+    const auto be32 = [](const uint8_t* b) {
+        return (static_cast<uint32_t>(b[0]) << 24) | (static_cast<uint32_t>(b[1]) << 16) |
+               (static_cast<uint32_t>(b[2]) << 8) | static_cast<uint32_t>(b[3]);
+    };
+    const uint32_t blockBytes = snap.dbs * 4U;
+
+    // Line 1: CIP words and every block's SPH (cycle:offset).
+    char sph[8 * 12 + 1] = {};
+    size_t used = 0;
+    for (uint32_t block = 0; block < snap.framesInPacket && block < 8; ++block) {
+        const size_t at = kCipHeaderBytes + static_cast<size_t>(block) * blockBytes;
+        if (at + 4 > snap.packetSizeBytes || used + 12 > sizeof(sph)) break;
+        const uint32_t value = be32(snap.packetBytes + at);
+        used += static_cast<size_t>(std::snprintf(sph + used, sizeof(sph) - used, " %u:%u",
+                                                  (value >> 12) & 0x1fffU, value & 0xfffU));
+    }
+    ASFW_LOG(DirectAudio,
+             "[MotuTxDump] pkt=%llu bytes=%u blocks=%u dbs=%u muted=%u cip=%08x %08x sph=%{public}s",
+             static_cast<unsigned long long>(snap.packetIndex), snap.packetSizeBytes,
+             snap.framesInPacket, snap.dbs, muted ? 1U : 0U, be32(snap.packetBytes),
+             be32(snap.packetBytes + 4), sph);
+
+    // Line 2: the first data block, as quadlets.
+    char hex[19 * 9 + 1] = {};
+    used = 0;
+    for (uint32_t q = 0; q < snap.dbs && q < 19; ++q) {
+        const size_t at = kCipHeaderBytes + static_cast<size_t>(q) * 4U;
+        if (at + 4 > snap.packetSizeBytes || used + 9 > sizeof(hex)) break;
+        used += static_cast<size_t>(std::snprintf(hex + used, sizeof(hex) - used, "%08x ",
+                                                  be32(snap.packetBytes + at)));
+    }
+    ASFW_LOG(DirectAudio, "[MotuTxDump] pkt=%llu block0=%{public}s",
+             static_cast<unsigned long long>(snap.packetIndex), hex);
 }
 
 } // namespace ASFW::Encoding::Motu

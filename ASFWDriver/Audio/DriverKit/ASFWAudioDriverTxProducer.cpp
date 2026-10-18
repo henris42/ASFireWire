@@ -79,7 +79,8 @@ namespace {
 using ASFW::Audio::Wire::MotuSphRatePpb;
 
 void LogMotuSphEdges(ASFWAudioDriver_IVars& ivars,
-                     const ASFW::Audio::Wire::MotuSphServoApplyResult& result) noexcept {
+                     const ASFW::Audio::Wire::MotuSphServoApplyResult& result,
+                     const ASFW::Audio::Runtime::MotuRxSphClockSample& rxClock) noexcept {
     auto& runtime = ivars.runtime;
     if (!result.hardResyncStarted && !result.acquisitionRestarted && !result.unmuteActivated) {
         return;
@@ -106,13 +107,22 @@ void LogMotuSphEdges(ASFWAudioDriver_IVars& ivars,
             const uint64_t elapsed = now >= runtime.motuSphAcquireHostTicks
                                          ? now - runtime.motuSphAcquireHostTicks
                                          : 0;
+            // The servo's inputs too: a rate estimate far from nominal (hardware,
+            // 2026-10-18: -1 150 000 ppb on every lock) must be traceable to
+            // the step the device's SPH gave against the nominal, and to the
+            // bridge sample (device frames vs cycle-timer ticks) it came from.
             ASFW_LOG(DirectAudio,
                      "[MotuSphLock] gen=%llu afterUs=%llu decisions=%llu err=%lld "
-                     "ratePpb=%lld lead=%u",
+                     "ratePpb=%lld lead=%u nomStep=%lld step=%lld meas=%lld rxFr=%llu rxTk=%llu",
                      servo.streamGeneration, ASFW::Timing::hostTicksToNanos(elapsed) / 1000,
                      servo.decisions, static_cast<long long>(servo.phaseErrorTicks),
                      static_cast<long long>(MotuSphRatePpb(servo.stepQ32, servo.nominalStepQ32)),
-                     runtime.motuTxTimingStamper.PresentationLeadTicks());
+                     runtime.motuTxTimingStamper.PresentationLeadTicks(),
+                     static_cast<long long>(servo.nominalStepQ32),
+                     static_cast<long long>(servo.stepQ32),
+                     static_cast<long long>(servo.measuredStepQ32),
+                     static_cast<unsigned long long>(rxClock.rxFrames),
+                     static_cast<unsigned long long>(rxClock.rxTicks));
         } else {
             ASFW_LOG(DirectAudio, "[MotuSphMute] gen=%llu muted=0 cause=relocked err=%lld",
                      servo.streamGeneration, static_cast<long long>(servo.phaseErrorTicks));
@@ -156,7 +166,7 @@ void ApplyMotuSphServoInput(ASFWAudioDriver_IVars& ivars,
     // The gate's state, not the result's: a dropped or early observation
     // leaves the result without a decision while the gate may still be closed.
     ivars.runtime.motuPayloadWriter.SetPcmMuted(stamper.IsOutputMuted());
-    LogMotuSphEdges(ivars, result);
+    LogMotuSphEdges(ivars, result, rxClock);
     if (result.absolutePhaseAcquired) {
         ASFW_LOG(DirectAudio, "[MotuSphSeed] gen=%llu rel=%lld center=%lld setpoint=%d err=%lld",
                  controlGeneration, static_cast<long long>(relPhase.ticks),

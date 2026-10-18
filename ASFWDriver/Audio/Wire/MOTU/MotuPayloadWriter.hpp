@@ -99,6 +99,15 @@ private:
     MotuPayloadWriterCounters counters_{};
     // Written on the transmit preparation queue, read by the IO thread's fill.
     std::atomic<bool> muted_{false};
+
+    // The first kDumpPackets packets this stream fills completely, and the
+    // first kDumpPackets it fills with audible PCM, are logged in full once
+    // (CIP words, every block's SPH, the first block's bytes), so the wire
+    // format can be checked against the device without a bus analyser.
+    static constexpr uint32_t kDumpPackets = 2;
+    uint32_t dumpedPackets_{0};
+    uint32_t dumpedAudiblePackets_{0};
+    void DumpFilledPacket(const Protocols::Audio::AMDTP::PacketSlotSnapshot& snap, bool muted) noexcept;
 };
 
 } // namespace ASFW::Encoding::Motu
