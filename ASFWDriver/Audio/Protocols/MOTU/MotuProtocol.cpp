@@ -315,9 +315,18 @@ void MotuProtocol::ModifyRegister(Reg reg,
                 }
                 return;
             }
+            const uint32_t next = transform(current);
+            // Every read-modify-write, old and new value: a MOTU resets the bus
+            // itself after some register changes (Linux motu-protocol-v3.c
+            // waits 4 s "for the bus reset" after a clock-rate change), so a
+            // device-initiated reset after a start must be matchable to the
+            // register writes that preceded it.
+            ASFW_LOG(Audio, "MotuProtocol: reg 0x%08x 0x%08x -> 0x%08x%{public}s",
+                     AddressOf(reg).addressLo, current, next,
+                     next == current ? " (unchanged)" : "");
             (void)io_.WriteQuadBE(
                 AddressOf(reg),
-                transform(current),
+                next,
                 [callback = std::move(callback)](Async::AsyncStatus writeStatus) mutable {
                     if (callback) {
                         callback(Protocols::Ports::MapAsyncStatusToIOReturn(writeStatus));
