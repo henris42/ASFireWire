@@ -23,7 +23,9 @@ final class ConfigApplier {
     private var checkedGeneration: [UInt64: UInt32] = [:]
     private var applying = Set<UInt64>()
 
-    static let pollInterval: TimeInterval = 5
+    /// A device's settings are checked once per bus generation, so a slow poll
+    /// is enough; each pass is one driver-local call per controller.
+    static let pollInterval: TimeInterval = 30
 
     init(store: DeviceConfigStore) {
         self.store = store

@@ -208,14 +208,16 @@ struct ModernContentView: View {
             workspace.stopAll()
         }
         .task {
-            // Discovery can finish after the bus status notification. Poll its cached
-            // inventory globally so AV/C navigation also updates while on Overview.
+            // Status notifications refresh discovery (DebugViewModel.handleStatusUpdate);
+            // this slow poll only catches a discovery that finished after the last one.
+            // Each pass is one user-client call per controller, answered from the
+            // driver's registry without bus traffic.
             while !Task.isCancelled {
                 for session in workspace.sessions.values {
                     session.debugVM.refreshDiscovery()
                 }
                 refreshPublishedAudioDevices()
-                do { try await Task.sleep(nanoseconds: 2_000_000_000) } catch { return }
+                do { try await Task.sleep(nanoseconds: 10_000_000_000) } catch { return }
             }
         }
         .onChange(of: visibleSections) { _, sections in
