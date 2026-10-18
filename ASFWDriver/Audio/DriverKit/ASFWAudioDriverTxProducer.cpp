@@ -648,15 +648,18 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                 // Experiment (MotuExperiments.hpp): hold the first data packet
                 // back by N packets past the prefill, as NO-DATA, so the moment
                 // data starts moves while everything else stays.
-                if (const uint32_t extra =
-                        ASFW::Audio::Motu::MotuExperiments::extraNoDataPackets.load(std::memory_order_relaxed);
-                    motuSphActive && extra != 0 &&
-                    nextPacketToPrepare < static_cast<uint64_t>(numSlots) + extra) {
-                    if (nextPacketToPrepare == numSlots) {
+                if (motuSphActive && nextPacketToPrepare == numSlots) {
+                    // One-shot: taken at the first live packet, cleared for the next start.
+                    if (const uint32_t extra = ASFW::Audio::Motu::MotuExperiments::TakeExtraNoDataPackets();
+                        extra != 0) {
+                        ivars.runtime.motuExperimentHoldUntilPacket =
+                            static_cast<uint64_t>(numSlots) + extra;
                         ASFW_LOG(DirectAudio,
                                  "[MotuExperiment] holding data back: NO-DATA until packet %llu (%u ms after the prefill)",
-                                 static_cast<unsigned long long>(numSlots) + extra, extra / 8);
+                                 static_cast<unsigned long long>(ivars.runtime.motuExperimentHoldUntilPacket), extra / 8);
                     }
+                }
+                if (motuSphActive && nextPacketToPrepare < ivars.runtime.motuExperimentHoldUntilPacket) {
                     timing.txClockValid = false;
                     timing.disposition =
                         ASFW::Protocols::Audio::AMDTP::AmdtpPacketDisposition::NoData;
@@ -961,6 +964,10 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
     // prime ("committed prefill > slots").
     memory.queueControl->ResetProducerForStart();
 
+    ivars.runtime.motuExperimentHoldUntilPacket = 0;
+    ivars.runtime.txCadenceLastData = 0;
+    ivars.runtime.txCadenceLastNoData = 0;
+    ivars.runtime.txCadenceLastEmpty = 0;
     ivars.runtime.txSlotProvider.payloadBase = memory.payloadBase;
     ivars.runtime.txSlotProvider.metadataRing = memory.metadataRing;
     ivars.runtime.txSlotProvider.queueControl = memory.queueControl;
@@ -1610,6 +1617,23 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                      fill.framesMissedFinality.load(std::memory_order_relaxed),
                      directControl->playbackRingWriteFrame.load(std::memory_order_relaxed),
                      directControl->playbackRingReadFrame.load(std::memory_order_relaxed));
+            // Cadence per interval: at 48 kHz blocking the device-replayed
+            // pattern is 6 DATA : 2 NO-DATA per 8 cycles (6000 data packets/s
+            // of 8 frames); 8:0 would push 64 000 frames/s (b92 report §2).
+            {
+                const uint64_t dataNow = directControl->counters.txDataPackets.load(std::memory_order_relaxed);
+                const uint64_t noDataNow = directControl->counters.txNoDataPackets.load(std::memory_order_relaxed);
+                const uint64_t emptyNow = directControl->counters.txEmptyPackets.load(std::memory_order_relaxed);
+                const uint64_t data = dataNow - ivars->runtime.txCadenceLastData;
+                const uint64_t noData = noDataNow - ivars->runtime.txCadenceLastNoData;
+                const uint64_t empty = emptyNow - ivars->runtime.txCadenceLastEmpty;
+                ivars->runtime.txCadenceLastData = dataNow;
+                ivars->runtime.txCadenceLastNoData = noDataNow;
+                ivars->runtime.txCadenceLastEmpty = emptyNow;
+                const uint64_t total = data + noData + empty;
+                ASFW_LOG(DirectAudio, "[TxCadence] data=%llu noData=%llu empty=%llu dataPerMille=%llu (expect 750 at 48 kHz)",
+                         data, noData, empty, total ? (data * 1000) / total : 0);
+            }
             if (ivars->runtime.motuSphActive.load(std::memory_order_relaxed)) {
                 ASFW::Audio::DriverKit::LogMotuSphSummary(*ivars);
             }
