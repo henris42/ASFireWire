@@ -119,9 +119,11 @@ pattern: open the `ASFWDriver` user client, call a selector with scalars):
   stops it and logs the totals. It shows what the first card put on the wire, byte for byte.
 - The snoop prints each packet's receive cycle and the isochronous header's length, tag and sy
   decoded, then the packet's own quadlets big-endian as on the wire.
-- Two more stream-start switches (flags 16 and 32 on selector 71, or the app's toggles): prime the
-  transmit ring with skip cycles as Linux does, so nothing is on the wire before the first data
-  packet, and count DBC the way the 828mkII's own stream does. Both are one-shot experiments.
+- A MOTU stream primes its transmit ring with skip cycles, as Linux does, so nothing is on the
+  wire before the first data packet; the 828mkII accepted every stream started that way and
+  rejected every stream that began with 189 ms of empty CIP packets (b107). Two one-shot switches
+  (flags 16 and 32 on selector 71, or the app's toggles) restore the empty-packet lap for an A/B,
+  and count DBC the way the 828mkII's own stream does.
 - **Register reads**: selector 8 (`destinationID, addressHi, addressLo, length` → handle), then
   selector 12 with the handle for the data. MOTU registers sit at `0xFFFF F000 0000` plus the
   register offset, so `0x0b00` is `addressHi=0xFFFF addressLo=0xF0000B00`; the destination is
