@@ -128,6 +128,21 @@ public:
     // Quiet periods a pending restart waits out behind running reconciles.
     static constexpr uint32_t kMaxPendingRearms = 3;
 
+    // Bus resets that arrive within kShortLivedStartMs of a start are treated
+    // as a loop the device is in with us (hardware, 2026-10-18: the 828mkII
+    // reset the bus ~290 ms after every transmit start, 15 times a minute,
+    // until it stopped answering). The first such rebind restarts at once (a
+    // reset after a start is ordinary: a device plugged in), the next ones wait
+    // kShortLivedBackoffBaseMs << (n - 2), the kMaxShortLivedStarts-th is
+    // refused and automatic restarts stay refused for kGiveUpHoldMs. A start
+    // that lives longer clears the count; a rebind raised while a reconcile
+    // runs is queued behind it as before; CoreAudio's own StopIO/StartIO is
+    // never held.
+    static constexpr uint32_t kShortLivedStartMs = 2000;
+    static constexpr uint32_t kShortLivedBackoffBaseMs = 500;
+    static constexpr uint32_t kMaxShortLivedStarts = 4;
+    static constexpr uint32_t kGiveUpHoldMs = 15000;
+
     SessionScheduler(uint64_t guid, Dependencies dependencies) noexcept;
     ~SessionScheduler() noexcept;
 
@@ -232,6 +247,8 @@ private:
     void ArmPendingTimer(uint32_t quietMs, uint64_t generation) noexcept;
     void FirePendingRestart(uint64_t generation) noexcept;
     [[nodiscard]] uint32_t RestartQuietPeriodMs() const noexcept;
+    // For a bus-reset rebind: how long to wait, or nullopt to refuse it.
+    [[nodiscard]] std::optional<uint32_t> RebindBackoffMs() noexcept;
     [[nodiscard]] bool TeardownRequested() const noexcept;
     [[nodiscard]] bool StartAllowed() const noexcept;
     [[nodiscard]] Actual LoadActual() const noexcept;
@@ -269,6 +286,13 @@ private:
 
     std::atomic<bool> halAttached_{false};  // mirror of wanted_.halAttached for the routine
     std::atomic<bool> retired_{false};
+
+    // Uptime (ms) when the last start confirmed its streams; 0 before any.
+    std::atomic<uint64_t> runningSinceMs_{0};
+    // Bus-reset rebinds in a row that followed a short-lived start.
+    std::atomic<uint32_t> shortLivedStarts_{0};
+    // Uptime (ms) when automatic restarts were refused; 0 when they are not.
+    std::atomic<uint64_t> gaveUpAtMs_{0};
 
     // The device reported a stream-configuration change (DICE RX/TX_CFG_CHG)
     // while nothing streamed, so its restart was refused. TCAT restarts

@@ -441,6 +441,61 @@ TEST_F(SchedulerTest, RestartObserverWaitsForQueuedReconcile) {
     EXPECT_EQ(observed.load(), 1);
 }
 
+TEST_F(SchedulerTest, ResetsRightAfterEachStartBackOffAndThenStopRestarting) {
+    using Sched = ASFW::Audio::Session::SessionScheduler;
+    ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
+    const uint64_t run0 = Snapshot().run;
+
+    // 1st reset right after the start: restarted at once, as any reset.
+    ASSERT_EQ(rig.sessions.RequestRestart(rig.guid, DuplexRestartReason::kBusResetRebind),
+              kIOReturnSuccess);
+    EXPECT_EQ(rig.sessionTimer.PendingCount(), 0U);
+    EXPECT_EQ(Snapshot().run, run0 + 1);
+
+    // 2nd: deferred 500 ms (no family quiet period); 3rd: 1000 ms.
+    ASSERT_EQ(rig.sessions.RequestRestart(rig.guid, DuplexRestartReason::kBusResetRebind),
+              kIOReturnSuccess);
+    EXPECT_EQ(rig.sessionTimer.PendingCount(), 1U);
+    rig.Wait(Sched::kShortLivedBackoffBaseMs - 1);
+    EXPECT_EQ(Snapshot().run, run0 + 1);
+    rig.Wait(1);
+    EXPECT_EQ(Snapshot().run, run0 + 2);
+    ASSERT_EQ(rig.sessions.RequestRestart(rig.guid, DuplexRestartReason::kBusResetRebind),
+              kIOReturnSuccess);
+    rig.Wait(Sched::kShortLivedBackoffBaseMs * 2 - 1);
+    EXPECT_EQ(Snapshot().run, run0 + 2);
+    rig.Wait(1);
+    EXPECT_EQ(Snapshot().run, run0 + 3);
+
+    // 4th: refused, nothing pending, the streams are left as they are.
+    EXPECT_EQ(rig.sessions.RequestRestart(rig.guid, DuplexRestartReason::kBusResetRebind),
+              kIOReturnNotReady);
+    EXPECT_EQ(rig.sessionTimer.PendingCount(), 0U);
+    EXPECT_EQ(Snapshot().run, run0 + 3);
+    EXPECT_TRUE(rig.sessions.IsStreaming(rig.guid));
+    // Still held: a later reset is refused too.
+    EXPECT_EQ(rig.sessions.RequestRestart(rig.guid, DuplexRestartReason::kBusResetRebind),
+              kIOReturnNotReady);
+
+    // CoreAudio's own stop/start is not held.
+    EXPECT_EQ(rig.Stop(), kIOReturnSuccess);
+    EXPECT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
+    EXPECT_TRUE(rig.sessions.IsStreaming(rig.guid));
+    EXPECT_EQ(rig.Stop(), kIOReturnSuccess);
+}
+
+TEST_F(SchedulerTest, ResetDuringTheFirstStartIsNotCountedAsShortLived) {
+    IOReturn rebind = kIOReturnError;
+    rig.hooks["device.program_rx"] = [&] {
+        rebind = rig.sessions.RequestRestart(rig.guid, DuplexRestartReason::kBusResetRebind);
+    };
+    ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
+    EXPECT_EQ(rebind, kIOReturnSuccess);
+    EXPECT_EQ(rig.sessionTimer.PendingCount(), 0U);
+    EXPECT_TRUE(rig.sessions.IsStreaming(rig.guid));
+    EXPECT_EQ(rig.Stop(), kIOReturnSuccess);
+}
+
 TEST_F(SchedulerTest, RepeatedFailedFaultRecoveriesStopUntilTheNextAttach) {
     ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
     for (uint32_t i = 0; i < ASFW::Audio::Session::SessionScheduler::kMaxFaultRestartFailures; ++i) {

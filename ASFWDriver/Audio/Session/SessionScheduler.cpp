@@ -258,10 +258,68 @@ IOReturn SessionScheduler::RequestRestart(DuplexRestartReason reason, uint64_t o
         NoteRefusedDeviceReconfiguration(reason);
         return *refusal;
     }
-    if (const uint32_t quietMs = RestartQuietPeriodMs(); quietMs != 0) {
+    uint32_t quietMs = RestartQuietPeriodMs();
+    if (reason == DuplexRestartReason::kBusResetRebind) {
+        const auto backoffMs = RebindBackoffMs();
+        if (!backoffMs.has_value()) {
+            return kIOReturnNotReady;
+        }
+        const bool canDefer = deps_.timer != nullptr && *deps_.timer != nullptr && deps_.queue != nullptr;
+        if (canDefer) {
+            quietMs = std::max(quietMs, *backoffMs);
+        }
+    }
+    if (quietMs != 0) {
         return DeferRestart(reason, observedRun, quietMs);
     }
     return RunRestart(reason, observedRun);
+}
+
+std::optional<uint32_t> SessionScheduler::RebindBackoffMs() noexcept {
+    const uint64_t now = UptimeMilliseconds();
+    if (const uint64_t gaveUp = gaveUpAtMs_.load(std::memory_order_acquire); gaveUp != 0) {
+        if (now - gaveUp < kGiveUpHoldMs) {
+            ASFW_LOG_RL(Audio, "session/rebind-held", 5000, OS_LOG_TYPE_DEFAULT,
+                        "[Session] bus-reset restart still refused GUID=%llx (%llu of %u ms)",
+                        guid_, now - gaveUp, kGiveUpHoldMs);
+            return std::nullopt;
+        }
+        gaveUpAtMs_.store(0, std::memory_order_release);
+        shortLivedStarts_.store(0, std::memory_order_release);
+    }
+    IOLockLock(lock_);
+    const bool reconciling = reconciling_;
+    IOLockUnlock(lock_);
+    if (reconciling) {
+        // Queued behind the running reconcile as one follow-up; not a loop.
+        return 0;
+    }
+    const uint64_t since = runningSinceMs_.load(std::memory_order_acquire);
+    const uint64_t livedMs = since != 0 && now >= since ? now - since : UINT64_MAX;
+    if (livedMs >= kShortLivedStartMs) {
+        shortLivedStarts_.store(0, std::memory_order_release);
+        return 0;
+    }
+    const uint32_t count = shortLivedStarts_.fetch_add(1, std::memory_order_acq_rel) + 1;
+    if (count == 1) {
+        return 0;
+    }
+    if (count >= kMaxShortLivedStarts) {
+        gaveUpAtMs_.store(now, std::memory_order_release);
+        ASFW_LOG_ERROR(Audio,
+                       "[Session] the bus was reset within %u ms of %u starts in a row GUID=%llx "
+                       "(this run lived %llu ms); automatic restarts refused for %u s. A reset the "
+                       "device initiates right after our transmit starts means it objects to the "
+                       "stream; see the Reset provenance lines",
+                       kShortLivedStartMs, count, guid_, livedMs, kGiveUpHoldMs / 1000);
+        return std::nullopt;
+    }
+    const uint32_t delayMs = kShortLivedBackoffBaseMs << (count - 2);
+    ASFW_LOG_WARNING(Audio,
+                     "[Session] bus reset %llu ms after a start GUID=%llx (%u in a row); restart "
+                     "backed off %u ms",
+                     livedMs, guid_, count, delayMs);
+    return delayMs;
 }
 
 void SessionScheduler::NoteRefusedDeviceReconfiguration(DuplexRestartReason reason) noexcept {
@@ -779,6 +837,9 @@ IOReturn SessionScheduler::Reconcile(const Wanted& wanted) noexcept {
     }
 
     const Actual after = LoadActual();
+    if (status == kIOReturnSuccess && after.state == SessionState::Running && after.run != before.run) {
+        runningSinceMs_.store(UptimeMilliseconds(), std::memory_order_release);
+    }
     if (wanted.restart && status == kIOReturnSuccess && after.state == SessionState::Running &&
         after.run != before.run && deps_.restartObserver != nullptr && *deps_.restartObserver) {
         (*deps_.restartObserver)(guid_);
