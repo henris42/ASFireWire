@@ -211,12 +211,27 @@ private:
             return;
         }
         // Refused unless both totals moved forward, e.g. on the packet that
-        // re-anchors the meter: nothing new to publish then.
-        (void)clockControl_->motuRxSphClock.Publish({
-            .streamGeneration = clockControl_->generation.load(std::memory_order_acquire),
-            .rxFrames = cumulative.frames,
-            .rxTicks = cumulative.ticks,
-        });
+        // re-anchors the meter: nothing new to publish then. Counted both
+        // ways: the transmit servo drops every observation while the bridge
+        // does not advance (b107: drops == dropBridgeNotAdvanced for a whole
+        // stream), so which side stopped must be readable from the log.
+        const uint64_t generation = clockControl_->generation.load(std::memory_order_acquire);
+        if (clockControl_->motuRxSphClock.Publish({
+                .streamGeneration = generation,
+                .rxFrames = cumulative.frames,
+                .rxTicks = cumulative.ticks,
+            })) {
+            ++clockPublished_;
+        } else {
+            ++clockRefused_;
+            if (clockRefused_ == 1 || (clockRefused_ % 20000) == 0) {
+                ASFW_LOG(DirectAudio,
+                         "[RxClockBridge] publish refused #%llu gen=%llu frames=%llu ticks=%lld (published %llu so far)",
+                         static_cast<unsigned long long>(clockRefused_), static_cast<unsigned long long>(generation),
+                         static_cast<unsigned long long>(cumulative.frames), static_cast<long long>(cumulative.ticks),
+                         static_cast<unsigned long long>(clockPublished_));
+            }
+        }
     }
 
     // One absolute-phase sample per HAL zero-timestamp period, counted in
@@ -259,12 +274,14 @@ private:
         if (sphRate.valid) {
             ASFW_LOG(DirectAudio,
                      "[RxSphRate] ppb=%lld frames=%llu steps=%llu rejected=%llu/%llu "
-                     "worstRej=%lld/%u rate=%u",
+                     "worstRej=%lld/%u rate=%u bridgePub=%llu bridgeRefused=%llu",
                      static_cast<long long>(sphRate.deviationPpb), sphRate.frames,
                      sphRate.packets, sphRate.rejectedNonMonotonic,
                      sphRate.rejectedImplausibleRate,
                      static_cast<long long>(sphRate.worstRejectedStepTicks),
-                     sphRate.worstRejectedFrames, rate);
+                     sphRate.worstRejectedFrames, rate,
+                     static_cast<unsigned long long>(clockPublished_),
+                     static_cast<unsigned long long>(clockRefused_));
         }
         const auto absPhase = rxClock_.AbsolutePhaseSnapshot();
         if (absPhase.valid) {
@@ -378,6 +395,9 @@ private:
     const ::ASFW::Audio::Runtime::AudioTransportControlBlock* clockGenerationControl_{nullptr};
     uint64_t clockGeneration_{0};
     uint32_t rxClockStalls_{0};
+    // motuRxSphClock publications accepted and refused, since construction.
+    uint64_t clockPublished_{0};
+    uint64_t clockRefused_{0};
 
     // Absolute-phase sampling since Reset(), and the window it feeds.
     uint64_t framesSinceReset_{0};
