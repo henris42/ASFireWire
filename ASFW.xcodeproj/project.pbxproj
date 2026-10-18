@@ -1295,6 +1295,7 @@
 		AB20705B5E5C72D4746FCF35 /* PayloadContext.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = PayloadContext.cpp; sourceTree = "<group>"; };
 		AB453939124D6E9B3A7A8BFC /* ASFWMCPIrmAllocationTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWMCPIrmAllocationTools.swift; sourceTree = "<group>"; };
 		AB6648D2A466A83BEF0318D5 /* PacketBuilder.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = PacketBuilder.cpp; sourceTree = "<group>"; };
+		AB73DCAF49B6A3A74A088FB7 /* UnitSerialLabel.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = UnitSerialLabel.hpp; sourceTree = "<group>"; };
 		AB92C50A509F45F51EFD3F03 /* AVCNestedChannelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AVCNestedChannelTests.swift; sourceTree = "<group>"; };
 		AB95BD41252ED1464259F79F /* ContextManager.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ContextManager.cpp; sourceTree = "<group>"; };
 		ABC74AEC2691404136E0938E /* MAudioDuplexChoreography.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = MAudioDuplexChoreography.cpp; sourceTree = "<group>"; };
@@ -2006,6 +2007,7 @@
 				CBA8F61AE70B8088DAEA9F92 /* ASFWAudioNub.iig */,
 				D38306BE12B0317CBF733A3F /* ASFWAvcAudioStream.cpp */,
 				649531991C20E8C2E3CA782D /* ASFWAvcAudioStream.iig */,
+				AB73DCAF49B6A3A74A088FB7 /* UnitSerialLabel.hpp */,
 				A2D361A1861C7FEF2B4AF501 /* Config */,
 				997B7CF9C2EB79C7B4261688 /* Controls */,
 				E60B785138B3239EC56BC93A /* Runtime */,
@@ -4582,7 +4584,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 82;
+				CURRENT_PROJECT_VERSION = 83;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
@@ -4603,7 +4605,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 82;
+				CURRENT_PROJECT_VERSION = 83;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
@@ -4687,7 +4689,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = ASFWDriver/ASFWDriver.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 82;
+				CURRENT_PROJECT_VERSION = 83;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				DRIVERKIT_DEPLOYMENT_TARGET = 25.0;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -4759,7 +4761,7 @@
 				CODE_SIGN_ENTITLEMENTS = ASFW/App.Debug.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 82;
+				CURRENT_PROJECT_VERSION = 83;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -4802,7 +4804,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = ASFWDriver/ASFWDriver.Debug.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 82;
+				CURRENT_PROJECT_VERSION = 83;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				DRIVERKIT_DEPLOYMENT_TARGET = 25.0;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -4919,7 +4921,7 @@
 				CODE_SIGN_ENTITLEMENTS = ASFW/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 82;
+				CURRENT_PROJECT_VERSION = 83;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
