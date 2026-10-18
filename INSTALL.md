@@ -99,6 +99,11 @@ On a MOTU whose front panel says **"Use Computer"** for the clock source, this p
 only way to set it: the device defers to the host once a computer is connected. The sample
 rate itself follows Core Audio (Audio MIDI Setup).
 
+Core Audio's **volume sliders are inactive** for a MOTU: the device publishes no
+host-controllable level, because gain and mixing live in the interface itself (CueMix, the
+front panel), as with MOTU's own driver. Only AV/C devices with level controls get sliders.
+A software volume in the driver would be an addition, not a repair.
+
 `install.sh` also installs a login agent, `/Library/LaunchAgents/net.asfw.apply-config.plist`,
 which runs `/usr/local/libexec/asfw-config-agent` (a small command-line tool from the package,
 signed like the app) as the logged-in user. It watches every controller ASFW drives and,
