@@ -144,6 +144,26 @@ struct AvcFlow<Content: View>: View {
     }
 }
 
+#if ASFW_LITE
+/// Lays children out left to right and wraps them. The Layout protocol is
+/// macOS 13; an adaptive grid gives the same wrapping with uniform cells.
+struct FlowLayout<Content: View>: View {
+    var spacing: CGFloat = 6
+    private let content: Content
+
+    init(spacing: CGFloat = 6, @ViewBuilder content: () -> Content) {
+        self.spacing = spacing
+        self.content = content()
+    }
+
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 90), spacing: spacing)],
+                  alignment: .leading, spacing: spacing) {
+            content
+        }
+    }
+}
+#else
 /// Lays children out left to right and wraps them.
 struct FlowLayout: Layout {
     var spacing: CGFloat = 6
@@ -172,6 +192,7 @@ struct FlowLayout: Layout {
         }
     }
 }
+#endif
 
 /// "Key  value" rows of a fact list.
 struct AvcFact: View {

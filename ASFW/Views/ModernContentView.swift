@@ -17,7 +17,9 @@ struct ModernContentView: View {
     @StateObject private var diceReportStore: DiceReportStore
     @StateObject private var avcReportStore: AvcReportStore
     @StateObject private var avcUnitsStore: AvcUnitsStore
+#if !ASFW_LITE
     @StateObject private var mcpVM: ASFWMCPControlViewModel
+#endif
     @State private var publishedAudioDevices: [AudioWrapperDevice] = []
     @State private var selectedSection: SidebarSection? = .overview
     @AppStorage(AdvancedToolsSettings.storageKey)
@@ -40,7 +42,9 @@ struct ModernContentView: View {
         _diceReportStore = StateObject(wrappedValue: DiceReportStore(connector: debugViewModel.connector))
         _avcReportStore = StateObject(wrappedValue: AvcReportStore(connector: debugViewModel.connector))
         _avcUnitsStore = StateObject(wrappedValue: AvcUnitsStore(connector: debugViewModel.connector))
+#if !ASFW_LITE
         _mcpVM = StateObject(wrappedValue: ASFWMCPControlViewModel(connector: debugViewModel.connector))
+#endif
     }
 
     enum SidebarSection: String, CaseIterable, Identifiable {
@@ -50,15 +54,23 @@ struct ModernContentView: View {
         case avcCommands = "AV/C Commands"
         case controller = "Controller Status"
         case async = "Async Commands"
+#if !ASFW_LITE
         case audioTelemetry = "Audio Telemetry"
+#endif
         case audioGeometry = "Audio Geometry"
+#if !ASFW_LITE
         case dvCapture = "DV Capture"
+#endif
         case busReset = "Bus Reset History"
         case logs = "System Logs"
         case loggingSettings = "Logging Settings"
+#if !ASFW_LITE
         case mcpSettings = "MCP Control"
+#endif
         case audio = "Core Audio"
+#if !ASFW_LITE
         case audioAnalyzer = "Audio Analyzer"
+#endif
         case duet = "Duet"
         case diagnostics = "Driver Report"
         case diceReport = "DICE Report"
@@ -74,16 +86,18 @@ struct ModernContentView: View {
             case .avcCommands: return "command"
             case .controller: return "cpu"
             case .async: return "bolt.horizontal.circle"
-            case .audioTelemetry: return "waveform.path.ecg"
             case .audioGeometry: return "slider.horizontal.3"
-            case .dvCapture: return "video.fill"
             case .busReset: return "bolt.horizontal.circle"
             case .logs: return "doc.text"
             case .loggingSettings: return "slider.horizontal.3"
-            case .mcpSettings: return "point.3.connected.trianglepath.dotted"
             case .audio: return "hifispeaker.fill"
-            case .audioAnalyzer: return "waveform"
             case .duet: return "slider.horizontal.below.square.filled.and.square"
+#if !ASFW_LITE
+            case .audioTelemetry: return "waveform.path.ecg"
+            case .dvCapture: return "video.fill"
+            case .mcpSettings: return "point.3.connected.trianglepath.dotted"
+            case .audioAnalyzer: return "waveform"
+#endif
             case .diagnostics: return "heart.text.square"
             case .diceReport: return "doc.text.magnifyingglass"
             case .avcReport: return "doc.text.magnifyingglass"
@@ -93,8 +107,12 @@ struct ModernContentView: View {
         var group: SidebarGroup {
             switch self {
             case .overview: .general
+#if ASFW_LITE
+            case .busInspector, .avcUnits, .duet: .devices
+#else
             case .busInspector, .avcUnits, .duet, .audioAnalyzer: .devices
             case .dvCapture: .video
+#endif
             case .diagnostics, .diceReport, .avcReport: .reports
             case .logs, .loggingSettings: .support
             default: .advanced
@@ -111,8 +129,13 @@ struct ModernContentView: View {
             case .avcUnits, .avcCommands, .avcReport: return debugVM.hasAVCDevice
             case .diceReport: return debugVM.hasDICEDevice
             case .duet: return debugVM.hasDuetDevice
+#if ASFW_LITE
+            case .audioGeometry:
+                return !publishedAudioDevices.isEmpty
+#else
             case .audioAnalyzer, .audioTelemetry, .audioGeometry:
                 return !publishedAudioDevices.isEmpty
+#endif
             default: return true
             }
         }
@@ -120,7 +143,12 @@ struct ModernContentView: View {
 
     private func refreshPublishedAudioDevices() {
         publishedAudioDevices = AudioSystem.shared.devices.filter {
+#if ASFW_LITE
+            // ASFWAudioObserverClient (analyzer) is not in this build; same rule.
+            $0.uid.hasPrefix("ASFW-")
+#else
             ASFWAudioObserverClient.guid(fromDeviceUID: $0.uid) != nil
+#endif
         }
     }
 
@@ -167,24 +195,28 @@ struct ModernContentView: View {
                     ControllerDetailView(viewModel: debugVM)
                 case .async:
                     CommandsView(viewModel: debugVM)
+#if !ASFW_LITE
                 case .audioTelemetry:
                     AudioTelemetryView(connector: debugVM.connector)
-                case .audioGeometry:
-                    AudioGeometryView(connector: debugVM.connector)
                 case .dvCapture:
                     DVCaptureView(viewModel: debugVM)
+#endif
+                case .audioGeometry:
+                    AudioGeometryView(connector: debugVM.connector)
                 case .busReset:
                     BusResetHistoryView(viewModel: debugVM)
                 case .logs:
                     SystemLogsView(connector: debugVM.connector)
                 case .loggingSettings:
                     LoggingSettingsView(connector: debugVM.connector, showAdvancedControls: showAdvancedTools)
+#if !ASFW_LITE
                 case .mcpSettings:
                     MCPSettingsView(viewModel: mcpVM)
-                case .audio:
-                    AudioDebugView()
                 case .audioAnalyzer:
                     AudioAnalyzerView(devices: publishedAudioDevices, refresh: refreshPublishedAudioDevices)
+#endif
+                case .audio:
+                    AudioDebugView()
                 case .duet:
                     DuetControlView(connector: debugVM.connector)
                 case .diagnostics:
@@ -234,12 +266,16 @@ struct ModernContentView: View {
             debugVM.connect()
             topologyVM.startAutoRefresh()
             romExplorerVM.setConnector(debugVM.connector, topologyViewModel: topologyVM)
+#if !ASFW_LITE
             if mcpVM.isEnabled {
                 Task { await mcpVM.start() }
             }
+#endif
         }
         .onDisappear {
+#if !ASFW_LITE
             Task { await mcpVM.stop() }
+#endif
             debugVM.disconnect()
             topologyVM.stopAutoRefresh()
         }
@@ -249,7 +285,7 @@ struct ModernContentView: View {
             while !Task.isCancelled {
                 debugVM.refreshDiscovery()
                 refreshPublishedAudioDevices()
-                do { try await Task.sleep(for: .seconds(2)) } catch { return }
+                do { try await Task.sleep(nanoseconds: 2_000_000_000) } catch { return }
             }
         }
         .onChange(of: debugVM.topologyCache?.generation) { _, _ in

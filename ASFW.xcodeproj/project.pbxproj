@@ -454,6 +454,7 @@
 		DF61F7FA9A4B90CC4828BF2F /* ASFWMCPBeBoBShell.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DFCB5123B1C703565B85311 /* ASFWMCPBeBoBShell.swift */; };
 		DF7462402B482B3EFBBDA62B /* ARContextBase.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 2F71CB461722CD8C87ECA7A6 /* ARContextBase.cpp */; };
 		E015D0FBA720A69440DC5BD5 /* MCPHardwareSmokeRunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CF6AA538A8321AEB7DDB655 /* MCPHardwareSmokeRunnerTests.swift */; };
+		E018A0B327C4C50BE9859DB7 /* MacOS12Compat.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C8ED255B3C001391060EC32 /* MacOS12Compat.swift */; };
 		E04F42C99AC3472C4238B8B5 /* ControllerCoreLifecycle.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D9C9CEE2B5EF0A53B8A52533 /* ControllerCoreLifecycle.cpp */; };
 		E07796C3FF28E4FF1CA3F467 /* DriverConnector+Saffire.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A816C540C2BEB377CE294ED /* DriverConnector+Saffire.swift */; };
 		E0A035DE6247A35B278B42F1 /* ASFWLogCategoryPreset.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEFAF39B27C6B39E38082DF7 /* ASFWLogCategoryPreset.swift */; };
@@ -1139,6 +1140,7 @@
 		8BC877978500F38589E4BF34 /* AvcFeatureControl.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AvcFeatureControl.hpp; sourceTree = "<group>"; };
 		8C21B26AD238A20706BA3173 /* Avid.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Avid.hpp; sourceTree = "<group>"; };
 		8C5BA3BE406E2E667E5326D3 /* CSRSpace.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = CSRSpace.hpp; sourceTree = "<group>"; };
+		8C8ED255B3C001391060EC32 /* MacOS12Compat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacOS12Compat.swift; sourceTree = "<group>"; };
 		8C9ED10EB4B77CBF2CE45346 /* FcpExchangeRecorder.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = FcpExchangeRecorder.hpp; sourceTree = "<group>"; };
 		8CD2500B44AFABE214F2F9A9 /* DiscoveredRuntimeCaps.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DiscoveredRuntimeCaps.hpp; sourceTree = "<group>"; };
 		8CD769C3FECA743D29EBE4CA /* Midas.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Midas.hpp; sourceTree = "<group>"; };
@@ -1663,6 +1665,14 @@
 				88F1BB38B80B7C191E534421 /* Rings */,
 			);
 			path = Shared;
+			sourceTree = "<group>";
+		};
+		09123EFBA05C96A85C395D3C /* Compat */ = {
+			isa = PBXGroup;
+			children = (
+				8C8ED255B3C001391060EC32 /* MacOS12Compat.swift */,
+			);
+			path = Compat;
 			sourceTree = "<group>";
 		};
 		0A726C7555E9221D4DEE7AA1 /* Async */ = {
@@ -2734,6 +2744,7 @@
 				56A55E0C6EE306B863A46F3D /* Item.swift */,
 				471CD94EA2FCBA026542CC55 /* AudioObserver */,
 				2A99D0A54221896A21BFB577 /* BeBoB */,
+				09123EFBA05C96A85C395D3C /* Compat */,
 				4F233BAC59AAA42214153A1D /* CoreAudio */,
 				6DD3B8BF810C126A86902BE6 /* MCP */,
 				5C0B525E7EB16C5044D318D9 /* Models */,
@@ -4401,6 +4412,7 @@
 				F9079357980132495EE8D5C0 /* LoggingSettingsView.swift in Sources */,
 				CC79DAA6DB3D879EE5AE7A1A /* LoudnessHistoryView.swift in Sources */,
 				8627DA75B13D2FDBF0F9240C /* MCPSettingsView.swift in Sources */,
+				E018A0B327C4C50BE9859DB7 /* MacOS12Compat.swift in Sources */,
 				C968B0AE4DF429C7C5C2CB9C /* MetalAnalyzerPlotView.swift in Sources */,
 				992028CA608963E630545941 /* MetalAudioObserverView.swift in Sources */,
 				958D6E42DB862B64F23C0DE0 /* MetalSpectrogramView.swift in Sources */,
