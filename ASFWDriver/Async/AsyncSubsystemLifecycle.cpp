@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "AsyncSubsystem.hpp"
+#include "../Shared/Memory/DMACacheMode.hpp"
 #include "Engine/ContextManager.hpp"
 
 // Command architecture
@@ -365,9 +366,12 @@ kern_return_t AsyncSubsystem::ProvisionAsyncDataPath(const char*& failureStage) 
     constexpr size_t kATReqDescCount = 256;
     constexpr size_t kATRespDescCount = 64;
     constexpr size_t kARReqBufferCount = 128;
-    constexpr size_t kARReqBufferSize = 4096 + 64;
+    // One 4 KiB page per AR buffer: the pool is scattered pages and a buffer
+    // must be physically contiguous. A packet that does not fit continues in
+    // the next buffer, which ARStreamProcessor stitches.
+    constexpr size_t kARReqBufferSize = 4096;
     constexpr size_t kARRespBufferCount = 256;
-    constexpr size_t kARRespBufferSize = 4096 + 64;
+    constexpr size_t kARRespBufferSize = 4096;
 
     contextManager_ = std::make_unique<Engine::ContextManager>();
 
@@ -449,8 +453,8 @@ void AsyncSubsystem::FinalizeStart() {
     // controller programs the interrupt mask and kDefaultLinkControl
     // (rcvPhyPkt included) once the link is powered.
 
-    // Report DMA cache mode (always uncached since kIOMemoryMapCacheModeInhibit works reliably)
-    ASFW_LOG_TYPE(Async, OS_LOG_TYPE_INFO, "AsyncSubsystem::Start complete (DMA always uncached)");
+    ASFW_LOG_TYPE(Async, OS_LOG_TYPE_INFO, "AsyncSubsystem::Start complete (DMA mapping %{public}s)",
+                  ASFW::Shared::kDMAMappingIsUncached ? "uncached" : "cached, coherent");
 
     ResetWatchdogCounters();
     is_bus_reset_in_progress_.store(0, std::memory_order_release);
