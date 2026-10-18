@@ -198,7 +198,7 @@ private:
     // not in any payload dump, and a device may accept header-only packets
     // with a wrong tag and reject data (828mkII, 2026-10-18).
     bool firstDataHeaderLogged_{false};
-    void NoteFirstDataHeader(uint32_t payloadLength, uint32_t q0, uint32_t q1) noexcept;
+    void NoteFirstDataHeader(uint32_t payloadLength, uint32_t q0, uint32_t q1, uint32_t descBase) noexcept;
 
     Counters counters_{};
 };

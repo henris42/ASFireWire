@@ -66,12 +66,32 @@ void IsochTxDmaRing::ResetForStart() noexcept {
     counters_.mappedRegionExhausted.store(0, std::memory_order_relaxed);
 }
 
-void IsochTxDmaRing::NoteFirstDataHeader(uint32_t payloadLength, uint32_t q0, uint32_t q1) noexcept {
+void IsochTxDmaRing::NoteFirstDataHeader(uint32_t payloadLength, uint32_t q0, uint32_t q1,
+                                         uint32_t descBase) noexcept {
     // A CIP header alone is 8 bytes; anything longer carries data blocks.
     if (firstDataHeaderLogged_ || payloadLength <= 8) {
         return;
     }
     firstDataHeaderLogged_ = true;
+    // The descriptor chain the controller executes for this packet and for
+    // the packet before it (an empty one at a stream's start): what reaches
+    // the wire is this, not the host's view of the payload. OMI = 2 blocks
+    // (control, then the two immediate quadlets), then the CIP/payload
+    // OUTPUT_MORE and the OUTPUT_LAST. control: cmd/key/i/b [31:16],
+    // reqCount [15:0]; branchWord: address | Z.
+    const auto dumpPacket = [&](const char* label, uint32_t base) noexcept {
+        const auto* b0 = slab_.GetDescriptorPtr(base);
+        const auto* b2 = slab_.GetDescriptorPtr(base + 2);
+        const auto* b3 = slab_.GetDescriptorPtr(base + 3);
+        ASFW_LOG(Isoch,
+                 "IT: %{public}s descriptors @%u: OMI ctl=0x%08x br=0x%08x | OM ctl=0x%08x req=%u addr=0x%08x br=0x%08x | OL ctl=0x%08x req=%u addr=0x%08x br=0x%08x st=0x%08x",
+                 label, base, b0->control, b0->branchWord,
+                 b2->control, b2->control & 0xffffU, b2->dataAddress, b2->branchWord,
+                 b3->control, b3->control & 0xffffU, b3->dataAddress, b3->branchWord, b3->statusWord);
+    };
+    dumpPacket("first data packet", descBase);
+    dumpPacket("packet before it",
+               (descBase + Layout::kRingBlocks - Layout::kBlocksPerPacket) % Layout::kRingBlocks);
     // OHCI 1.1 §9.6 IT immediate header, as the little-endian quadlet the
     // controller reads: spd [18:16], tag [15:14], chan [13:8], tcode [7:4],
     // sy [3:0]; the second quadlet holds the data length in [31:16].
@@ -284,7 +304,7 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
         immDesc->immediateData[0] =
             StampHeaderChannelAndSpeed(meta.immediateHeader[0], channel_, speed_);
         immDesc->immediateData[1] = meta.immediateHeader[1];
-        NoteFirstDataHeader(meta.payloadLength, immDesc->immediateData[0], immDesc->immediateData[1]);
+        NoteFirstDataHeader(meta.payloadLength, immDesc->immediateData[0], immDesc->immediateData[1], descBase);
 
         // Linux queue_iso_transmit() self-links the skip address so a lost
         // cycle/FIFO overrun skips one cycle without dropping this packet.
@@ -746,7 +766,7 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         immDesc->immediateData[0] =
             StampHeaderChannelAndSpeed(meta.immediateHeader[0], channel_, speed_);
         immDesc->immediateData[1] = meta.immediateHeader[1];
-        NoteFirstDataHeader(meta.payloadLength, immDesc->immediateData[0], immDesc->immediateData[1]);
+        NoteFirstDataHeader(meta.payloadLength, immDesc->immediateData[0], immDesc->immediateData[1], descBase);
         immDesc->common.branchWord = MakeBranchWordAT(
             slab_.GetDescriptorIOVA(descBase),
             Layout::kBlocksPerPacket);
