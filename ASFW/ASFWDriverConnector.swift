@@ -68,6 +68,7 @@ final class ASFWDriverConnector: ObservableObject {
         // Device settings (clock source, optical modes): request/result pair.
         case requestDeviceSettings = 69
         case getDeviceSettingsResult = 70
+        case setMotuExperiment = 71
         // Read-only audio telemetry diagnostics.
         case getAudioTelemetry = 1013
         // Driver-owned LogRing category names and named filter presets.

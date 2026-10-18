@@ -142,5 +142,30 @@ struct DeviceSettingsView: View {
         Text(String(format: "Registers: clock 0x%08X · optical 0x%08X", snapshot.clockRaw, snapshot.opticalRaw))
             .font(.system(.caption, design: .monospaced))
             .foregroundColor(.secondary)
+
+        GroupBox("Diagnostics: stream start") {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("For finding out why the 828mkII resets the bus when playback starts. Each setting changes the next playback start only; the driver logs what it did. Turn everything off when done.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Toggle("Write fetch-enable before the start (Linux skips it on the 828mkII)",
+                       isOn: $viewModel.experiment.forceFetchEnable)
+                Toggle("Capture only: do not send any packets to the device",
+                       isOn: $viewModel.experiment.captureOnly)
+                Picker("Hold data back after the start", selection: $viewModel.experiment.extraNoDataPackets) {
+                    ForEach(MotuExperiment.dataDelayChoices, id: \.packets) { choice in
+                        Text(choice.title).tag(choice.packets)
+                    }
+                }
+                HStack {
+                    Button("Send to driver") { viewModel.applyExperiment() }
+                    if let message = viewModel.experimentMessage {
+                        Text(message).font(.caption).foregroundColor(.secondary)
+                    }
+                }
+            }
+            .padding(6)
+            .frame(maxWidth: 520, alignment: .leading)
+        }
     }
 }

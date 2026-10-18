@@ -122,3 +122,25 @@ enum DeviceSettingsOutcome {
     case ready(DeviceSettingsSnapshot)
     case failed(kern_return_t)
 }
+
+
+/// Knobs for finding out why the 828mkII resets the bus on the first data packet
+/// (driver: ASFWDriver/Audio/Protocols/MOTU/MotuExperiments.hpp). Not persisted.
+struct MotuExperiment: Equatable {
+    static let forceFetchEnableFlag: UInt32 = 1 << 0
+    static let captureOnlyFlag: UInt32 = 1 << 1
+
+    var forceFetchEnable = false
+    var captureOnly = false
+    /// Packets (125 µs each) to keep sending as NO-DATA after the prefill.
+    var extraNoDataPackets: UInt32 = 0
+
+    var flags: UInt32 {
+        (forceFetchEnable ? Self.forceFetchEnableFlag : 0) | (captureOnly ? Self.captureOnlyFlag : 0)
+    }
+    var isDefault: Bool { self == MotuExperiment() }
+
+    static let dataDelayChoices: [(title: String, packets: UInt32)] = [
+        ("none", 0), ("250 ms", 2000), ("1 s", 8000), ("4 s", 32000),
+    ]
+}
