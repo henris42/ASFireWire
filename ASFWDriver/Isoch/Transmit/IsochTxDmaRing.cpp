@@ -55,6 +55,7 @@ void IsochTxDmaRing::ResetForStart() noexcept {
     nextTransmitCycle_ = 0;
     cycleTrackingValid_ = false;
     lastHwTimestamp_ = 0;
+    firstDataHeaderLogged_ = false;
 
     counters_.lastDmaGapPackets.store(Layout::kNumPackets, std::memory_order_relaxed);
     counters_.minDmaGapPackets.store(Layout::kNumPackets, std::memory_order_relaxed);
@@ -63,6 +64,22 @@ void IsochTxDmaRing::ResetForStart() noexcept {
     // Per stream, like the gap counters: the IT context outlives devices, so
     // a stale value would report an earlier stream's fault.
     counters_.mappedRegionExhausted.store(0, std::memory_order_relaxed);
+}
+
+void IsochTxDmaRing::NoteFirstDataHeader(uint32_t payloadLength, uint32_t q0, uint32_t q1) noexcept {
+    // A CIP header alone is 8 bytes; anything longer carries data blocks.
+    if (firstDataHeaderLogged_ || payloadLength <= 8) {
+        return;
+    }
+    firstDataHeaderLogged_ = true;
+    // OHCI 1.1 §9.6 IT immediate header, as the little-endian quadlet the
+    // controller reads: spd [18:16], tag [15:14], chan [13:8], tcode [7:4],
+    // sy [3:0]; the second quadlet holds the data length in [31:16].
+    ASFW_LOG(Isoch,
+             "IT: first data packet header: Q0=0x%08x spd=S%u tag=%u ch=%u tcode=0x%x sy=%u "
+             "Q1=0x%08x len=%u payload=%u (Linux amdtp: tag 1, tcode 0xa, sy 0, len = payload)",
+             q0, 100U << ((q0 >> 16) & 0x7U), (q0 >> 14) & 0x3U, (q0 >> 8) & 0x3fU, (q0 >> 4) & 0xfU,
+             q0 & 0xfU, q1, (q1 >> 16) & 0xffffU, payloadLength);
 }
 
 void IsochTxDmaRing::SeedCycleTracking(Driver::HardwareInterface& hw) noexcept {
@@ -267,6 +284,7 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
         immDesc->immediateData[0] =
             StampHeaderChannelAndSpeed(meta.immediateHeader[0], channel_, speed_);
         immDesc->immediateData[1] = meta.immediateHeader[1];
+        NoteFirstDataHeader(meta.payloadLength, immDesc->immediateData[0], immDesc->immediateData[1]);
 
         // Linux queue_iso_transmit() self-links the skip address so a lost
         // cycle/FIFO overrun skips one cycle without dropping this packet.
@@ -728,6 +746,7 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         immDesc->immediateData[0] =
             StampHeaderChannelAndSpeed(meta.immediateHeader[0], channel_, speed_);
         immDesc->immediateData[1] = meta.immediateHeader[1];
+        NoteFirstDataHeader(meta.payloadLength, immDesc->immediateData[0], immDesc->immediateData[1]);
         immDesc->common.branchWord = MakeBranchWordAT(
             slab_.GetDescriptorIOVA(descBase),
             Layout::kBlocksPerPacket);
