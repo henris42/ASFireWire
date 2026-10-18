@@ -95,13 +95,24 @@ ports carry (ADAT or TOSLINK S/PDIF). Changing an optical mode changes the chann
 count, so the audio device is republished with the new layout. Every change is remembered
 per device GUID, in the app's preferences.
 
+On a MOTU whose front panel says **"Use Computer"** for the clock source, this page is the
+only way to set it: the device defers to the host once a computer is connected. The sample
+rate itself follows Core Audio (Audio MIDI Setup).
+
 `install.sh` also installs a login agent, `/Library/LaunchAgents/net.asfw.apply-config.plist`,
-which runs `ASFW --apply-config` as the logged-in user. It watches every controller ASFW
-drives and, whenever a device with remembered settings appears (login, re-plug, power
-cycle, bus reset with a new generation), reads the device and writes back the remembered
-values that differ. Its log is `/tmp/asfw-apply-config.log`. With several FireWire cards each
-card is a separate entry in the app's sidebar; settings belong to the device, whichever
-card it is plugged into.
+which runs `/usr/local/libexec/asfw-config-agent` (a small command-line tool from the package,
+signed like the app) as the logged-in user. It watches every controller ASFW drives and,
+whenever a device with remembered settings appears (login, re-plug, power cycle, bus reset
+with a new generation), reads the device and writes back the remembered values that differ.
+Its log is `/tmp/asfw-apply-config.log`. It is deliberately not the app itself: launching the
+app bundle makes sysextd re-check the embedded driver and, on macOS 12, restart it, and a
+launchd-started app also shows a second Dock icon. With several FireWire cards each card is a
+separate entry in the app's sidebar; settings belong to the device, whichever card it is
+plugged into.
+
+If the app's tools say the driver is disconnected while Core Audio shows the device, the
+**Overview** page's log lists the connection messages (`Connection closed: …` with the reason),
+and `log show --last 10m --predicate 'subsystem == "net.asfw.app"'` has the same lines.
 
 ## Check
 

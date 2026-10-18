@@ -110,8 +110,27 @@ is_loader_app() {
 CONFIG_AGENT_LABEL="net.asfw.apply-config"
 CONFIG_AGENT_PLIST="/Library/LaunchAgents/${CONFIG_AGENT_LABEL}.plist"
 
+CONFIG_AGENT_BIN="/usr/local/libexec/asfw-config-agent"
+
 install_config_agent() {
   local tmp
+  if [[ ! -f "$SCRIPT_DIR/asfw-config-agent" ]]; then
+    info "This package has no asfw-config-agent; skipping the login agent."
+    return 0
+  fi
+  # The tool opens the driver's user client, so it carries that entitlement;
+  # ad-hoc signed like the app.
+  tmp="$(mktemp)"
+  cp "$SCRIPT_DIR/asfw-config-agent" "$tmp"
+  codesign --force --timestamp=none --sign - \
+    --entitlements "${ENTITLEMENT_DIR:-$SCRIPT_DIR/Entitlements}/ConfigAgent.entitlements" "$tmp" \
+    || fail "codesign of asfw-config-agent failed."
+  if ! cmp -s "$tmp" "$CONFIG_AGENT_BIN" 2>/dev/null; then
+    sudo install -d -o root -g wheel -m 0755 "$(dirname "$CONFIG_AGENT_BIN")"
+    sudo install -o root -g wheel -m 0755 "$tmp" "$CONFIG_AGENT_BIN"
+    info "Installed ${CONFIG_AGENT_BIN}."
+  fi
+  rm -f "$tmp"
   tmp="$(mktemp)"
   cat > "$tmp" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -121,8 +140,7 @@ install_config_agent() {
   <key>Label</key><string>${CONFIG_AGENT_LABEL}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${INSTALLED_APP}/Contents/MacOS/ASFW</string>
-    <string>--apply-config</string>
+    <string>${CONFIG_AGENT_BIN}</string>
   </array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
@@ -151,6 +169,10 @@ remove_config_agent() {
   if [[ -e "$CONFIG_AGENT_PLIST" ]]; then
     sudo rm -f "$CONFIG_AGENT_PLIST"
     info "Removed ${CONFIG_AGENT_PLIST}."
+  fi
+  if [[ -e "$CONFIG_AGENT_BIN" ]]; then
+    sudo rm -f "$CONFIG_AGENT_BIN"
+    info "Removed ${CONFIG_AGENT_BIN}."
   fi
 }
 
