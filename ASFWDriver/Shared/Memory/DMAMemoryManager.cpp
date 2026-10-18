@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <bit>
 #include <cstring>
 #include <cstdio>
 #include <DriverKit/IOLib.h>
@@ -15,6 +16,9 @@ namespace ASFW::Shared {
 
 namespace {
 constexpr size_t kTracePreviewBytes = 64;
+// Smallest page size of any supported Mac; a region at most this large that
+// is aligned to its own size is physically contiguous on 4 KiB and 16 KiB pages.
+constexpr size_t kPageGranule = 4096;
 std::atomic<bool> gDMACoherencyTraceEnabled{false};
 } // namespace
 
@@ -40,11 +44,15 @@ void DMAMemoryManager::Reset() noexcept {
         dmaMemoryMap_ = nullptr;
     }
 
-    // Tear down IOMMU mapping next
-    if (dmaCommand_) {
-        dmaCommand_->CompleteDMA(kIODMACommandCompleteDMANoOptions);
-        dmaCommand_.reset();
+    // Tear down the DMA mappings next
+    for (auto& command : dmaCommands_) {
+        if (command) {
+            command->CompleteDMA(kIODMACommandCompleteDMANoOptions);
+        }
     }
+    dmaCommands_.clear();
+    runs_.clear();
+    runsByIOVA_.clear();
 
     // Release backing buffer last
     dmaBuffer_.reset();
@@ -58,7 +66,7 @@ void DMAMemoryManager::Reset() noexcept {
 
 bool DMAMemoryManager::Initialize(Driver::HardwareInterface& hw, size_t totalSize) {
     ASFW_LOG(Async, "DMAMemoryManager: Initializing with totalSize=%zu", totalSize);
-    
+
     if (slabVirt_ != nullptr) {
         ASFW_LOG(Async, "DMAMemoryManager: Already initialized");
         return false;
@@ -69,36 +77,51 @@ bool DMAMemoryManager::Initialize(Driver::HardwareInterface& hw, size_t totalSiz
         return false;
     }
 
-    // Enforce 16-byte alignment per OHCI §1.7
-    const size_t alignedSize = AlignSize(totalSize);
+    // Whole pages: the mapping is page aligned and regions are placed so none
+    // of them straddles a page it should not.
+    const size_t alignedSize = (totalSize + (kPageGranule - 1)) & ~(kPageGranule - 1);
 
-    ASFW_LOG(Async, "DMAMemoryManager: Allocating %zu bytes (requested %zu)",
+    ASFW_LOG(Async, "DMAMemoryManager: Allocating %zu bytes (requested %zu), scattered pages",
              alignedSize, totalSize);
 
-    // Allocate DMA buffer via HardwareInterface
-    auto dmaBufferOpt = hw.AllocateDMA(alignedSize, kIOMemoryDirectionInOut);
+    auto dmaBufferOpt = hw.AllocateDMAPaged(alignedSize, kIOMemoryDirectionInOut);
     if (!dmaBufferOpt.has_value()) {
-        ASFW_LOG(Async, "DMAMemoryManager: AllocateDMA failed for %zu bytes", alignedSize);
+        ASFW_LOG(Async, "DMAMemoryManager: AllocateDMAPaged failed for %zu bytes", alignedSize);
         return false;
     }
 
     auto& dmaBufferInfo = dmaBufferOpt.value();
     dmaBuffer_ = dmaBufferInfo.descriptor;
-    dmaCommand_ = dmaBufferInfo.dmaCommand;  // CRITICAL: Keep alive for IOMMU mapping
-    slabIOVA_ = dmaBufferInfo.deviceAddress;
+    dmaCommands_ = std::move(dmaBufferInfo.windowCommands);  // CRITICAL: keep the mappings alive
     mappingLength_ = dmaBufferInfo.length;
 
-    // Validate physical address fits in 32-bit space (OHCI requirement)
-    if (slabIOVA_ > 0xFFFFFFFFULL) {
-        ASFW_LOG(Async, "DMAMemoryManager: IOVA 0x%llx exceeds 32-bit range", slabIOVA_);
+    runs_.clear();
+    runs_.reserve(dmaBufferInfo.segments.size());
+    size_t offset = 0;
+    for (const auto& segment : dmaBufferInfo.segments) {
+        if (segment.length == 0 || segment.address + segment.length - 1 > 0xFFFFFFFFULL ||
+            (segment.address & 0xF) != 0) {
+            ASFW_LOG_ERROR(Async, "DMAMemoryManager: unusable page run iova=0x%llx len=%llu",
+                           segment.address, segment.length);
+            Reset();
+            return false;
+        }
+        runs_.push_back(PageRun{.offset = offset, .length = static_cast<size_t>(segment.length),
+                                .iova = segment.address});
+        offset += static_cast<size_t>(segment.length);
+    }
+    if (runs_.empty() || offset < alignedSize) {
+        ASFW_LOG_ERROR(Async, "DMAMemoryManager: page runs cover %zu of %zu bytes", offset, alignedSize);
+        Reset();
         return false;
     }
-
-    // Validate 16-byte alignment
-    if ((slabIOVA_ & 0xF) != 0) {
-        ASFW_LOG(Async, "DMAMemoryManager: IOVA 0x%llx not 16-byte aligned", slabIOVA_);
-        return false;
+    runsByIOVA_.resize(runs_.size());
+    for (size_t i = 0; i < runs_.size(); ++i) {
+        runsByIOVA_[i] = i;
     }
+    std::sort(runsByIOVA_.begin(), runsByIOVA_.end(),
+              [this](size_t a, size_t b) { return runs_[a].iova < runs_[b].iova; });
+    slabIOVA_ = runs_.front().iova;
 
     // Create uncached mapping (cache-inhibit mode)
     // macOS DriverKit reliably supports this mode - writes bypass CPU cache
@@ -109,24 +132,34 @@ bool DMAMemoryManager::Initialize(Driver::HardwareInterface& hw, size_t totalSiz
         /*length*/   alignedSize,
         /*alignment*/0,
         &dmaMemoryMap_);
-    
+
     if (kr != kIOReturnSuccess || dmaMemoryMap_ == nullptr) {
         ASFW_LOG_ERROR(Async, "DMAMemoryManager: CreateMapping failed, kr=0x%08x", kr);
+        Reset();
         return false;
     }
 
-    // CRITICAL: Use CPU mapping's actual length, not DMA/IOMMU segment length
+    // CRITICAL: Use CPU mapping's actual length, not DMA segment length
     mappingLength_ = static_cast<size_t>(dmaMemoryMap_->GetLength());
     if (mappingLength_ < alignedSize) {
         ASFW_LOG_ERROR(Async,
             "DMAMemoryManager::Initialize: CPU map shorter than requested: mapLen=%zu < need=%zu",
             mappingLength_, alignedSize);
+        Reset();
         return false;
     }
 
     slabVirt_ = reinterpret_cast<uint8_t*>(dmaMemoryMap_->GetAddress());
     if (slabVirt_ == nullptr) {
         ASFW_LOG(Async, "DMAMemoryManager: Mapping returned null virtual address");
+        Reset();
+        return false;
+    }
+    if ((reinterpret_cast<uintptr_t>(slabVirt_) & (kPageGranule - 1)) != 0) {
+        // Region placement relies on page-aligned offsets being page aligned
+        // in memory too; a mapping never starts mid-page, so this is a guard.
+        ASFW_LOG_ERROR(Async, "DMAMemoryManager: mapping %p is not page aligned", slabVirt_);
+        Reset();
         return false;
     }
 
@@ -135,23 +168,6 @@ bool DMAMemoryManager::Initialize(Driver::HardwareInterface& hw, size_t totalSiz
     uint8_t tmp = *probe;  // Read must work
     *(const_cast<uint8_t*>(probe)) = tmp;  // Tiny write; if this faults, mapping is RO
 
-    // Get DMA/IOMMU address from segments (for device-visible address)
-    if (dmaCommand_) {
-#if defined(IODMACommand_GetSegments_ID)
-        IOAddressSegment segment{};
-        uint32_t count = 1;
-        kern_return_t segKr = dmaCommand_->GetSegments(&segment, &count);
-        if (segKr == kIOReturnSuccess && count >= 1) {
-            slabIOVA_ = segment.address;
-        } else {
-            ASFW_LOG(Async,
-                     "DMAMemoryManager: GetSegments failed (kr=0x%08x count=%u) — using allocation metadata",
-                     segKr,
-                     count);
-        }
-#endif
-    }
-
     slabSize_ = alignedSize;
     cursor_ = 0;
 
@@ -159,8 +175,8 @@ bool DMAMemoryManager::Initialize(Driver::HardwareInterface& hw, size_t totalSiz
     ZeroSlab(slabSize_);
 
     ASFW_LOG(Async,
-             "DMAMemoryManager: Initialized - vaddr=%p iova=0x%llx size=%zu mapped=%zu",
-             slabVirt_, slabIOVA_, slabSize_, mappingLength_);
+             "DMAMemoryManager: Initialized - vaddr=%p first iova=0x%llx size=%zu mapped=%zu page runs=%zu",
+             slabVirt_, slabIOVA_, slabSize_, mappingLength_, runs_.size());
     ASFW_LOG(Async,
              "  Cache mode: UNCACHED (kIOMemoryMapCacheModeInhibit)");
     ASFW_LOG(Async,
@@ -179,23 +195,29 @@ std::optional<DMAMemoryManager::Region> DMAMemoryManager::AllocateRegion(size_t 
         ASFW_LOG(Async, "DMAMemoryManager: AllocateRegion with size=0");
         return std::nullopt;
     }
-    
+
     // Ensure minimal alignment of 16 bytes per OHCI spec
     if (alignment < 16) {
         alignment = 16;
     }
-    
+
     // Verify power of 2
     if ((alignment & (alignment - 1)) != 0) {
         ASFW_LOG(Async, "DMAMemoryManager: Invalid alignment %zu (must be power of 2), forcing 16", alignment);
         alignment = 16;
     }
 
-    // Align cursor to requested alignment
-    size_t alignedCursor = (cursor_ + (alignment - 1)) & ~(alignment - 1);
-
     // Enforce 16-byte alignment for size
     const size_t alignedSize = AlignSize(size);
+
+    // The slab's pages are scattered. A region that fits in a page is aligned to
+    // its own size so it cannot straddle one and stays physically contiguous;
+    // a larger region starts on a page and is contiguous per page only.
+    const bool paged = alignedSize > kPageGranule;
+    alignment = std::max(alignment, paged ? kPageGranule : std::bit_ceil(alignedSize));
+
+    // Align cursor to requested alignment
+    size_t alignedCursor = (cursor_ + (alignment - 1)) & ~(alignment - 1);
 
     if (alignedCursor + alignedSize > slabSize_) {
         ASFW_LOG_ERROR(Async,
@@ -206,13 +228,14 @@ std::optional<DMAMemoryManager::Region> DMAMemoryManager::AllocateRegion(size_t 
 
     Region region{};
     region.virtualBase = slabVirt_ + alignedCursor;
-    region.deviceBase = slabIOVA_ + alignedCursor;
+    region.deviceBase = VirtToIOVA(reinterpret_cast<const std::byte*>(region.virtualBase));
     region.size = alignedSize;
 
     cursor_ = alignedCursor + alignedSize;
 
-    ASFW_LOG(Async, "DMAMemoryManager: Allocated region - vaddr=%p iova=0x%llx size=%zu (requested %zu, align %zu)",
-             region.virtualBase, region.deviceBase, region.size, size, alignment);
+    ASFW_LOG(Async, "DMAMemoryManager: Allocated region - vaddr=%p iova=0x%llx size=%zu (requested %zu, align %zu%{public}s)",
+             region.virtualBase, region.deviceBase, region.size, size, alignment,
+             paged ? ", paged: translate per element" : "");
 
     return region;
 }
@@ -232,24 +255,55 @@ bool DMAMemoryManager::AlignCursorToIOVA(size_t alignment) noexcept {
         return false;
     }
 
-    const uint64_t curIOVA = slabIOVA_ + static_cast<uint64_t>(cursor_);
-    const uint64_t alignedIOVA = (curIOVA + static_cast<uint64_t>(alignment - 1)) &
-                                ~static_cast<uint64_t>(alignment - 1);
-    const size_t delta = static_cast<size_t>(alignedIOVA - curIOVA);
-
-    if (cursor_ + delta > slabSize_) {
+    const size_t alignedCursor = (cursor_ + (alignment - 1)) & ~(alignment - 1);
+    if (alignedCursor > slabSize_) {
         ASFW_LOG_ERROR(Async,
-            "DMAMemoryManager: AlignCursorToIOVA would overflow: cursor=%zu delta=%zu slab=%zu",
-            cursor_, delta, slabSize_);
+            "DMAMemoryManager: AlignCursorToIOVA would overflow: cursor=%zu aligned=%zu slab=%zu",
+            cursor_, alignedCursor, slabSize_);
         return false;
     }
 
-    cursor_ += delta;
+    cursor_ = alignedCursor;
 
     ASFW_LOG(Async,
              "DMAMemoryManager: AlignCursorToIOVA(%zu) -> cursor=%zu (iova now 0x%llx)",
-             alignment, cursor_, slabIOVA_ + static_cast<uint64_t>(cursor_));
+             alignment, cursor_,
+             VirtToIOVA(reinterpret_cast<const std::byte*>(slabVirt_ + cursor_)));
     return true;
+}
+
+std::optional<size_t> DMAMemoryManager::RunForOffset(size_t offset) const noexcept {
+    if (offset >= slabSize_) {
+        return std::nullopt;
+    }
+    // runs_ is in offset order: last run whose offset <= offset.
+    auto it = std::upper_bound(runs_.begin(), runs_.end(), offset,
+                               [](size_t value, const PageRun& run) { return value < run.offset; });
+    if (it == runs_.begin()) {
+        return std::nullopt;
+    }
+    --it;
+    if (offset >= it->offset + it->length) {
+        return std::nullopt;
+    }
+    return static_cast<size_t>(it - runs_.begin());
+}
+
+std::optional<size_t> DMAMemoryManager::RunForIOVA(uint64_t iova) const noexcept {
+    if (iova == 0 || runsByIOVA_.empty()) {
+        return std::nullopt;
+    }
+    auto it = std::upper_bound(runsByIOVA_.begin(), runsByIOVA_.end(), iova,
+                               [this](uint64_t value, size_t index) { return value < runs_[index].iova; });
+    if (it == runsByIOVA_.begin()) {
+        return std::nullopt;
+    }
+    --it;
+    const PageRun& run = runs_[*it];
+    if (iova >= run.iova + run.length) {
+        return std::nullopt;
+    }
+    return *it;
 }
 
 uint64_t DMAMemoryManager::VirtToIOVA(const std::byte* virt) const noexcept {
@@ -258,23 +312,26 @@ uint64_t DMAMemoryManager::VirtToIOVA(const std::byte* virt) const noexcept {
     }
 
     const auto* bytePtr = reinterpret_cast<const uint8_t*>(virt);
-    const ptrdiff_t offset = bytePtr - slabVirt_;
-
-    return slabIOVA_ + static_cast<uint64_t>(offset);
+    const size_t offset = static_cast<size_t>(bytePtr - slabVirt_);
+    const auto run = RunForOffset(offset);
+    if (!run) {
+        return 0;
+    }
+    return runs_[*run].iova + static_cast<uint64_t>(offset - runs_[*run].offset);
 }
 
 std::byte* DMAMemoryManager::IOVAToVirt(uint64_t iova) const noexcept {
-    if (!IsInSlabRange(iova)) {
+    if (slabVirt_ == nullptr) {
         return nullptr;
     }
-
-    const uint64_t offset = iova - slabIOVA_;
-
-    // Additional bounds check after offset calculation
+    const auto run = RunForIOVA(iova);
+    if (!run) {
+        return nullptr;
+    }
+    const size_t offset = runs_[*run].offset + static_cast<size_t>(iova - runs_[*run].iova);
     if (offset >= slabSize_) {
         return nullptr;
     }
-
     return reinterpret_cast<std::byte*>(slabVirt_ + offset);
 }
 
@@ -288,11 +345,7 @@ bool DMAMemoryManager::IsInSlabRange(const std::byte* ptr) const noexcept {
 }
 
 bool DMAMemoryManager::IsInSlabRange(uint64_t iova) const noexcept {
-    if (slabIOVA_ == 0 || iova == 0) {
-        return false;
-    }
-
-    return (iova >= slabIOVA_) && (iova < (slabIOVA_ + slabSize_));
+    return RunForIOVA(iova).has_value();
 }
 
 void DMAMemoryManager::ZeroSlab(size_t length) noexcept {

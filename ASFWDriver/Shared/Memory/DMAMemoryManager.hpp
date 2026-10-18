@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <vector>
 
 #ifdef ASFW_HOST_TEST
 #include "../../Testing/HostDriverKitStubs.hpp"
@@ -23,9 +24,19 @@ namespace ASFW::Shared {
 /**
  * \brief DMA memory slab manager for OHCI descriptor rings and buffers.
  *
- * Allocates a single contiguous DMA region and partitions it into sub-regions
- * for AT/AR descriptor rings and AR data buffers. Provides physical/virtual
- * address translation for descriptor chaining.
+ * Allocates one DMA buffer that is contiguous in the CPU mapping but made of
+ * ordinary, physically scattered pages (HardwareInterface::AllocateDMAPaged),
+ * partitions it into sub-regions for AT/AR descriptor rings and AR data
+ * buffers, and translates addresses through the page runs the mapping
+ * returned. Nothing here ever asks the kernel for physically contiguous
+ * memory: kmem_alloc_contig stalled a boot indefinitely for a 1.6 MB run
+ * on macOS 12 (b49).
+ *
+ * Contract for regions: a region of at most 4 KiB never straddles a 4 KiB
+ * boundary, so it is physically contiguous and `deviceBase + offset` is valid
+ * inside it. A larger region is only virtually contiguous; its deviceBase is
+ * the IOVA of its first byte and consumers must translate every element with
+ * VirtToIOVA (BufferRing, IsochTxDescriptorSlab do).
  *
  * \par OHCI Specification References
  * - §1.7 Table 7-3: Descriptors must be 16-byte aligned
@@ -106,10 +117,13 @@ public:
     [[nodiscard]] std::optional<Region> AllocateRegion(size_t size, size_t alignment = 16);
 
     /**
-     * \brief Align the current cursor to an absolute IOVA boundary.
+     * \brief Align the current cursor to a boundary.
      *
-     * Advances the internal cursor such that (slabIOVA + cursor) is aligned
-     * to the specified alignment.
+     * Advances the internal cursor to a multiple of `alignment` from the slab
+     * base. The base is page aligned in both the CPU mapping and every page
+     * run, so alignments up to 4 KiB hold for the IOVA too; larger alignments
+     * only hold in the CPU mapping, which is what callers use them for
+     * (keeping fixed-size buffers from straddling pages).
      *
      * \param alignment Desired alignment (must be >= 16 and power of 2)
      * \return true on success, false if alignment invalid or overflow would occur
@@ -254,6 +268,17 @@ private:
     /// Check if physical address is within slab bounds
     [[nodiscard]] bool IsInSlabRange(uint64_t iova) const noexcept;
 
+    /// One physically contiguous run of the slab.
+    struct PageRun {
+        size_t offset;     ///< Offset of the run in the CPU mapping
+        size_t length;     ///< Bytes in the run
+        uint64_t iova;     ///< Device address of the run's first byte
+    };
+    /// Index into runs_ of the run containing the offset, if any.
+    [[nodiscard]] std::optional<size_t> RunForOffset(size_t offset) const noexcept;
+    /// Index into runs_ of the run containing the device address, if any.
+    [[nodiscard]] std::optional<size_t> RunForIOVA(uint64_t iova) const noexcept;
+
     /// Zero the slab using volatile stores (uncached mapping rejects dc zva)
     void ZeroSlab(size_t length) noexcept;
 
@@ -264,8 +289,12 @@ private:
     /// DMA buffer (DriverKit-managed memory)
     OSSharedPtr<IOBufferMemoryDescriptor> dmaBuffer_;
 
-    /// DMA command (CRITICAL: must stay alive to maintain IOMMU mapping)
-    OSSharedPtr<IODMACommand> dmaCommand_;
+    /// DMA commands (CRITICAL: must stay alive to maintain the DMA mappings)
+    std::vector<OSSharedPtr<IODMACommand>> dmaCommands_;
+
+    /// Page runs in offset order, and their indices sorted by device address
+    std::vector<PageRun> runs_;
+    std::vector<size_t> runsByIOVA_;
 
     /// Virtual memory mapping (CPU-accessible)
     IOMemoryMap* dmaMemoryMap_{nullptr};
