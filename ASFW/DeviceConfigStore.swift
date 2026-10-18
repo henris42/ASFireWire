@@ -16,14 +16,41 @@ struct DeviceConfigStore {
     static let defaultsKey = "net.asfw.deviceSettings"
 
     private let defaults: UserDefaults
+    /// The sandboxed app keeps its defaults in its container; a process outside
+    /// the sandbox (asfw-config-agent) reads that file directly.
+    private let fileURL: URL?
+
+    static let appBundleID = "net.asfw.app"
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        self.fileURL = nil
     }
+
+    /// Read-only view of the app's preferences from outside its sandbox.
+    static func readingAppContainer() -> DeviceConfigStore {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let url = home.appendingPathComponent("Library/Containers/\(appBundleID)/Data/Library/Preferences/\(appBundleID).plist")
+        return DeviceConfigStore(fileURL: url)
+    }
+
+    private init(fileURL: URL) {
+        self.defaults = .standard
+        self.fileURL = fileURL
+    }
+
+    var location: String { fileURL?.path ?? "UserDefaults \(Bundle.main.bundleIdentifier ?? "?")" }
 
     /// GUID (hex) -> setting raw value (as string key) -> value.
     private func table() -> [String: [String: Int]] {
-        defaults.dictionary(forKey: Self.defaultsKey) as? [String: [String: Int]] ?? [:]
+        if let fileURL {
+            guard let data = try? Data(contentsOf: fileURL),
+                  let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
+                return [:]
+            }
+            return plist[Self.defaultsKey] as? [String: [String: Int]] ?? [:]
+        }
+        return defaults.dictionary(forKey: Self.defaultsKey) as? [String: [String: Int]] ?? [:]
     }
 
     private static func key(_ guid: UInt64) -> String {
@@ -41,6 +68,7 @@ struct DeviceConfigStore {
     }
 
     func remember(guid: UInt64, setting: DeviceSetting, value: UInt32) {
+        guard fileURL == nil else { return }
         var all = table()
         var entry = all[Self.key(guid)] ?? [:]
         entry[String(setting.rawValue)] = Int(value)
@@ -49,6 +77,7 @@ struct DeviceConfigStore {
     }
 
     func forget(guid: UInt64) {
+        guard fileURL == nil else { return }
         var all = table()
         all.removeValue(forKey: Self.key(guid))
         defaults.set(all, forKey: Self.defaultsKey)

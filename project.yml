@@ -244,6 +244,42 @@ targets:
           ENABLE_APP_SANDBOX: YES
           CODE_SIGN_ENTITLEMENTS: ASFW/App.entitlements
 
+  # Login agent that re-applies remembered device settings; a bundle-less tool
+  # so launching it does not make sysextd re-check the app's extension.
+  ASFWConfigAgent:
+    type: tool
+    platform: macOS
+    productName: asfw-config-agent
+    sources:
+      - path: ASFWConfigAgent
+      - path: ASFW/ASFWDriverConnector.swift
+      - path: ASFW/DriverConnector+Lifecycle.swift
+      - path: ASFW/DriverConnector+Discovery.swift
+      - path: ASFW/DriverConnector+DeviceSettings.swift
+      - path: ASFW/DriverConnectorTransport.swift
+      - path: ASFW/DriverConnectorLogStore.swift
+      - path: ASFW/DriverModels.swift
+      - path: ASFW/Models/DriverConnectorModels.swift
+      - path: ASFW/Models/BoundedDeque.swift
+      - path: ASFW/Models/DeviceSettingsModels.swift
+      - path: ASFW/Models/ControllerCard.swift
+      - path: ASFW/DeviceConfigStore.swift
+      - path: ASFW/ConfigApplier.swift
+    settings:
+      base:
+        PRODUCT_NAME: asfw-config-agent
+        PRODUCT_BUNDLE_IDENTIFIER: net.asfw.config-agent
+        AD_HOC_CODE_SIGNING_ALLOWED: YES
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: F6YA6B56LR
+        CODE_SIGN_ENTITLEMENTS: ASFWConfigAgent/ConfigAgent.entitlements
+        HEADER_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(SRCROOT)/ASFWDriver/Shared"
+        SWIFT_OBJC_BRIDGING_HEADER: ASFW/ASFW-Bridging-Header.h
+        SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+        SWIFT_VERSION: "5.0"
+
   ASFWTests:
     type: bundle.unit-test
     platform: macOS
@@ -278,6 +314,7 @@ schemes:
     build:
       targets:
         ASFW: all
+        ASFWConfigAgent: all
     run:
       config: Debug
     test:

@@ -16,7 +16,7 @@ import IOKit
 
 @MainActor
 final class ConfigApplier {
-    private let store = DeviceConfigStore()
+    private let store: DeviceConfigStore
     /// One connector per controller, keyed by the ASFWDriver registry entry ID.
     private var connectors: [UInt64: ASFWDriverConnector] = [:]
     /// Bus generation at which each device last had its settings checked.
@@ -25,10 +25,16 @@ final class ConfigApplier {
 
     static let pollInterval: TimeInterval = 5
 
+    init(store: DeviceConfigStore) {
+        self.store = store
+    }
+
     /// Runs until the process is killed; returns only if nothing can ever work.
-    static func runForever() -> Int32 {
-        let applier = ConfigApplier()
-        say("Device settings agent started (build \(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?")).")
+    /// `store` is the app's own defaults inside the app, the app's container
+    /// file from the asfw-config-agent tool.
+    static func runForever(store: DeviceConfigStore = DeviceConfigStore()) -> Int32 {
+        let applier = ConfigApplier(store: store)
+        say("Device settings agent started (\(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion").map { "build \($0)" } ?? "asfw-config-agent"); settings from \(store.location)).")
         let remembered = applier.store.rememberedGUIDs()
         say(remembered.isEmpty
             ? "No remembered device settings yet; waiting for the app to save some."

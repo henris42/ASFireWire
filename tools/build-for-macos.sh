@@ -120,6 +120,10 @@ install -m 0755 install.sh "$STAGE/install.sh"
 install -m 0644 INSTALL.md "$STAGE/INSTALL.md"
 install -m 0644 ASFW/App.entitlements "$STAGE/Entitlements/App.entitlements"
 install -m 0644 ASFWDriver/ASFWDriver.entitlements "$STAGE/Entitlements/ASFWDriver.entitlements"
+AGENT_BIN="build/DerivedData/Build/Products/Release/asfw-config-agent"
+[[ -f "$AGENT_BIN" ]] || { echo "error: $AGENT_BIN not built" >&2; exit 1; }
+install -m 0755 "$AGENT_BIN" "$STAGE/asfw-config-agent"
+install -m 0644 ASFWConfigAgent/ConfigAgent.entitlements "$STAGE/Entitlements/ConfigAgent.entitlements"
 # IOPCIDevice refuses a dext the match on a controller marked "built-in" unless
 # transport.pci also lists com.apple.developer.driverkit.builtin as a string.
 # AppleACPIPlatform marks every PCI device that has an ACPI node, which VMware's
@@ -147,6 +151,7 @@ STAGED_ENT="$STAGE/Entitlements/ASFWDriver.entitlements"
   echo "dma:         slabs are scattered pages translated per page run (no kmem_alloc_contig); AR buffers 4 KiB; contiguous requests capped at 64 KiB"
   echo "dma mapping: cached/coherent on x86_64 (kIOMemoryMapCacheModeDefault), cache-inhibited on arm64"
   echo "dma reach:   32-bit (OHCI); every prepared buffer is probed through PerformOperation and Start fails with instructions if the kernel bounces it (pages above 4 GiB without an IOMMU)"
+  echo "agent:       asfw-config-agent (bundle-less login agent for remembered device settings)"
   echo "start:       30 s watchdog on its own queue ends the process if Start() is stuck in a kernel RPC (IOKit then falls back to AppleFWOHCI)"
   echo "interrupts:  MSI-X -> MSI -> INTx"
   echo "symbols:     $([[ -n "${ASFW_DYLD_CACHE:-}" ]] && echo "checked against $ASFW_DYLD_CACHE" || echo "not checked against a target cache")"
