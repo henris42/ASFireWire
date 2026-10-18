@@ -57,7 +57,7 @@ struct AvcReportView: View {
         }
         .task(id: copied) {
             guard copied else { return }
-            do { try await Task.sleep(for: .seconds(1.5)); copied = false } catch {}
+            do { try await Task.sleep(nanoseconds: 1_500_000_000); copied = false } catch {}
         }
         .fileImporter(isPresented: $openingDump, allowedContentTypes: [.json]) { result in
             switch result {

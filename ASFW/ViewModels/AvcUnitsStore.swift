@@ -60,13 +60,13 @@ final class AvcUnitsStore: ObservableObject {
             message = "The driver did not start a re-scan."
             return
         }
-        let deadline = ContinuousClock.now.advanced(by: .seconds(60))
+        let deadline = Date().addingTimeInterval(60)
         // Give the driver a moment to mark the units as running before polling their state.
-        try? await Task.sleep(for: .milliseconds(300))
-        while ContinuousClock.now < deadline, !Task.isCancelled {
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        while Date() < deadline, !Task.isCancelled {
             guard let current = connector.getAVCUnits() else { break }
             if !current.contains(where: { $0.diagnosticState == 1 }) { break }
-            try? await Task.sleep(for: .milliseconds(250))
+            try? await Task.sleep(nanoseconds: 250_000_000)
         }
         await reload()
     }

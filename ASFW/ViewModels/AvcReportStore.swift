@@ -34,7 +34,7 @@ final class AvcReportStore: ObservableObject {
             return
         }
         var units = initialUnits
-        let deadline = ContinuousClock.now.advanced(by: .seconds(120))
+        let deadline = Date().addingTimeInterval(120)
         var timedOut = false
         repeat {
             guard !Task.isCancelled else { return }
@@ -44,8 +44,8 @@ final class AvcReportStore: ObservableObject {
             }
             units = current
             if !units.contains(where: { $0.diagnosticState == 1 }) { break }
-            if ContinuousClock.now >= deadline { timedOut = true; break }
-            do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
+            if Date() >= deadline { timedOut = true; break }
+            do { try await Task.sleep(nanoseconds: 200_000_000) } catch { return }
         } while true
         let version = connector.getDriverVersion().map {
             "\($0.semanticVersion) (\($0.gitCommitShort) on \($0.gitBranch)\($0.gitDirty ? ", dirty" : "")) built \($0.buildTimestamp)"

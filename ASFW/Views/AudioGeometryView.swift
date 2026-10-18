@@ -62,7 +62,7 @@ struct AudioGeometryView: View {
             refresh(resetObservers: true)
             while !Task.isCancelled {
                 do {
-                    try await Task.sleep(for: .seconds(1))
+                    try await Task.sleep(nanoseconds: 1_000_000_000)
                 } catch {
                     return
                 }
