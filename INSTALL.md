@@ -109,6 +109,21 @@ audio back by 250 ms to 4 s after the start); press **Send to driver**, then sto
 playback. The driver logs what it did (`[MotuExperiment]`). Turn them all off when done; they
 are not remembered and a driver restart clears them.
 
+Two more diagnostics live behind the user client, for scripted use over ssh (the `motuexp`
+pattern: open the `ASFWDriver` user client, call a selector with scalars):
+
+- **Raw channel snoop** on a controller that is not streaming, such as a second card
+  daisy-chained behind the device: selector 32 with `[channel, packetsToLog]` starts an
+  isochronous receive on that channel and logs the first packets as `[IsochSnoop] … q=…`
+  (8 bytes of OHCI prefix, then the packet's own quadlets: CIP header, data blocks). Selector 33
+  stops it and logs the totals. It shows what the first card put on the wire, byte for byte.
+- **Register reads**: selector 8 (`destinationID, addressHi, addressLo, length` → handle), then
+  selector 12 with the handle for the data. MOTU registers sit at `0xFFFF F000 0000` plus the
+  register offset, so `0x0b00` is `addressHi=0xFFFF addressLo=0xF0000B00`; the destination is
+  the device's node id with the local bus bits, `0xFFC0 | node`. Every MOTU register write the
+  driver makes is already logged as `MotuProtocol: reg 0x… <read> -> <written>` followed by a
+  `readback` line.
+
 On a MOTU whose front panel says **"Use Computer"** for the clock source, this page is the
 only way to set it: the device defers to the host once a computer is connected. The sample
 rate itself follows Core Audio (Audio MIDI Setup).
