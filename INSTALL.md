@@ -102,6 +102,13 @@ port it is on, whatever order the units were found in, and two units of one mode
 apart. The number after `#` is the unit-specific part of the GUID, shown in decimal for MOTU,
 which numbers its units there; compare it with the serial label on the bottom of the unit.
 
+The page's **Diagnostics: stream start** group exists for one investigation: the 828mkII resets
+the bus on the first packet from the host that carries audio. Its three switches change the next
+playback start only (write fetch-enable before the start, send no packets at all, or hold the
+audio back by 250 ms to 4 s after the start); press **Send to driver**, then stop and start
+playback. The driver logs what it did (`[MotuExperiment]`). Turn them all off when done; they
+are not remembered and a driver restart clears them.
+
 On a MOTU whose front panel says **"Use Computer"** for the clock source, this page is the
 only way to set it: the device defers to the host once a computer is connected. The sample
 rate itself follows Core Audio (Audio MIDI Setup).
