@@ -955,6 +955,18 @@ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
             ASFW::Protocols::Audio::AMDTP::AmdtpPacketDisposition::Data;
     }
     timing.txClockValid = false;
+    // Experiment (MotuExperiments): prime the lap with skip cycles, as Linux
+    // primes an OUT stream (amdtp_stream_start queues header_length ==
+    // payload_length == 0 packets, which queue_out_packet turns into skips),
+    // so nothing reaches the wire before the first real packet. The default
+    // lap is 1512 header-only CIP packets carrying DBC 0 (189 ms); the 828mkII
+    // aborted its stream on the first data packet that followed, the first
+    // packet to carry a different counter, while its own stream never shows an
+    // empty packet before data (b104 wire capture).
+    const bool skipPrefill =
+        ASFW::Audio::Motu::MotuExperiments::Take(ASFW::Audio::Motu::kMotuExperimentSkipCyclePrefill);
+    timing.skipCycle = skipPrefill && timing.disposition ==
+                                          ASFW::Protocols::Audio::AMDTP::AmdtpPacketDisposition::NoData;
 
     uint32_t prepared = 0;
     for (uint64_t packetIndex = 0;
@@ -985,9 +997,12 @@ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
     }
 
     ASFW_LOG(DirectAudio,
-             "ADK DBG TX prefill seeded %u/%u committed NO-DATA packets before isoch start (steadyLead=%u)",
+             "ADK DBG TX prefill seeded %u/%u committed %{public}s before isoch start (steadyLead=%u)",
              prepared,
              numSlots,
+             timing.skipCycle ? "skip cycles (nothing on the wire)"
+                              : (timing.disposition == ASFW::Protocols::Audio::AMDTP::AmdtpPacketDisposition::NoData
+                                     ? "NO-DATA packets" : "cadence packets"),
              ASFW::IsochTransport::AudioTimingGeometry::
                  kTxPreparationLeadPackets);
 }
@@ -1028,6 +1043,9 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
 
     // A device's own slot order (the Phase 88 is planar) arrives in txConfig
     // from its discovered graph; Configure prefers it over the profile's map.
+    if (ASFW::Audio::Motu::MotuExperiments::Take(ASFW::Audio::Motu::kMotuExperimentStartEventDbc)) {
+        ASFW_LOG(DirectAudio, "[MotuExperiment] DBC counts start-of-packet this start (data: first block, empty: next packet)");
+    }
     if (!ivars.runtime.txStreamEngine.Configure(profile, txConfig)) {
         ASFW_LOG(Audio, "ASFWAudioDevice: txStreamEngine Configure failed");
         return {kIOReturnError, "ConfigureTxStreamEngine"};

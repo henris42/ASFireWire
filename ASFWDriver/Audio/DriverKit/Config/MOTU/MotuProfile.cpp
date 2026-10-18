@@ -4,6 +4,7 @@
 // MotuProfile.cpp - see MotuProfile.hpp.
 
 #include "MotuProfile.hpp"
+#include "../../../Protocols/MOTU/MotuExperiments.hpp"
 
 #include "../../../../DeviceProfiles/Audio/AudioDeviceCatalog.hpp"
 #include "../../../Wire/MOTU/MotuModel.hpp"
@@ -83,7 +84,10 @@ AudioStreamTxPolicy MotuProfile::TxStreamPolicy() const noexcept {
         policy.motuAbsolutePhaseSetpointTicks48k = model->runtime.absolutePhaseSetpointTicks48k;
         policy.motuHoldAbsolutePhase = model->runtime.holdAbsolutePhase48k;
     }
-    policy.dbcIsEndEvent = true;
+    // Linux counts end-event on its MOTU transmit stream (amdtp-motu.c); the
+    // 828mk2's own stream counts start-of-packet. Experiment flag to compare.
+    policy.dbcIsEndEvent =
+        !::ASFW::Audio::Motu::MotuExperiments::Has(::ASFW::Audio::Motu::kMotuExperimentStartEventDbc);
     policy.preserveFdfInNoDataPackets = true;
     return policy;
 }
