@@ -80,10 +80,22 @@ struct RolePolicy {
     bool linuxStyleCmcForceRoot{false};
 
     /// Live service profile: contender-capable, so an isochronous host can be elected
-    /// IRM and allocate channels. Still no BM election, root forcing or gap mutation.
+    /// IRM and allocate channels, and allowed to set the gap count once it is the IRM
+    /// of a bus that has no bus manager (GapPolicyCoordinator's IRM-fallback actor,
+    /// Annex H gate). No BM election and no root forcing.
+    ///
+    /// Gap optimisation is not optional for an isochronous host: at the reset
+    /// default of 63 a subaction gap is about 21 us and three asynchronous
+    /// subactions inside one cycle push the next cycle start past 125 us. The
+    /// controller then raises cycleTooLong and drops cycleMaster, the device
+    /// resets the bus for want of cycle starts, and the stream restarts about
+    /// once a second (b77 on a two-node bus: 69 resets a minute). Apple's and
+    /// Linux's stacks both set the gap count from the hop count as a matter of
+    /// course (2 nodes -> 5).
     [[nodiscard]] static constexpr RolePolicy MakeLiveDefault() noexcept {
         RolePolicy policy{};
         policy.roleMode = ASFW::FW::RoleMode::IRMResourceHost;
+        policy.fullBMActivityLevel = ASFW::FW::FullBMActivityLevel::GapPolicyAllowed;
         return policy;
     }
 

@@ -120,7 +120,10 @@ TEST(CapabilityMode, ClientOnly_AdvertisesNoManagement) {
 TEST(CapabilityMode, LiveDefault_AdvertisesIrmWithoutBusManagement) {
     const auto policy = ASFW::Driver::RolePolicy::MakeLiveDefault();
     EXPECT_EQ(policy.roleMode, RoleMode::IRMResourceHost);
-    EXPECT_EQ(policy.fullBMActivityLevel, ASFW::FW::FullBMActivityLevel::ObserveOnly);
+    // GapPolicyAllowed: as the IRM of a bus without a bus manager the live
+    // profile sets the gap count from the hop count (gap 63 overruns cycles,
+    // b77); it still does not elect a BM or force a root.
+    EXPECT_EQ(policy.fullBMActivityLevel, ASFW::FW::FullBMActivityLevel::GapPolicyAllowed);
     EXPECT_EQ(policy.powerPolicyLevel, ASFW::Driver::PowerPolicyLevel::ObserveOnly);
 
     // Isochronous streaming cannot start without an IRM on the bus: the IRM owns
