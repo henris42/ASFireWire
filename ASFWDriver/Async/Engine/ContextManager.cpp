@@ -210,15 +210,17 @@ kern_return_t ContextManager::provision(ASFW::Driver::HardwareInterface& hw,
                                           spec.arRespBufCount, spec.arRespBufSize))
             return std::unexpected(kIOReturnBadArgument);
 
+        // Bind the DMA manager first: the AR pools span scattered pages, so
+        // Finalize translates every buffer and descriptor address through it.
+        state_->arReqRing.BindDma(&state_->dmaImpl);
+        state_->arRspRing.BindDma(&state_->dmaImpl);
         // FIX: pass AR descriptor phys to AR rings (not AT)
         if (!state_->arReqRing.Finalize(arReqRegion->deviceBase,  arReqBufRegion->deviceBase))
             return std::unexpected(kIOReturnInternalError);
         if (!state_->arRspRing.Finalize(arRspRegion->deviceBase,  arRspBufRegion->deviceBase))
             return std::unexpected(kIOReturnInternalError);
 
-        // Bind DMA manager to AR rings and publish all descriptors before arming
-        state_->arReqRing.BindDma(&state_->dmaImpl);
-        state_->arRspRing.BindDma(&state_->dmaImpl);
+        // Publish all descriptors before arming
         state_->arReqRing.PublishAllDescriptorsOnce();
         state_->arRspRing.PublishAllDescriptorsOnce();
 

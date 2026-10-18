@@ -87,16 +87,18 @@ bool BufferRing::Finalize(uint64_t descriptorsIOVABase, uint64_t buffersIOVABase
         ASFW_LOG(Async, "BufferRing::Finalize: device bases not 16-byte aligned (desc=0x%llx buf=0x%llx)", descriptorsIOVABase, buffersIOVABase);
         return false;
     }
+    descIOVABase_ = static_cast<uint32_t>(descriptorsIOVABase & 0xFFFFFFFFu);
+    bufIOVABase_ = static_cast<uint32_t>(buffersIOVABase & 0xFFFFFFFFu);
     for (size_t i = 0; i < bufferCount_; ++i) {
         auto& desc = descriptors_[i];
-        const uint64_t dataIOVA = buffersIOVABase + static_cast<uint64_t>(i) * bufferSize_;
-        if (dataIOVA > 0xFFFFFFFFu) {
+        const uint64_t dataIOVA = GetElementIOVA(i);
+        if (dataIOVA == 0 || dataIOVA > 0xFFFFFFFFu) {
             ASFW_LOG(Async, "BufferRing::Finalize: buffer IOVA out of range (index=%zu iova=0x%llx)", i, dataIOVA);
             return false;
         }
         desc.dataAddress = static_cast<uint32_t>(dataIOVA);
         const size_t nextIndex = (i + 1) % bufferCount_;
-        const uint64_t nextDescIOVA = descriptorsIOVABase + static_cast<uint64_t>(nextIndex) * sizeof(HW::OHCIDescriptor);
+        const uint64_t nextDescIOVA = GetDescriptorIOVA(nextIndex);
         // Do not make the receive program permanently circular. The final
         // descriptor is a Z=0 stop marker; recycling moves that marker behind
         // the hardware producer. Linux establishes the same initial boundary
@@ -110,9 +112,9 @@ bool BufferRing::Finalize(uint64_t descriptorsIOVABase, uint64_t buffersIOVABase
         }
         desc.branchWord = branchWord;
     }
-    ASFW_LOG(Async, "BufferRing finalized: descIOVA=0x%llx bufIOVA=0x%llx buffers=%zu", descriptorsIOVABase, buffersIOVABase, bufferCount_);
-    descIOVABase_ = static_cast<uint32_t>(descriptorsIOVABase & 0xFFFFFFFFu);
-    bufIOVABase_ = static_cast<uint32_t>(buffersIOVABase & 0xFFFFFFFFu);
+    ASFW_LOG(Async, "BufferRing finalized: descIOVA=0x%llx bufIOVA=0x%llx buffers=%zu%{public}s",
+             descriptorsIOVABase, buffersIOVABase, bufferCount_,
+             dma_ ? " (per-element translation)" : "");
     lastLinkedIndex_ = bufferCount_ - 1;
     wakeRequired_ = false;
     return true;
@@ -640,9 +642,30 @@ uint8_t* BufferRing::GetBufferAddress(size_t index) const noexcept {
     return buffers_.data() + offset;
 }
 
+uint64_t BufferRing::GetElementIOVA(size_t index) const noexcept {
+    if (index >= bufferCount_) return 0;
+    if (dma_) {
+        if (const uint64_t iova = dma_->VirtToIOVA(GetBufferAddress(index)); iova != 0) {
+            return iova;
+        }
+    }
+    return bufIOVABase_ + (index * bufferSize_);
+}
+
+uint64_t BufferRing::GetDescriptorIOVA(size_t index) const noexcept {
+    if (index >= bufferCount_) return 0;
+    if (dma_) {
+        if (const uint64_t iova = dma_->VirtToIOVA(&descriptors_[index]); iova != 0) {
+            return iova;
+        }
+    }
+    return descIOVABase_ + (index * sizeof(HW::OHCIDescriptor));
+}
+
 uint32_t BufferRing::CommandPtrWord() const noexcept {
-    if (descIOVABase_ == 0) return 0;
-    return HW::MakeBranchWordAR(static_cast<uint64_t>(descIOVABase_), 1);
+    const uint64_t first = GetDescriptorIOVA(0);
+    if (first == 0) return 0;
+    return HW::MakeBranchWordAR(first, 1);
 }
 
 void BufferRing::BindDma(IDMAMemory* dma) noexcept { dma_ = dma; }

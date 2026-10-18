@@ -58,15 +58,12 @@ public:
         return &descriptors_[index];
     }
     
-    [[nodiscard]] uint64_t GetElementIOVA(size_t index) const noexcept {
-        if (index >= bufferCount_) return 0;
-        return bufIOVABase_ + (index * bufferSize_);
-    }
-
-    [[nodiscard]] uint64_t GetDescriptorIOVA(size_t index) const noexcept {
-        if (index >= bufferCount_) return 0;
-        return descIOVABase_ + (index * sizeof(HW::OHCIDescriptor));
-    }
+    // Device address of a buffer / descriptor. With an IDMAMemory bound, each
+    // element is translated on its own: the pools are scattered pages, so the
+    // bases passed to Finalize() hold for the first page only. Without one
+    // (tests), the addresses are linear from those bases.
+    [[nodiscard]] uint64_t GetElementIOVA(size_t index) const noexcept;
+    [[nodiscard]] uint64_t GetDescriptorIOVA(size_t index) const noexcept;
 
     [[nodiscard]] uint8_t* GetElementVA(size_t index) const noexcept {
         return GetBufferAddress(index);

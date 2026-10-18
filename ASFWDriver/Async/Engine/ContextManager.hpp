@@ -40,8 +40,12 @@ template<typename ContextT, typename RingT, typename RoleTag> class ATManager;
 struct ProvisionSpec {
     size_t atReqDescCount = 256;
     size_t atRespDescCount = 64;
-    size_t arReqBufCount  = 128, arReqBufSize  = 4160;
-    size_t arRespBufCount = 256, arRespBufSize = 4160;
+    // AR buffers are one 4 KiB page each: the pool is scattered pages and a
+    // buffer must be physically contiguous. A packet longer than the space
+    // left in a buffer continues in the next one (bufferFill), which
+    // ARStreamProcessor stitches; Linux uses page-sized AR buffers as well.
+    size_t arReqBufCount  = 128, arReqBufSize  = 4096;
+    size_t arRespBufCount = 256, arRespBufSize = 4096;
     size_t atRespScratchBytes = 1024;
 };
 
