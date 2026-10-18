@@ -156,14 +156,42 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
 // A cycle ran past 115-120 us while this node was root and cycle master, and
 // the controller cleared LinkControl.cycleMaster (OHCI 1.2 draft Table 6-1,
 // Table 5-17). Until something sets it again the bus has no cycle starts, so
-// no isochronous stream runs. The cycle policy owns the decision (FW-9/FW-10);
-// it re-applies it. Runs after the acknowledge above: cycleMaster stays zero
-// while cycleTooLong is set.
+// no isochronous stream runs. The cycle policy re-applies its own decision
+// first; when it does not own the bit in this generation (a bus reset moved
+// the generation on, b77: "not ours; left off" 45 times a minute while the
+// MOTU reset the bus for want of cycle starts), the bit is set again anyway:
+// the controller only raises cycleTooLong when cycleMaster was set, so
+// restoring it restores the state that was chosen. Linux does exactly this
+// (ohci.c: reg_write(LinkControlSet, cycleMaster), rate-limited notice).
+// Runs after the acknowledge above: cycleMaster stays zero while
+// cycleTooLong is set. The cycle timer and LinkControl are logged so the
+// cause of a too-long cycle can be read next to the event.
 void ControllerCore::HandleCycleTooLong() {
-    const bool restored =
+    cycleTooLongEvents_++;
+    const bool restoredByPolicy =
         cyclePolicy_ && cyclePolicy_->OnCycleTooLong(currentGeneration_, *this);
-    ASFW_LOG(Controller, "[CyclePolicy] cycleTooLong gen=%u cycleMaster %{public}s",
-             currentGeneration_, restored ? "re-enabled" : "not ours; left off");
+    bool restoredDirectly = false;
+    uint32_t cycleTime = 0;
+    uint32_t linkControl = 0;
+    if (deps_.hardware) {
+        if (!restoredByPolicy) {
+            restoredDirectly = deps_.hardware->SetLocalCycleMasterEnabled(true);
+        }
+        cycleTime = deps_.hardware->ReadCycleTime();
+        linkControl = deps_.hardware->ReadLinkControl();
+    }
+    // The first few in detail, then one in a hundred: a bus that keeps
+    // overrunning its cycles must not drown the log.
+    if (cycleTooLongEvents_ <= 10 || cycleTooLongEvents_ % 100 == 0) {
+        ASFW_LOG(Controller,
+                 "[CyclePolicy] cycleTooLong #%u gen=%u cycleMaster %{public}s cycleTime=0x%08x "
+                 "(sec=%u cycle=%u) LinkControl=0x%08x",
+                 cycleTooLongEvents_, currentGeneration_,
+                 restoredByPolicy ? "re-enabled by policy"
+                                  : restoredDirectly ? "re-set (not owned this generation)"
+                                                     : "NOT restored",
+                 cycleTime, cycleTime >> 25, (cycleTime >> 12) & 0x1FFF, linkControl);
+    }
 }
 
 void ControllerCore::LogInterruptContext(const InterruptSnapshot& snapshot,

@@ -279,6 +279,7 @@ class ControllerCore final : private Role::IPhyConfigReset,
                              uint32_t events) const;
     void HandleFaultInterrupts(uint32_t events);
     void HandleCycleTooLong();
+    uint32_t cycleTooLongEvents_{0};
     void NotifyBusResetCoordinator(uint32_t events, uint64_t timestamp) const;
     void DispatchAsyncInterrupts(uint32_t events) const;
     void LogBusResetCompletionEvents(uint32_t events, uint64_t timestamp) const;

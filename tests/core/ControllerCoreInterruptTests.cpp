@@ -115,14 +115,17 @@ TEST_F(ControllerCoreInterruptTest, CycleTooLongReenablesTheCycleMasterThePolicy
     EXPECT_EQ(core_->GetCyclePolicyCoordinator()->Snapshot().cycleMasterRestoreCount, 1U);
 }
 
-// Not root: the policy never chose this node, so nothing sets cycleMaster.
-TEST_F(ControllerCoreInterruptTest, CycleTooLongLeavesCycleMasterOffWhenNotOurs) {
+// The policy did not choose this node in this generation, so it restores
+// nothing -- but the controller only raises cycleTooLong when cycleMaster was
+// set, so the handler sets it again regardless (Linux ohci.c does the same).
+// Leaving it off let the device reset the bus once a second (b77).
+TEST_F(ControllerCoreInterruptTest, CycleTooLongReSetsCycleMasterEvenWhenNotOurs) {
     BringUpTopology(/*localNodeId=*/0);
     ASSERT_FALSE(CycleMasterSet());
 
     RaiseCycleTooLong();
 
-    EXPECT_FALSE(CycleMasterSet());
+    EXPECT_TRUE(CycleMasterSet());
     EXPECT_EQ(core_->GetCyclePolicyCoordinator()->Snapshot().cycleMasterRestoreCount, 0U);
 }
 
