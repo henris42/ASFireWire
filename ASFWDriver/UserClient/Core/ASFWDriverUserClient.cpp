@@ -594,23 +594,20 @@ kern_return_t IMPL(ASFWDriverUserClient, Stop) {
     return kr;
 }
 
-kern_return_t ASFWDriverUserClient::ExternalMethod(uint64_t selector,
-                                                   IOUserClientMethodArguments* arguments,
-                                                   const IOUserClientMethodDispatch* dispatch,
-                                                   OSObject* target, void* reference) {
-    (void)dispatch;
-    (void)target;
-    (void)reference;
+namespace {
 
-    ASFW_LOG_V3(UserClient, "ExternalMethod called: selector=%llu", selector);
-
+// The whole selector switch, so ExternalMethod can log one result line for
+// every path. On the target nothing said which method the app called or what
+// it got back (b62 report §6).
+kern_return_t DispatchExternal(ASFWDriverUserClient* self, ASFWDriverUserClient_IVars* ivars,
+                               uint64_t selector, IOUserClientMethodArguments* arguments) {
     if (!ivars || !ivars->driver) {
         ASFW_LOG(UserClient, "ExternalMethod: Not ready (ivars=%p driver=%p)", ivars,
                  ivars ? ivars->driver : nullptr);
         return kIOReturnNotReady;
     }
 
-    auto* runtimeState = ASFW::UserClient::GetRuntimeState(this);
+    auto* runtimeState = ASFW::UserClient::GetRuntimeState(self);
     if (runtimeState == nullptr || !runtimeState->HandlersReady()) {
         return kIOReturnNotReady;
     }
@@ -621,10 +618,10 @@ kern_return_t ASFWDriverUserClient::ExternalMethod(uint64_t selector,
     if (auto result = DispatchTopologyMethods(*runtimeState, arguments, selector)) {
         return *result;
     }
-    if (auto result = DispatchStatusMethods(*runtimeState, *this, arguments, selector)) {
+    if (auto result = DispatchStatusMethods(*runtimeState, *self, arguments, selector)) {
         return *result;
     }
-    if (auto result = DispatchTransactionMethods(*runtimeState, *this, arguments, selector)) {
+    if (auto result = DispatchTransactionMethods(*runtimeState, *self, arguments, selector)) {
         return *result;
     }
     if (auto result = DispatchConfigRomMethods(*runtimeState, arguments, selector)) {
@@ -719,36 +716,59 @@ kern_return_t ASFWDriverUserClient::ExternalMethod(uint64_t selector,
     // dispatch-helper ExternalMethod.
     switch (selector) {
     case kMethodAllocateAddressRange:
-        return runtimeState->SBP2().AllocateAddressRange(arguments, this);
+        return runtimeState->SBP2().AllocateAddressRange(arguments, self);
     case kMethodDeallocateAddressRange:
-        return runtimeState->SBP2().DeallocateAddressRange(arguments, this);
+        return runtimeState->SBP2().DeallocateAddressRange(arguments, self);
     case kMethodReadIncomingData:
-        return runtimeState->SBP2().ReadIncomingData(arguments, this);
+        return runtimeState->SBP2().ReadIncomingData(arguments, self);
     case kMethodWriteLocalData:
-        return runtimeState->SBP2().WriteLocalData(arguments, this);
+        return runtimeState->SBP2().WriteLocalData(arguments, self);
     case kMethodCreateSBP2Session:
-        return runtimeState->SBP2().CreateSBP2Session(arguments, this);
+        return runtimeState->SBP2().CreateSBP2Session(arguments, self);
     case kMethodStartSBP2Login:
-        return runtimeState->SBP2().StartSBP2Login(arguments, this);
+        return runtimeState->SBP2().StartSBP2Login(arguments, self);
     case kMethodGetSBP2SessionState:
-        return runtimeState->SBP2().GetSBP2SessionState(arguments, this);
+        return runtimeState->SBP2().GetSBP2SessionState(arguments, self);
     case kMethodSubmitSBP2Inquiry:
-        return runtimeState->SBP2().SubmitSBP2Inquiry(arguments, this);
+        return runtimeState->SBP2().SubmitSBP2Inquiry(arguments, self);
     case kMethodGetSBP2InquiryResult:
-        return runtimeState->SBP2().GetSBP2InquiryResult(arguments, this);
+        return runtimeState->SBP2().GetSBP2InquiryResult(arguments, self);
     case kMethodSubmitSBP2Command:
-        return runtimeState->SBP2().SubmitSBP2Command(arguments, this);
+        return runtimeState->SBP2().SubmitSBP2Command(arguments, self);
     case kMethodGetSBP2CommandResult:
-        return runtimeState->SBP2().GetSBP2CommandResult(arguments, this);
+        return runtimeState->SBP2().GetSBP2CommandResult(arguments, self);
     case kMethodSubmitSBP2TaskManagement:
-        return runtimeState->SBP2().SubmitSBP2TaskManagement(arguments, this);
+        return runtimeState->SBP2().SubmitSBP2TaskManagement(arguments, self);
     case kMethodReleaseSBP2Session:
-        return runtimeState->SBP2().ReleaseSBP2Session(arguments, this);
+        return runtimeState->SBP2().ReleaseSBP2Session(arguments, self);
     default:
         break;
     }
 
     return kIOReturnBadArgument;
+}
+
+} // namespace
+
+kern_return_t ASFWDriverUserClient::ExternalMethod(uint64_t selector,
+                                                   IOUserClientMethodArguments* arguments,
+                                                   const IOUserClientMethodDispatch* dispatch,
+                                                   OSObject* target, void* reference) {
+    (void)dispatch;
+    (void)target;
+    (void)reference;
+
+    const kern_return_t kr = DispatchExternal(this, ivars, selector, arguments);
+    // Polling methods answer kIOReturnNotReady by design; everything else that
+    // fails is worth a line at the default verbosity.
+    if (kr != kIOReturnSuccess && kr != kIOReturnNotReady) {
+        ASFW_LOG(UserClient, "ExternalMethod selector=%llu -> 0x%08x (%{public}s)", selector,
+                 static_cast<uint32_t>(kr), ASFW::Logging::IOReturnName(kr));
+    } else {
+        ASFW_LOG_V2(UserClient, "ExternalMethod selector=%llu -> 0x%08x", selector,
+                    static_cast<uint32_t>(kr));
+    }
+    return kr;
 }
 
 // LOCALONLY user-client ABI entry point.
