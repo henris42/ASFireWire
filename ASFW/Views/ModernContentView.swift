@@ -113,7 +113,6 @@ struct ModernContentView: View {
             if section.needsController && session == nil { return false }
             switch section {
             case .avcUnits, .avcCommands, .avcReport: return session?.debugVM.hasAVCDevice ?? false
-            case .deviceSettings: return session?.debugVM.hasConfigurableDevice ?? false
             case .diceReport: return session?.debugVM.hasDICEDevice ?? false
             case .duet: return session?.debugVM.hasDuetDevice ?? false
 #if ASFW_LITE

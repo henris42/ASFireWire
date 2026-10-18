@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import os.log
 import IOKit
 import SystemExtensions
 import Darwin.Mach
@@ -199,7 +200,15 @@ final class ASFWDriverConnector: ObservableObject {
 
     // MARK: - Logging helpers
 
+    /// Connector events also go to os_log (subsystem net.asfw.app, category
+    /// connector): `log show --predicate 'subsystem == "net.asfw.app"'` on a
+    /// target shows why a connection opened, closed or failed.
+    private static let osLog = OSLog(subsystem: "net.asfw.app", category: "connector")
+
     func log(_ message: String, level: LogMessage.Level = .info) {
+        let tag = boundRegistryEntryID.map { "[service \($0)] " } ?? ""
+        let type: OSLogType = level == .error ? .error : level == .warning ? .default : .info
+        os_log("%{public}@%{public}@", log: Self.osLog, type: type, tag, message)
         let logEntry = LogMessage(timestamp: Date(), level: level, message: message)
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
