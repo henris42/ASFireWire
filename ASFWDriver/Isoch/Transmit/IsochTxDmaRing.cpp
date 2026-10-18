@@ -304,7 +304,6 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
         immDesc->immediateData[0] =
             StampHeaderChannelAndSpeed(meta.immediateHeader[0], channel_, speed_);
         immDesc->immediateData[1] = meta.immediateHeader[1];
-        NoteFirstDataHeader(meta.payloadLength, immDesc->immediateData[0], immDesc->immediateData[1], descBase);
 
         // Linux queue_iso_transmit() self-links the skip address so a lost
         // cycle/FIFO overrun skips one cycle without dropping this packet.
@@ -345,6 +344,7 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
             (1u << (OHCIDescriptor::kStatusShift +
                     OHCIDescriptor::kControlHighShift));
         desc3->dataAddress = skip ? 0 : payloadFragments[1].deviceAddress;
+        NoteFirstDataHeader(meta.payloadLength, immDesc->immediateData[0], immDesc->immediateData[1], descBase);
 
         // Finite queue: the last primed packet ends the chain. Refill links
         // each new batch to it, so the hardware stops at the mapped end
@@ -766,7 +766,6 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         immDesc->immediateData[0] =
             StampHeaderChannelAndSpeed(meta.immediateHeader[0], channel_, speed_);
         immDesc->immediateData[1] = meta.immediateHeader[1];
-        NoteFirstDataHeader(meta.payloadLength, immDesc->immediateData[0], immDesc->immediateData[1], descBase);
         immDesc->common.branchWord = MakeBranchWordAT(
             slab_.GetDescriptorIOVA(descBase),
             Layout::kBlocksPerPacket);
@@ -803,6 +802,7 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         desc3->dataAddress = skip ? 0 : payloadFragments[1].deviceAddress;
         desc3->branchWord = 0;
         AR_init_status(*desc3, static_cast<uint16_t>(skip ? 0 : payloadFragments[1].length));
+        NoteFirstDataHeader(meta.payloadLength, immDesc->immediateData[0], immDesc->immediateData[1], descBase);
 
         // Publish the shared producer slot before exposing descriptor changes.
         if (dmaMemory_) {

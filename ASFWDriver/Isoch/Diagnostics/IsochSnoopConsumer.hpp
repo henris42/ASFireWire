@@ -59,18 +59,33 @@ public:
             return;
         }
         ++logged_;
-        char hex[16 * 9 + 1] = {};
+        // The two OHCI prefix quadlets are little-endian in memory: the
+        // receive timestamp (cycleSeconds:cycleCount in [15:0]) and the
+        // isochronous header (data_length [31:16], tag [15:14], channel
+        // [13:8], tcode [7:4], sy [3:0]). The packet's own quadlets follow,
+        // big-endian as on the wire.
+        uint32_t timestamp = 0;
+        uint32_t header = 0;
+        if (packet.payload.size() >= 8) {
+            const uint8_t* b = packet.payload.data();
+            timestamp = static_cast<uint32_t>(b[0]) | (static_cast<uint32_t>(b[1]) << 8) |
+                        (static_cast<uint32_t>(b[2]) << 16) | (static_cast<uint32_t>(b[3]) << 24);
+            header = static_cast<uint32_t>(b[4]) | (static_cast<uint32_t>(b[5]) << 8) |
+                     (static_cast<uint32_t>(b[6]) << 16) | (static_cast<uint32_t>(b[7]) << 24);
+        }
+        char hex[14 * 9 + 1] = {};
         size_t used = 0;
         const size_t quadlets = packet.payload.size() / 4;
-        for (size_t q = 0; q < quadlets && q < 16; ++q) {
+        for (size_t q = 2; q < quadlets && q < 16; ++q) {
             const uint8_t* b = packet.payload.data() + q * 4;
             const uint32_t value = (static_cast<uint32_t>(b[0]) << 24) | (static_cast<uint32_t>(b[1]) << 16) |
                                    (static_cast<uint32_t>(b[2]) << 8) | static_cast<uint32_t>(b[3]);
             used += static_cast<size_t>(std::snprintf(hex + used, sizeof(hex) - used, "%08x ", value));
         }
-        ASFW_LOG(Isoch, "[IsochSnoop] ch=%u #%llu desc=%u status=0x%04x residual=%u bytes=%zu q=%{public}s",
+        ASFW_LOG(Isoch, "[IsochSnoop] ch=%u #%llu cycle=%u len=%u tag=%u sy=%u status=0x%04x bytes=%zu q=%{public}s",
                  channel_, static_cast<unsigned long long>(packets_.load(std::memory_order_relaxed)),
-                 packet.descriptorIndex, packet.transferStatus, packet.residualCount, packet.payload.size(), hex);
+                 (timestamp >> 12) & 0x1fffU, (header >> 16) & 0xffffU, (header >> 14) & 0x3U, header & 0xfU,
+                 packet.transferStatus, packet.payload.size(), hex);
     }
 
 private:
