@@ -37,6 +37,20 @@ Each build comes as `ASFW-<version>-<macos>-b<build>.zip` and contains:
    - **To disarm, delete that key and reboot.** The EFI partition can be edited from
      another OS if this one no longer boots.
 
+4. **Intel with more than 4 GiB of RAM: VT-d must be active.** FireWire OHCI controllers
+   address 32 bits of physical memory, whatever the OS. Apple's own drivers for such hardware
+   rely on the IOMMU (VT-d, `AppleVTD`) to remap DMA below 4 GiB; without it the kernel
+   silently routes a DriverKit driver's DMA through a copy buffer and the controller's data
+   never reaches the driver. ASFW detects this at start, logs
+   `DMA … is bounced through a kernel copy` with the remedy, and does not start, leaving the
+   card to Apple's driver. To make it work:
+   - BIOS: VT-d (Intel Virtualization Technology for Directed I/O) **enabled**.
+   - OpenCore `config.plist`: `Kernel > Quirks > DisableIoMapper = false` (and no
+     `DisableIoMapperMapping`), and keep the `DMAR` ACPI table. After boot,
+     `ioreg -l | grep -c AppleVTD` must be non-zero.
+   - In a VM: give the guest a virtual IOMMU (ESXi: *Enable IOMMU in this virtual machine*), or
+     keep the VM's memory at **≤ 3 GiB** so that no guest page lies above 4 GiB.
+
 ## Install or update
 
 Unzip, open Terminal in the extracted folder, and run:
