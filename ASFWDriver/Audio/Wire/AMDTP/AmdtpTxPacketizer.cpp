@@ -150,7 +150,7 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
                               AmdtpStreamConfig::PacketFraming::Headerless;
     const uint32_t headerBytes = isHeaderless ? 0U : kCipHeaderBytes;
     const bool isEmptyPacket = !isData && txPolicy_.emptyPacketsDuringIdle;
-    const bool isSkipCycle = !isData && isHeaderless;
+    const bool isSkipCycle = !isData && (isHeaderless || timing.skipCycle);
 
     const uint32_t byteCount = (isEmptyPacket || isSkipCycle)
                                    ? 0

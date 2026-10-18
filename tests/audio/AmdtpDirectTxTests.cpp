@@ -182,6 +182,53 @@ TEST(AmdtpDirectTxTests, SetSidRewritesTheCipSourceNodeId) {
     EXPECT_EQ(bytes[0] & 0x3FU, 1U);  // CIP q0[31:24] = SID
 }
 
+TEST(AmdtpDirectTxTests, CipStreamNoDataCanBeASkipCycleThatHoldsTheDbc) {
+    AmdtpPacketTimeline timeline{};
+    std::array<PacketTimelineSlot, 8> timelineSlots{};
+    ASSERT_TRUE(timeline.AttachSlots(timelineSlots.data(), timelineSlots.size()));
+    AmdtpTxPacketizer packetizer{};
+    packetizer.BindTimeline(&timeline);
+    const AmdtpStreamConfig config = BlockingStereoConfig();
+    AmdtpTxPolicy policy{};
+    policy.dbcIsEndEvent = true;
+    ASSERT_TRUE(packetizer.Configure(config, policy));
+    std::array<uint8_t, 128> bytes{};
+    PreparedTxPacket packet{};
+    uint64_t frame = 0;
+
+    // Linux-style priming: nothing on the wire, DBC untouched.
+    AmdtpTimingState skip{};
+    skip.disposition = AmdtpPacketDisposition::NoData;
+    skip.skipCycle = true;
+    ASSERT_TRUE(ASFW::Testing::PrepareCadencePacket(
+        packetizer, {0, bytes.data(), config.maxPacketBytes}, skip, frame, packet));
+    EXPECT_EQ(packet.operation, PreparedTxPacket::Operation::SkipCycle);
+    EXPECT_EQ(packet.byteCount, 0U);
+    EXPECT_FALSE(packet.isData);
+
+    // The first real packet is a data packet with the end-event count, as Linux's.
+    AmdtpTimingState data{};
+    data.txClockValid = true;
+    data.disposition = AmdtpPacketDisposition::Data;
+    data.nextDataSyt = 0x1234;
+    data.replayValid = true;
+    data.replayDataBlocks = 8;
+    ASSERT_TRUE(ASFW::Testing::PrepareCadencePacket(
+        packetizer, {1, bytes.data(), config.maxPacketBytes}, data, frame, packet));
+    EXPECT_EQ(packet.operation, PreparedTxPacket::Operation::Packet);
+    EXPECT_TRUE(packet.isData);
+    EXPECT_EQ(packet.dbc, 8U);
+
+    // An ordinary NO-DATA cycle on a CIP stream is still a header-only packet.
+    AmdtpTimingState empty{};
+    empty.disposition = AmdtpPacketDisposition::NoData;
+    ASSERT_TRUE(ASFW::Testing::PrepareCadencePacket(
+        packetizer, {2, bytes.data(), config.maxPacketBytes}, empty, frame, packet));
+    EXPECT_EQ(packet.operation, PreparedTxPacket::Operation::Packet);
+    EXPECT_EQ(packet.byteCount, 8U);
+    EXPECT_EQ(packet.dbc, 8U);
+}
+
 TEST(AmdtpDirectTxTests, HeaderlessPacketSizingAndNoDataOperationAreExplicit) {
     for (const uint32_t channels : {18U, 28U}) {
         AmdtpPacketTimeline timeline{};

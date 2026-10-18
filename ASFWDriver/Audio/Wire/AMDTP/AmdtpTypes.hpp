@@ -150,6 +150,12 @@ struct AmdtpTimingState final {
     /// stamp it was projected from. Valid with transmitCycleValid. A device
     /// clock that runs between cycle boundaries (MOTU SPH) is seeded from it.
     int64_t transmitTicks{0};
+    /// A NO-DATA cycle that transmits nothing at all (an OHCI skip cycle)
+    /// instead of a header-only CIP packet. Linux primes an OUT stream's
+    /// queue with such skips (amdtp_stream_start, queue_out_packet with
+    /// header_length == payload_length == 0), so the first packet a device
+    /// ever receives is a real one. Headerless streams skip regardless.
+    bool skipCycle{false};
 };
 
 } // namespace ASFW::Protocols::Audio::AMDTP
