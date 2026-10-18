@@ -8,7 +8,7 @@ Each build comes as `ASFW-<version>-<macos>-b<build>.zip` and contains:
 
 | File | What it is |
 |---|---|
-| `ASFW.app` | The app, with the driver (`net.asfw.driver.dext`) inside it. On Monterey/Ventura it is a small installer app; on Sonoma and later it is the full ASFW app |
+| `ASFW.app` | The app, with the driver (`net.asfw.driver.dext`) inside it. On Monterey/Ventura it is the **lite** ASFW app: configuration and diagnostics (install, bus inspector, controller status, AV/C and DICE reports, logs, logging settings, Core Audio, Duet) without the Metal audio analyzer, meters, DV capture and MCP; on Sonoma and later it is the full app |
 | `install.sh` | Installs, updates, checks and removes it |
 | `Entitlements/` | Used by `install.sh` to sign the app and driver |
 | `BUILDINFO.txt` | Which source, macOS target and options this build was made from |
@@ -67,8 +67,8 @@ what is missing:
 3. signs the app and copies it to `/Applications`, unless that build is already
    installed
 4. activates the driver:
-   - **Monterey/Ventura:** headless. The script waits up to 2 minutes, long enough to
-     approve it.
+   - **Monterey/Ventura:** headless (`ASFW --activate`). The script waits up to 2 minutes,
+     long enough to approve it. The app window also has Install/Delete buttons.
    - **Sonoma and later:** the app opens; press **Install** in it.
 5. prints the driver state and **the one thing left to do**
 

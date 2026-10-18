@@ -96,7 +96,7 @@ read_plist_value() {
   /usr/libexec/PlistBuddy -c "Print :${plist_key}" "$plist_path" 2>/dev/null || true
 }
 
-# The loader build (macOS 12/13) activates from the command line; the full app
+# The lite build (macOS 12/13) also activates from the command line; the full app
 # only through its window.
 is_loader_app() {
   local min_os
