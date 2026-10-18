@@ -675,6 +675,7 @@
 		1F01A2AE881C63197695A0F1 /* DriverConnectorModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DriverConnectorModels.swift; sourceTree = "<group>"; };
 		1FBCE23C33F1D62789320910 /* OverviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverviewView.swift; sourceTree = "<group>"; };
 		1FDB8647A393A23D7AC3A493 /* RxCaptureChannelMap.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RxCaptureChannelMap.hpp; sourceTree = "<group>"; };
+		205E33AB4B679A34F4193FF5 /* DMACacheMode.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DMACacheMode.hpp; sourceTree = "<group>"; };
 		2091230AA237991CD12A881E /* ROMScanSessionDetails.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ROMScanSessionDetails.cpp; sourceTree = "<group>"; };
 		2092B0EC307F21671C44AA01 /* BeBoBShellFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BeBoBShellFixtures.swift; sourceTree = "<group>"; };
 		20BC47A83718017AC79BEBDE /* ARPacketParser.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ARPacketParser.hpp; sourceTree = "<group>"; };
@@ -2960,6 +2961,7 @@
 		9FA902A8F477EE845A6FFDB2 /* Memory */ = {
 			isa = PBXGroup;
 			children = (
+				205E33AB4B679A34F4193FF5 /* DMACacheMode.hpp */,
 				CE6E2B47C0EB78DAD6714F82 /* DMAMemoryManager.cpp */,
 				313BFFF9C839CFD9E2AA63D6 /* DMAMemoryManager.hpp */,
 				E53FAC1B54FD245F0CC70D14 /* IDMAMemory.hpp */,

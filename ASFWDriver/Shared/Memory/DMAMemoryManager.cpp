@@ -1,4 +1,5 @@
 #include "DMAMemoryManager.hpp"
+#include "DMACacheMode.hpp"
 #include "UncachedFill.hpp"
 
 #include <algorithm>
@@ -123,10 +124,11 @@ bool DMAMemoryManager::Initialize(Driver::HardwareInterface& hw, size_t totalSiz
               [this](size_t a, size_t b) { return runs_[a].iova < runs_[b].iova; });
     slabIOVA_ = runs_.front().iova;
 
-    // Create uncached mapping (cache-inhibit mode)
-    // macOS DriverKit reliably supports this mode - writes bypass CPU cache
+    // CPU mapping: cached on Intel (coherent DMA; the inhibited mapping of a
+    // large scattered buffer hung the kernel on macOS 12), inhibited on Apple
+    // silicon. See DMACacheMode.hpp.
     kern_return_t kr = dmaBuffer_->CreateMapping(
-        /*options*/  kIOMemoryMapCacheModeInhibit,  // Uncached mapping
+        /*options*/  kDMAMappingCacheMode,
         /*address*/  0,
         /*offset*/   0,
         /*length*/   alignedSize,
@@ -177,10 +179,10 @@ bool DMAMemoryManager::Initialize(Driver::HardwareInterface& hw, size_t totalSiz
     ASFW_LOG(Async,
              "DMAMemoryManager: Initialized - vaddr=%p first iova=0x%llx size=%zu mapped=%zu page runs=%zu",
              slabVirt_, slabIOVA_, slabSize_, mappingLength_, runs_.size());
-    ASFW_LOG(Async,
-             "  Cache mode: UNCACHED (kIOMemoryMapCacheModeInhibit)");
-    ASFW_LOG(Async,
-             "  Alignment: 16B (OHCI §1.7), CPU writes bypass cache → RAM directly");
+    ASFW_LOG(Async, "  Cache mode: %{public}s",
+             kDMAMappingIsUncached ? "UNCACHED (kIOMemoryMapCacheModeInhibit)"
+                                   : "cached, coherent DMA (kIOMemoryMapCacheModeDefault), mfence on publish/fetch");
+    ASFW_LOG(Async, "  Alignment: 16B (OHCI §1.7)");
 
     return true;
 }

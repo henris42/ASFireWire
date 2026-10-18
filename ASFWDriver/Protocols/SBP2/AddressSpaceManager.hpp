@@ -17,6 +17,7 @@
 #include <DriverKit/IOLib.h>
 
 #include "../../Async/ResponseCode.hpp"
+#include "../../Shared/Memory/DMACacheMode.hpp"
 #include "../../Hardware/HardwareInterface.hpp"
 #include "../../Logging/Logging.hpp"
 
@@ -608,7 +609,7 @@ private:
 
         IOMemoryMap* mapping = nullptr;
         const kern_return_t kr = dma->descriptor->CreateMapping(
-            kIOMemoryMapCacheModeInhibit,
+            ASFW::Shared::kDMAMappingCacheMode,
             0,
             0,
             size,
