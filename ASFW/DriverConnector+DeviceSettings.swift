@@ -58,7 +58,8 @@ extension ASFWDriverConnector {
     /// the driver, not persisted, applied at the next playback start.
     func setMotuExperiment(_ experiment: MotuExperiment) -> kern_return_t {
         guard isConnected, connection != 0 else { return kIOReturnNotReady }
-        var input: [UInt64] = [UInt64(experiment.flags), UInt64(experiment.extraNoDataPackets)]
+        var input: [UInt64] = [UInt64(experiment.flags), UInt64(experiment.extraNoDataPackets),
+                               UInt64(experiment.presentationLeadTicks)]
         let kr = IOConnectCallScalarMethod(connection, Method.setMotuExperiment.rawValue,
                                            &input, UInt32(input.count), nil, nil)
         if kr != KERN_SUCCESS {

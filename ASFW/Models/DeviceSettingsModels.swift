@@ -129,16 +129,28 @@ enum DeviceSettingsOutcome {
 struct MotuExperiment: Equatable {
     static let forceFetchEnableFlag: UInt32 = 1 << 0
     static let captureOnlyFlag: UInt32 = 1 << 1
+    static let holdAbsolutePhaseFlag: UInt32 = 1 << 2
 
     var forceFetchEnable = false
     var captureOnly = false
+    /// Hold the absolute SPH phase at the 828mk3 setpoint (the pre-b98 behaviour on the mk2).
+    var holdAbsolutePhase = false
     /// Packets (125 µs each) to keep sending as NO-DATA after the prefill.
     var extraNoDataPackets: UInt32 = 0
+    /// SPH presentation lead in bus cycles for the next start; 0 = the model's default.
+    var presentationLeadCycles: UInt32 = 0
 
     var flags: UInt32 {
-        (forceFetchEnable ? Self.forceFetchEnableFlag : 0) | (captureOnly ? Self.captureOnlyFlag : 0)
+        (forceFetchEnable ? Self.forceFetchEnableFlag : 0)
+            | (captureOnly ? Self.captureOnlyFlag : 0)
+            | (holdAbsolutePhase ? Self.holdAbsolutePhaseFlag : 0)
     }
+    var presentationLeadTicks: UInt32 { presentationLeadCycles * 3072 }
     var isDefault: Bool { self == MotuExperiment() }
+
+    static let leadChoices: [(title: String, cycles: UInt32)] = [
+        ("model default", 0), ("2 cycles", 2), ("3 cycles", 3), ("4 cycles", 4), ("5 cycles", 5), ("6 cycles", 6),
+    ]
 
     static let dataDelayChoices: [(title: String, packets: UInt32)] = [
         ("none", 0), ("250 ms", 2000), ("1 s", 8000), ("4 s", 32000),

@@ -157,6 +157,13 @@ struct DeviceSettingsView: View {
                         Text(choice.title).tag(choice.packets)
                     }
                 }
+                Picker("SPH presentation lead", selection: $viewModel.experiment.presentationLeadCycles) {
+                    ForEach(MotuExperiment.leadChoices, id: \.cycles) { choice in
+                        Text(choice.title).tag(choice.cycles)
+                    }
+                }
+                Toggle("Hold absolute SPH phase at the 828mk3 setpoint (pre-b98 behaviour)",
+                       isOn: $viewModel.experiment.holdAbsolutePhase)
                 HStack {
                     Button("Send to driver") { viewModel.applyExperiment() }
                     if let message = viewModel.experimentMessage {
