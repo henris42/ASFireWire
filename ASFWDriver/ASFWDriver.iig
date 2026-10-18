@@ -90,6 +90,12 @@ public:
                                       uint64_t time)
         TYPE(IOTimerDispatchSource::TimerOccurred);
 
+    void ArmStartWatchdog() LOCALONLY;
+    void DisarmStartWatchdog() LOCALONLY;
+    virtual void StartWatchdogFired(OSAction* action,
+                                    uint64_t time)
+        TYPE(IOTimerDispatchSource::TimerOccurred);
+
     virtual void ProviderNotificationReady(OSAction* action)
         TYPE(IOServiceNotificationDispatchSource::ServiceNotificationReady);
 
@@ -159,4 +165,12 @@ struct ASFWDriver_IVars {
     IOTimerDispatchSource* wakeVerifyTimer; // retained
     OSAction* wakeVerifyAction;             // retained
     uint64_t wakeVerifyAttempt;             // attempt carried to the armed timer
+
+    // Start() watchdog. Runs on its own queue because Start() occupies the
+    // default one; if Start() is still inside a kernel RPC when it fires, it
+    // ends the process so IOKit sees a failed start instead of a hung boot.
+    IODispatchQueue* startWatchdogQueue;    // retained
+    IOTimerDispatchSource* startWatchdogTimer; // retained
+    OSAction* startWatchdogAction;          // retained
+    bool startInProgress;                   // accessed with __atomic builtins
 };

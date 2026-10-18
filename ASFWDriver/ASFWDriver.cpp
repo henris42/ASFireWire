@@ -353,7 +353,112 @@ kern_return_t IMPL(ASFWDriver, Start) {
     if (!ivars || !ivars->context)
         return kIOReturnNoMemory;
     ivars->powerProvider = provider;
-    return StartRuntime(provider);
+    // A Start() that blocks (b49: kmem_alloc_contig, b52: CreateMapping, both
+    // kernel RPCs that never returned) holds the provider busy and the whole
+    // boot with it; a Start() that fails lets IOKit fall back to Apple's
+    // driver. The watchdog turns the former into the latter.
+    ArmStartWatchdog();
+    kr = StartRuntime(provider);
+    DisarmStartWatchdog();
+    return kr;
+}
+
+namespace {
+// Normal Start() is well under a few seconds (soft reset, LPS, bus reset,
+// self-ID); a stuck RPC never returns. Long enough for a slow VM, short
+// enough that the boot continues without a power reset.
+constexpr uint64_t kStartWatchdogNs = 30ull * 1000ull * 1000ull * 1000ull;
+} // namespace
+
+void ASFWDriver::ArmStartWatchdog() {
+    if (!ivars) {
+        return;
+    }
+    __atomic_store_n(&ivars->startInProgress, true, __ATOMIC_RELEASE);
+    if (!ivars->startWatchdogTimer) {
+        IODispatchQueue* queue = nullptr;
+        kern_return_t kr = IODispatchQueue::Create("ASFW.start-watchdog", 0, 0, &queue);
+        if (kr != kIOReturnSuccess || !queue) {
+            ASFW_LOG_ERROR(Controller, "Start watchdog: queue create failed: 0x%08x", kr);
+            return;
+        }
+        IOTimerDispatchSource* timer = nullptr;
+        kr = IOTimerDispatchSource::Create(queue, &timer);
+        if (kr != kIOReturnSuccess || !timer) {
+            ASFW_LOG_ERROR(Controller, "Start watchdog: timer create failed: 0x%08x", kr);
+            queue->release();
+            return;
+        }
+        OSAction* action = nullptr;
+        kr = CreateActionStartWatchdogFired(0, &action);
+        if (kr != kIOReturnSuccess || !action) {
+            ASFW_LOG_ERROR(Controller, "Start watchdog: action create failed: 0x%08x", kr);
+            timer->release();
+            queue->release();
+            return;
+        }
+        kr = timer->SetHandler(action);
+        if (kr != kIOReturnSuccess) {
+            ASFW_LOG_ERROR(Controller, "Start watchdog: SetHandler failed: 0x%08x", kr);
+            action->release();
+            timer->release();
+            queue->release();
+            return;
+        }
+        (void)timer->SetEnableWithCompletion(true, nullptr);
+        ivars->startWatchdogQueue = queue;
+        ivars->startWatchdogTimer = timer;
+        ivars->startWatchdogAction = action;
+    }
+    (void)ASFW::Timing::initializeHostTimebase();
+    const uint64_t deadline =
+        mach_absolute_time() + ASFW::Timing::nanosToHostTicks(kStartWatchdogNs);
+    (void)ivars->startWatchdogTimer->WakeAtTime(kIOTimerClockMachAbsoluteTime, deadline, 0);
+    ASFW_LOG(Controller, "Start watchdog armed: %llu s", kStartWatchdogNs / 1000000000ull);
+}
+
+void ASFWDriver::DisarmStartWatchdog() {
+    if (!ivars) {
+        return;
+    }
+    __atomic_store_n(&ivars->startInProgress, false, __ATOMIC_RELEASE);
+    if (!ivars->startWatchdogTimer) {
+        return;
+    }
+    auto* timer = ivars->startWatchdogTimer;
+    auto* action = ivars->startWatchdogAction;
+    auto* queue = ivars->startWatchdogQueue;
+    ivars->startWatchdogTimer = nullptr;
+    ivars->startWatchdogAction = nullptr;
+    ivars->startWatchdogQueue = nullptr;
+    (void)timer->SetEnableWithCompletion(false, nullptr);
+    // Cancel is terminal; the action and its queue go once every queued
+    // callback has run (ActionTeardown.hpp).
+    const kern_return_t kr = timer->Cancel(^{
+        timer->release();
+        ASFW::Common::CancelAndReleaseOwnedAction(action, "start watchdog",
+                                                   [queue]() { queue->release(); }, queue);
+    });
+    if (kr != kIOReturnSuccess) {
+        timer->release();
+        ASFW::Common::CancelAndReleaseOwnedAction(action, "start watchdog",
+                                                   [queue]() { queue->release(); }, queue);
+    }
+    ASFW_LOG(Controller, "Start watchdog disarmed");
+}
+
+void ASFWDriver::StartWatchdogFired_Impl(ASFWDriver_StartWatchdogFired_Args) {
+    (void)action;
+    (void)time;
+    if (!ivars || !__atomic_load_n(&ivars->startInProgress, __ATOMIC_ACQUIRE)) {
+        return;
+    }
+    ASFW_LOG_ERROR(Controller,
+                   "❌ Start() has not returned after %llu s; it is stuck in the kernel. Ending the "
+                   "process so IOKit treats the start as failed and Apple's driver takes the card.",
+                   kStartWatchdogNs / 1000000000ull);
+    IOSleep(300); // give the log line a chance to leave the process
+    __builtin_trap();
 }
 
 kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
