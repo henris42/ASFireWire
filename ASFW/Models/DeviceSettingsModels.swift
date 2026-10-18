@@ -130,11 +130,14 @@ struct MotuExperiment: Equatable {
     static let forceFetchEnableFlag: UInt32 = 1 << 0
     static let captureOnlyFlag: UInt32 = 1 << 1
     static let holdAbsolutePhaseFlag: UInt32 = 1 << 2
+    static let transmitOnlyFlag: UInt32 = 1 << 3
 
     var forceFetchEnable = false
     var captureOnly = false
     /// Hold the absolute SPH phase at the 828mk3 setpoint (the pre-b98 behaviour on the mk2).
     var holdAbsolutePhase = false
+    /// Start the transmit context only (no receive): the counterpart of capture only.
+    var transmitOnly = false
     /// Packets (125 µs each) to keep sending as NO-DATA after the prefill.
     var extraNoDataPackets: UInt32 = 0
     /// SPH presentation lead in bus cycles for the next start; 0 = the model's default.
@@ -144,6 +147,7 @@ struct MotuExperiment: Equatable {
         (forceFetchEnable ? Self.forceFetchEnableFlag : 0)
             | (captureOnly ? Self.captureOnlyFlag : 0)
             | (holdAbsolutePhase ? Self.holdAbsolutePhaseFlag : 0)
+            | (transmitOnly ? Self.transmitOnlyFlag : 0)
     }
     var presentationLeadTicks: UInt32 { presentationLeadCycles * 3072 }
     var isDefault: Bool { self == MotuExperiment() }

@@ -152,6 +152,8 @@ struct DeviceSettingsView: View {
                        isOn: $viewModel.experiment.forceFetchEnable)
                 Toggle("Capture only: do not send any packets to the device",
                        isOn: $viewModel.experiment.captureOnly)
+                Toggle("Transmit only: send data but do not receive (SPH free-runs, audio muted)",
+                       isOn: $viewModel.experiment.transmitOnly)
                 Picker("Hold data back after the start", selection: $viewModel.experiment.extraNoDataPackets) {
                     ForEach(MotuExperiment.dataDelayChoices, id: \.packets) { choice in
                         Text(choice.title).tag(choice.packets)
