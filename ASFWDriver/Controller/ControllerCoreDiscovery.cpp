@@ -952,7 +952,14 @@ void ControllerCore::EvaluateGapPolicy() noexcept {
         in.selectedRootForRootPolicy = pendingReset_->targetRoot;
     }
 
+    in.isochSessionActive = deps_.isochSessionActive && deps_.isochSessionActive();
+
     gapPolicy_->Evaluate(in, *this);
+    if (gapPolicy_->Snapshot().lastDecision == Bus::GapPolicyDecision::DeferIsochSessionActive) {
+        ASFW_LOG(Controller,
+                 "[GapPolicy] gap=%u (optimal %u) left alone while an isoch session is active gen=%u",
+                 in.currentGapCount, gapPolicy_->Snapshot().expectedGapCount, in.generation);
+    }
 }
 
 void ControllerCore::EvaluatePowerLinkPolicy() noexcept {

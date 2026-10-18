@@ -159,6 +159,16 @@ GapPolicyDecision GapPolicyCoordinator::Plan(const GapPolicyInputs& inputs) cons
         return GapPolicyDecision::AlreadyOptimal;
     }
 
+    // The optimisation is worth one reset at discovery, not during a stream:
+    // its reset costs the running session a generation (and the device's own
+    // reset that follows, when it does not keep the gap, another). Hardware,
+    // 2026-10-18: every period of the 828mkII's reset loop carried two extra
+    // generations from this policy re-applying gap=5. Mismatches above are
+    // repairs and still run.
+    if (inputs.isochSessionActive) {
+        return GapPolicyDecision::DeferIsochSessionActive;
+    }
+
     if (attemptsThisStableTopology_ >= config_.maxOptimizationAttemptsPerStableTopology) {
         return GapPolicyDecision::FailedRetryLimit;
     }

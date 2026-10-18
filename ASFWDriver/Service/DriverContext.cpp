@@ -157,6 +157,7 @@ void ServiceContext::Reset(ResetMode mode) {
     }
     deps.busResetStartedCallback = {};
     deps.cycleInconsistentCallback = {};
+    deps.isochSessionActive = {};
     ASFW_LOG(Controller, "[Teardown] release discovery graph complete");
     ASFW_LOG(Controller, "[Teardown] release status publisher and watchdog begin");
     statusPublisher.Reset();
@@ -276,8 +277,13 @@ void DriverWiring::EnsureDeps(ASFWDriver* driver, ::ServiceContext& ctx) {
                 audio->HandleCycleInconsistent();
             }
         };
+        d.isochSessionActive = [weakAudio] {
+            const auto audio = weakAudio.lock();
+            return audio && audio->HasActiveSession();
+        };
     } else {
         d.cycleInconsistentCallback = {};
+        d.isochSessionActive = {};
     }
 
     d.busResetStartedCallback = [&ctx] {

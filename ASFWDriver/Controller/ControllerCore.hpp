@@ -171,6 +171,9 @@ class ControllerCore final : private Role::IPhyConfigReset,
         std::shared_ptr<ASFW::Bus::BusManagerElectionDriver> busManagerElectionDriver;
         std::function<void()> busResetStartedCallback;
         std::function<void()> cycleInconsistentCallback;
+        // True while an audio/isoch session is starting or running; the gap
+        // policy then defers pure optimisations (GapPolicyCoordinator).
+        std::function<bool()> isochSessionActive;
     };
 
     ControllerCore(ControllerConfig config, RolePolicy initialPolicy, Dependencies deps);

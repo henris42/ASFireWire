@@ -108,6 +108,14 @@ void AudioCoordinator::OnDeviceResumed(std::shared_ptr<Discovery::FWDevice> devi
     if (hostServed) host_.OnDeviceResumed(guid);
 }
 
+bool AudioCoordinator::HasActiveSession() const noexcept {
+    if (!lock_) return false;
+    IOLockLock(lock_);
+    const bool active = activeGuid_ != 0;
+    IOLockUnlock(lock_);
+    return active;
+}
+
 void AudioCoordinator::HandleBusReset() noexcept {
     uint64_t guid = 0;
     if (lock_) {

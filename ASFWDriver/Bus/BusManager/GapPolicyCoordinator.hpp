@@ -36,6 +36,9 @@ enum class GapPolicyDecision : uint8_t {
     FailedRetryLimit,
     FailedExecutorUnavailable,
     FailedGenerationStale,
+    // A pure optimisation while an isoch session is starting or running: its
+    // reset would cost the stream two more generations. Repairs still run.
+    DeferIsochSessionActive,
 };
 
 /**
@@ -106,6 +109,9 @@ struct GapPolicyInputs {
 
     bool rootSelectionRequired{false};
     uint8_t selectedRootForRootPolicy{0x3F};
+
+    // An audio/isoch session is starting or running on this controller.
+    bool isochSessionActive{false};
 
     const ASFW::Driver::TopologySnapshot* topology{nullptr};
 };

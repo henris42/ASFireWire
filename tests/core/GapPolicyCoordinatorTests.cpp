@@ -57,6 +57,40 @@ TEST_F(GapPolicyCoordinatorTests, GapPolicyAllowed_AllowsGapPolicy) {
     EXPECT_EQ(coordinator_.Plan(in), GapPolicyDecision::GapOptimizationRequired);
 }
 
+TEST_F(GapPolicyCoordinatorTests, IsochSessionActive_DefersPureOptimisationOnly) {
+    GapPolicyInputs in{};
+    ASFW::Driver::TopologySnapshot topo{};
+    topo.nodeCount = 2;
+    in.topology = &topo;
+    in.topologyValid = true;
+    in.roleMode = RoleMode::FullBusManager;
+    in.activityLevel = FullBMActivityLevel::GapPolicyAllowed;
+    in.localIsBM = true;
+    in.maxHopsKnown = true;
+    in.maxHopsFromRoot = 1;
+    in.betaRepeatersKnown = true;
+    in.betaRepeatersPresent = false;
+    in.currentGapCount = 63;
+    in.gapCountConsistent = true;
+    in.isochSessionActive = true;
+
+    EXPECT_EQ(coordinator_.Plan(in), GapPolicyDecision::DeferIsochSessionActive);
+
+    // Already optimal: nothing to defer.
+    in.currentGapCount = 5;
+    EXPECT_EQ(coordinator_.Plan(in), GapPolicyDecision::AlreadyOptimal);
+
+    // A mismatch is a repair, not an optimisation: it still runs.
+    in.currentGapCount = 63;
+    in.gapCountConsistent = false;
+    EXPECT_EQ(coordinator_.Plan(in), GapPolicyDecision::GapMismatchRequiresLongReset);
+
+    // Idle again: the optimisation is back.
+    in.gapCountConsistent = true;
+    in.isochSessionActive = false;
+    EXPECT_EQ(coordinator_.Plan(in), GapPolicyDecision::GapOptimizationRequired);
+}
+
 TEST_F(GapPolicyCoordinatorTests, SingleNodeBus_SuppressesGapPolicy) {
     GapPolicyInputs in{};
     ASFW::Driver::TopologySnapshot topo{};

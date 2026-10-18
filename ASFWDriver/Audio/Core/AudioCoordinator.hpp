@@ -69,6 +69,9 @@ public:
         return sessions_.IsStreaming(guid) || sessions_.IsReconciling(guid);
     }
     void HandleCycleInconsistent() noexcept;
+    // A session owns the isoch transport: starting, running, or waiting out a
+    // bus reset. Read by the controller's gap policy.
+    [[nodiscard]] bool HasActiveSession() const noexcept;
     // After async generation work has been aborted, before ROM discovery.
     void HandleBusReset() noexcept;
 
