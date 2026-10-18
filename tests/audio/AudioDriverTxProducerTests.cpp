@@ -915,8 +915,13 @@ TEST(AudioDriverTxProducerTests, MotuStreamsRegulatorTimedSphAndUnmutesOnLock) {
         const WirePacket* firstData = nullptr;
         size_t dataPackets = 0;
         for (const auto& packet : wire) {
-            ASSERT_TRUE(packet.bytes.size() == 8 || packet.bytes.size() == dataBytes)
+            // The primed lap is skip cycles: nothing on the wire (Linux's
+            // queue_out_packet with skip). Everything after it is a CIP packet.
+            ASSERT_TRUE(packet.bytes.empty() || packet.bytes.size() == 8 || packet.bytes.size() == dataBytes)
                 << "packet " << packet.index << " is " << packet.bytes.size() << " bytes";
+            if (packet.bytes.empty()) {
+                continue;
+            }
             // The MOTU CIP header on every packet: SPH bit, FMT 0x02, FDF 0x22,
             // SYT NO_INFO.
             ASSERT_EQ(packet.bytes[2] & 0x04, 0x04) << "packet " << packet.index;
@@ -1007,8 +1012,10 @@ TEST(AudioDriverTxProducerTests, MotuServoRunsBeforeNoDataPacketsToo) {
     rig.FeedMotuRx(8, /*clockOnly=*/true);
     ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets)) << rig.DescribeFault();
 
+    // The primed lap is skip cycles (nothing on the wire); live NO-DATA
+    // packets are header-only.
     for (const auto& packet : rig.Wire()) {
-        ASSERT_EQ(packet.bytes.size(), 8u) << "packet " << packet.index;
+        ASSERT_TRUE(packet.bytes.empty() || packet.bytes.size() == 8u) << "packet " << packet.index;
     }
     auto& runtime = rig.Ivars().runtime;
     EXPECT_EQ(runtime.txStreamEngine.Counters().dataPacketsPrepared.load(), 0u);

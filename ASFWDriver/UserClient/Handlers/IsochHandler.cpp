@@ -61,12 +61,12 @@ kern_return_t IsochHandler::SetMotuExperiment(IOUserClientMethodArguments* args)
     ASFW::Audio::Motu::MotuExperiments::flags.store(flags, std::memory_order_relaxed);
     ASFW::Audio::Motu::MotuExperiments::extraNoDataPackets.store(extra, std::memory_order_relaxed);
     ASFW::Audio::Motu::MotuExperiments::presentationLeadTicks.store(leadTicks, std::memory_order_relaxed);
-    ASFW_LOG(UserClient, "[MotuExperiment] flags=0x%x (forceFetchEnable=%u captureOnly=%u holdAbsolutePhase=%u transmitOnly=%u skipPrefill=%u startEventDbc=%u) extraNoDataPackets=%u leadTicks=%u; consumed by the next stream start (one-shot)",
+    ASFW_LOG(UserClient, "[MotuExperiment] flags=0x%x (forceFetchEnable=%u captureOnly=%u holdAbsolutePhase=%u transmitOnly=%u emptyCipPrefill=%u startEventDbc=%u) extraNoDataPackets=%u leadTicks=%u; consumed by the next stream start (one-shot)",
              flags, (flags & ASFW::Audio::Motu::kMotuExperimentForceFetchEnable) ? 1U : 0U,
              (flags & ASFW::Audio::Motu::kMotuExperimentCaptureOnly) ? 1U : 0U,
              (flags & ASFW::Audio::Motu::kMotuExperimentHoldAbsolutePhase) ? 1U : 0U,
              (flags & ASFW::Audio::Motu::kMotuExperimentTransmitOnly) ? 1U : 0U,
-             (flags & ASFW::Audio::Motu::kMotuExperimentSkipCyclePrefill) ? 1U : 0U,
+             (flags & ASFW::Audio::Motu::kMotuExperimentEmptyCipPrefill) ? 1U : 0U,
              (flags & ASFW::Audio::Motu::kMotuExperimentStartEventDbc) ? 1U : 0U, extra, leadTicks);
     return kIOReturnSuccess;
 }

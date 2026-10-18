@@ -202,16 +202,22 @@ void ApplyMotuSphServoInput(ASFWAudioDriver_IVars& ivars,
 // (a refusal means another stream generation, never expected).
 void LogMotuSphSummary(const ASFWAudioDriver_IVars& ivars) noexcept {
     const auto servo = ivars.runtime.motuTxTimingStamper.ServoTelemetrySnapshot();
+    ASFW::Audio::Runtime::MotuRxSphClockSample bridge{};
+    uint64_t bridgeUpdates = 0;
+    const bool haveBridge = ivars.runtime.directAudioGraph.control != nullptr &&
+        ivars.runtime.directAudioGraph.control->motuRxSphClock.ReadLatest(bridge, bridgeUpdates);
     ASFW_LOG(DirectAudio,
              "[MotuSphServo] gen=%llu dec=%llu locked=%u muted=%u seeded=%u err=%lld "
-             "ratePpb=%lld rxPpb=%lld step=%lld corr=%lld",
+             "ratePpb=%lld rxPpb=%lld step=%lld corr=%lld bridgeUpd=%llu bridgeGen=%llu bridgeFr=%llu",
              servo.streamGeneration, servo.decisions, servo.locked ? 1u : 0u,
              servo.outputMuted ? 1u : 0u, servo.seeded ? 1u : 0u,
              static_cast<long long>(servo.phaseErrorTicks),
              static_cast<long long>(MotuSphRatePpb(servo.stepQ32, servo.nominalStepQ32)),
              static_cast<long long>(MotuSphRatePpb(servo.measuredStepQ32, servo.nominalStepQ32)),
              static_cast<long long>(servo.stepQ32),
-             static_cast<long long>(servo.txCorrectionQ32));
+             static_cast<long long>(servo.txCorrectionQ32),
+             haveBridge ? bridgeUpdates : 0ULL, haveBridge ? bridge.streamGeneration : 0ULL,
+             haveBridge ? bridge.rxFrames : 0ULL);
     ASFW_LOG(DirectAudio,
              "[MotuSphState] gen=%llu hard=%llu repair=%llu mute=%llu unmute=%llu "
              "mutedFr=%llu drops=%u same=%u back=%u/%u/%u seed=%u stall=%u trace=%llu/%llu",
@@ -955,18 +961,22 @@ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
             ASFW::Protocols::Audio::AMDTP::AmdtpPacketDisposition::Data;
     }
     timing.txClockValid = false;
-    // Experiment (MotuExperiments): prime the lap with skip cycles, as Linux
-    // primes an OUT stream (amdtp_stream_start queues header_length ==
-    // payload_length == 0 packets, which queue_out_packet turns into skips),
-    // so nothing reaches the wire before the first real packet. The default
-    // lap is 1512 header-only CIP packets carrying DBC 0 (189 ms); the 828mkII
-    // aborted its stream on the first data packet that followed, the first
-    // packet to carry a different counter, while its own stream never shows an
-    // empty packet before data (b104 wire capture).
-    const bool skipPrefill =
-        ASFW::Audio::Motu::MotuExperiments::Take(ASFW::Audio::Motu::kMotuExperimentSkipCyclePrefill);
-    timing.skipCycle = skipPrefill && timing.disposition ==
-                                          ASFW::Protocols::Audio::AMDTP::AmdtpPacketDisposition::NoData;
+    // A MOTU stream primes its lap with skip cycles, as Linux primes an OUT
+    // stream (amdtp_stream_start queues header_length == payload_length == 0
+    // packets, which queue_out_packet turns into skips), so nothing reaches
+    // the wire before the first real packet. Until b107 the lap was 1512
+    // header-only CIP packets carrying DBC 0 (189 ms); the 828mkII fresh from
+    // a power cycle aborted its own stream on the first data packet that
+    // followed, every start since b74, and never after a skip-cycle lap
+    // (b104 wire capture, b107 runs). Other families keep their recorded
+    // start sequences. An experiment flag restores the old lap for A/B.
+    const bool emptyCipPrefill =
+        ASFW::Audio::Motu::MotuExperiments::Take(ASFW::Audio::Motu::kMotuExperimentEmptyCipPrefill);
+    timing.skipCycle = ivars.runtime.motuSphActive.load(std::memory_order_relaxed) && !emptyCipPrefill &&
+                       timing.disposition == ASFW::Protocols::Audio::AMDTP::AmdtpPacketDisposition::NoData;
+    if (emptyCipPrefill) {
+        ASFW_LOG(DirectAudio, "[MotuExperiment] priming with header-only CIP packets (pre-b110 lap)");
+    }
 
     uint32_t prepared = 0;
     for (uint64_t packetIndex = 0;
@@ -1690,19 +1700,50 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
             // reach packet memory? Counters are cumulative for the stream;
             // peakQ24 is this interval's largest written |sample| (24-bit),
             // word its encoded slot. Primary stream only.
+            // A MOTU stream fills through its own writer; the AMDTP writer's
+            // counters stay zero for it (b107 report read them as "no PCM").
+            const bool motuWriter = ivars->runtime.motuSphActive.load(std::memory_order_relaxed);
             const auto& fill = ivars->runtime.txStreamEngine.PayloadWriterCounters();
+            const auto& motuFill = ivars->runtime.motuPayloadWriter.Counters();
             uint32_t peakWord = 0;
             const uint32_t peakQ24 = ivars->runtime.txStreamEngine.TakePeakWrittenQ24(&peakWord);
             ASFW_LOG(DirectAudio,
-                     "[TxContent] peakQ24=%u word=0x%08x written=%llu noPkt=%llu outside=%llu "
-                     "missed=%llu writeEnd=%llu filledEnd=%llu",
-                     peakQ24, peakWord,
-                     fill.framesWritten.load(std::memory_order_relaxed),
-                     fill.framesWithoutPacket.load(std::memory_order_relaxed),
-                     fill.framesOutsidePacket.load(std::memory_order_relaxed),
-                     fill.framesMissedFinality.load(std::memory_order_relaxed),
+                     "[TxContent] writer=%{public}s peakQ24=%u word=0x%08x visited=%llu written=%llu noPkt=%llu outside=%llu "
+                     "missed=%llu muted=%llu writeEnd=%llu filledEnd=%llu",
+                     motuWriter ? "motu" : "amdtp", peakQ24, peakWord,
+                     motuWriter ? motuFill.framesVisited.load(std::memory_order_relaxed) : 0ULL,
+                     motuWriter ? motuFill.framesWritten.load(std::memory_order_relaxed)
+                                : fill.framesWritten.load(std::memory_order_relaxed),
+                     motuWriter ? motuFill.framesWithoutPacket.load(std::memory_order_relaxed)
+                                : fill.framesWithoutPacket.load(std::memory_order_relaxed),
+                     motuWriter ? motuFill.framesOutsidePacket.load(std::memory_order_relaxed)
+                                : fill.framesOutsidePacket.load(std::memory_order_relaxed),
+                     motuWriter ? motuFill.framesMissedFinality.load(std::memory_order_relaxed)
+                                : fill.framesMissedFinality.load(std::memory_order_relaxed),
+                     motuWriter ? motuFill.framesMuted.load(std::memory_order_relaxed) : 0ULL,
                      directControl->playbackRingWriteFrame.load(std::memory_order_relaxed),
                      directControl->playbackRingReadFrame.load(std::memory_order_relaxed));
+            // The gate the fill waits on (FillTransmitPayloads copies frames in
+            // [filled, min(writtenEnd, exposedEnd)) only): CoreAudio's write
+            // end, the ring's oldest held frame, the timeline's exposed frame
+            // end (one past the newest DATA packet's frames), the engine's
+            // frame cursor and its alignment epoch, plus what the engine made.
+            {
+                const auto& engine = ivars->runtime.txStreamEngine;
+                ASFW_LOG(DirectAudio,
+                         "[TxFill] writtenEnd=%llu oldestValid=%llu exposedEnd=%llu filled=%llu cursor=%llu "
+                         "epoch=%llu aligned=%u dataPrepared=%llu noDataPrepared=%llu timingReverts=%llu "
+                         "replayActive=%u replayEstablished=%u",
+                         directControl->playbackRingWriteFrame.load(std::memory_order_relaxed),
+                         directControl->playbackRingOldestValidFrame.load(std::memory_order_relaxed),
+                         engine.Timeline().ExposedFrameEnd(), ivars->runtime.txFilledFrameEnd,
+                         engine.NextAudioFrame(), engine.CursorEpoch(), engine.IsFrameCursorAligned() ? 1U : 0U,
+                         engine.Counters().dataPacketsPrepared.load(std::memory_order_relaxed),
+                         engine.Counters().noDataPacketsPrepared.load(std::memory_order_relaxed),
+                         engine.Counters().timingUnavailableReverts.load(std::memory_order_relaxed),
+                         ivars->runtime.txReplayReader.IsActive() ? 1U : 0U,
+                         directControl->rxSequenceReplay.IsEstablished() ? 1U : 0U);
+            }
             // Cadence per interval: at 48 kHz blocking the device-replayed
             // pattern is 6 DATA : 2 NO-DATA per 8 cycles (6000 data packets/s
             // of 8 frames); 8:0 would push 64 000 frames/s (b92 report §2).

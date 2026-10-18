@@ -41,10 +41,11 @@ enum MotuExperimentFlag : uint32_t {
     // free-runs from the transmit time (no device clock to lock to, PCM
     // muted). Cleared by the session once its start has used it.
     kMotuExperimentTransmitOnly = 1u << 3,
-    // Prime the transmit ring with skip cycles (nothing on the wire), as Linux
-    // primes an OUT stream, instead of 1512 header-only CIP packets carrying
-    // DBC 0: the first packet the device receives is then a real one.
-    kMotuExperimentSkipCyclePrefill = 1u << 4,
+    // Prime the transmit ring with 1512 header-only CIP packets carrying DBC 0
+    // (every build before b110) instead of the default skip cycles, for A/B:
+    // the 828mkII fresh from a power cycle aborted its stream on the first
+    // data packet after that lap, and never after a skip-cycle lap (b107).
+    kMotuExperimentEmptyCipPrefill = 1u << 4,
     // Count DBC as the device itself does on the wire: a data packet carries
     // its first block's number and an empty packet the next packet's
     // (IEC 61883-1 start-of-packet), instead of Linux's end-event counting.
@@ -52,7 +53,7 @@ enum MotuExperimentFlag : uint32_t {
 };
 inline constexpr uint32_t kMotuExperimentAllFlags =
     kMotuExperimentForceFetchEnable | kMotuExperimentCaptureOnly | kMotuExperimentHoldAbsolutePhase |
-    kMotuExperimentTransmitOnly | kMotuExperimentSkipCyclePrefill | kMotuExperimentStartEventDbc;
+    kMotuExperimentTransmitOnly | kMotuExperimentEmptyCipPrefill | kMotuExperimentStartEventDbc;
 
 struct MotuExperiments {
     static inline std::atomic<uint32_t> flags{0};
