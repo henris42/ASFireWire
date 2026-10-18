@@ -839,6 +839,30 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
             ivars.runtime.txStreamEngine.Timeline().SlotByIndex(
                 nextPacketToPrepare);
         const bool emittedData = preparedSlot != nullptr && preparedSlot->isData;
+        // The first DATA packets' SPH against the cycle they go out in: the
+        // lead the device actually sees (b95 report computed ~2 cycles from
+        // the dump and the ring seed; this reads both from the same place).
+        if (emittedData && motuSphActive && timing.transmitCycleValid &&
+            ivars.runtime.motuStampLogged < 4 && preparedSlot->packetBytes != nullptr &&
+            preparedSlot->packetSizeBytes >= 12) {
+            ++ivars.runtime.motuStampLogged;
+            const uint8_t* b = preparedSlot->packetBytes + 8;
+            const uint32_t sph = (static_cast<uint32_t>(b[0]) << 24) | (static_cast<uint32_t>(b[1]) << 16) |
+                                 (static_cast<uint32_t>(b[2]) << 8) | static_cast<uint32_t>(b[3]);
+            const int64_t sphTicks = static_cast<int64_t>(((sph >> 12) & 0x1fffU) * 3072U + (sph & 0xfffU));
+            const int64_t anchorTicks = static_cast<int64_t>(
+                ASFW::Timing::normalizeOffsetDomain(timing.transmitTicks) %
+                static_cast<int64_t>(ASFW::Timing::kTicksPerSecond));
+            int64_t lead = sphTicks - anchorTicks;
+            const int64_t second = static_cast<int64_t>(ASFW::Timing::kTicksPerSecond);
+            if (lead > second / 2) lead -= second;
+            if (lead < -second / 2) lead += second;
+            ASFW_LOG(DirectAudio,
+                     "[MotuTxStamp] pkt=%llu txCycle=%u sph0=%u:%u lead=%lld ticks (%lld.%02lld cycles)",
+                     static_cast<unsigned long long>(nextPacketToPrepare), timing.transmitCycle,
+                     (sph >> 12) & 0x1fffU, sph & 0xfffU, static_cast<long long>(lead),
+                     static_cast<long long>(lead / 3072), static_cast<long long>((lead % 3072 + 3072) % 3072 * 100 / 3072));
+        }
         if (ivars.runtime.mAudioInternalTxActive.load(std::memory_order_acquire) &&
             !ivars.runtime.mAudioInternalTxTiming.CommitPacket(
                 mAudioPlan, emittedData)) {
@@ -965,6 +989,7 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
     memory.queueControl->ResetProducerForStart();
 
     ivars.runtime.motuExperimentHoldUntilPacket = 0;
+    ivars.runtime.motuStampLogged = 0;
     ivars.runtime.txCadenceLastData = 0;
     ivars.runtime.txCadenceLastNoData = 0;
     ivars.runtime.txCadenceLastEmpty = 0;
@@ -991,10 +1016,31 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
     if (txPolicy.hostToDevicePcmEncoding == ASFW::Encoding::AudioWireFormat::kMotuPacked) {
         // Every MOTU model is timed by the SPH regulator; a rate it has no
         // configuration for cannot be timed at all.
+        // The model's lead and loop mode, unless this start's experiment
+        // (MotuExperiments, one-shot) says otherwise.
+        uint32_t leadTicks = txPolicy.motuPresentationLeadTicks;
+        bool holdAbsolute = txPolicy.motuHoldAbsolutePhase;
+        if (const uint32_t override = ASFW::Audio::Motu::MotuExperiments::TakePresentationLeadTicks();
+            override != 0) {
+            leadTicks = override;
+        }
+        if (ASFW::Audio::Motu::MotuExperiments::Take(ASFW::Audio::Motu::kMotuExperimentHoldAbsolutePhase)) {
+            holdAbsolute = true;
+        }
+        if (leadTicks != txPolicy.motuPresentationLeadTicks || holdAbsolute != txPolicy.motuHoldAbsolutePhase) {
+            ASFW_LOG(DirectAudio, "[MotuExperiment] SPH lead=%u ticks (model %u) holdAbsolutePhase=%u (model %u)",
+                     leadTicks, txPolicy.motuPresentationLeadTicks, holdAbsolute ? 1U : 0U,
+                     txPolicy.motuHoldAbsolutePhase ? 1U : 0U);
+        }
+        const auto setpoint = holdAbsolute
+            ? ::ASFW::Encoding::Motu::AbsolutePhaseSetpointTicksAtRate(
+                  txPolicy.motuAbsolutePhaseSetpointTicks48k, txConfig.sampleRate)
+            : std::nullopt;
+        ASFW_LOG(DirectAudio, "[MotuSphConfig] lead=%u ticks (%u.%02u cycles) absolutePhase=%{public}s rate=%u",
+                 leadTicks, leadTicks / 3072U, (leadTicks % 3072U) * 100U / 3072U,
+                 setpoint.has_value() ? "held" : "relative", txConfig.sampleRate);
         if (!ivars.runtime.motuTxTimingStamper.Configure(
-                txConfig.dbs, txConfig.sampleRate, txPolicy.motuPresentationLeadTicks,
-                ::ASFW::Encoding::Motu::AbsolutePhaseSetpointTicksAtRate(
-                    txPolicy.motuAbsolutePhaseSetpointTicks48k, txConfig.sampleRate))) {
+                txConfig.dbs, txConfig.sampleRate, leadTicks, setpoint)) {
             ASFW_LOG(Audio, "ASFWAudioDevice: MOTU SPH regulator has no configuration for rate=%u",
                      txConfig.sampleRate);
             return {kIOReturnUnsupported, "ConfigureMotuTxTiming"};

@@ -264,6 +264,8 @@ struct AudioDriverRuntimeState {
     // MotuExperiments data hold: packets below this index go out as NO-DATA
     // (taken from the one-shot knob at the first live packet; 0 = no hold).
     uint64_t motuExperimentHoldUntilPacket{0};
+    // [MotuTxStamp] lines logged this start (first few DATA packets).
+    uint32_t motuStampLogged{0};
     // [TxCadence]: DATA / NO-DATA / header-only counts at the last heartbeat.
     uint64_t txCadenceLastData{0};
     uint64_t txCadenceLastNoData{0};

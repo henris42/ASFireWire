@@ -49,18 +49,22 @@ kern_return_t IsochHandler::MotuCapture(IOUserClientMethodArguments* args) {
 // Scalar inputs: flags (MotuExperimentFlag bits), extra NO-DATA packets after
 // the prefill. Process-wide; applied at the next stream start.
 kern_return_t IsochHandler::SetMotuExperiment(IOUserClientMethodArguments* args) {
-    if (!args || !args->scalarInput || args->scalarInputCount != 2) return kIOReturnBadArgument;
+    if (!args || !args->scalarInput || args->scalarInputCount < 2 || args->scalarInputCount > 3) {
+        return kIOReturnBadArgument;
+    }
     const auto flags = static_cast<uint32_t>(args->scalarInput[0]);
     const auto extra = static_cast<uint32_t>(args->scalarInput[1]);
-    if (flags & ~(ASFW::Audio::Motu::kMotuExperimentForceFetchEnable |
-                  ASFW::Audio::Motu::kMotuExperimentCaptureOnly) || extra > 8000 * 60) {
+    const auto leadTicks = args->scalarInputCount == 3 ? static_cast<uint32_t>(args->scalarInput[2]) : 0U;
+    if ((flags & ~ASFW::Audio::Motu::kMotuExperimentAllFlags) || extra > 8000 * 60 || leadTicks > 16 * 3072) {
         return kIOReturnBadArgument;
     }
     ASFW::Audio::Motu::MotuExperiments::flags.store(flags, std::memory_order_relaxed);
     ASFW::Audio::Motu::MotuExperiments::extraNoDataPackets.store(extra, std::memory_order_relaxed);
-    ASFW_LOG(UserClient, "[MotuExperiment] flags=0x%x (forceFetchEnable=%u captureOnly=%u) extraNoDataPackets=%u; consumed by the next stream start (one-shot)",
+    ASFW::Audio::Motu::MotuExperiments::presentationLeadTicks.store(leadTicks, std::memory_order_relaxed);
+    ASFW_LOG(UserClient, "[MotuExperiment] flags=0x%x (forceFetchEnable=%u captureOnly=%u holdAbsolutePhase=%u) extraNoDataPackets=%u leadTicks=%u; consumed by the next stream start (one-shot)",
              flags, (flags & ASFW::Audio::Motu::kMotuExperimentForceFetchEnable) ? 1U : 0U,
-             (flags & ASFW::Audio::Motu::kMotuExperimentCaptureOnly) ? 1U : 0U, extra);
+             (flags & ASFW::Audio::Motu::kMotuExperimentCaptureOnly) ? 1U : 0U,
+             (flags & ASFW::Audio::Motu::kMotuExperimentHoldAbsolutePhase) ? 1U : 0U, extra, leadTicks);
     return kIOReturnSuccess;
 }
 

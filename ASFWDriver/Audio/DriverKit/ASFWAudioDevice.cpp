@@ -166,6 +166,13 @@ kern_return_t ReleaseWireTransport(ASFWAudioDriver_IVars& ivars,
                  control->counters.txPackets.load(std::memory_order_relaxed),
                  control->counters.txSilenceSubstitutions.load(std::memory_order_relaxed),
                  control->counters.txUnderruns.load(std::memory_order_relaxed));
+        // Whole-stream cadence, for streams too short for a [TxCadence] heartbeat.
+        const uint64_t data = control->counters.txDataPackets.load(std::memory_order_relaxed);
+        const uint64_t noData = control->counters.txNoDataPackets.load(std::memory_order_relaxed);
+        const uint64_t empty = control->counters.txEmptyPackets.load(std::memory_order_relaxed);
+        const uint64_t total = data + noData + empty;
+        ASFW_LOG(DirectAudio, "[TxCadence] stream total: data=%llu noData=%llu empty=%llu dataPerMille=%llu",
+                 data, noData, empty, total ? (data * 1000) / total : 0);
     }
 
     if (ivars.device.audioNub) {
