@@ -104,6 +104,56 @@ is_loader_app() {
   [[ -n "$min_os" && "${min_os%%.*}" -lt 14 ]]
 }
 
+# Login agent that re-applies remembered device settings (clock source, optical
+# modes) after login, a re-plug or a power cycle: the app headless, as the
+# logged-in user, so it shares the app's sandboxed preferences.
+CONFIG_AGENT_LABEL="net.asfw.apply-config"
+CONFIG_AGENT_PLIST="/Library/LaunchAgents/${CONFIG_AGENT_LABEL}.plist"
+
+install_config_agent() {
+  local tmp
+  tmp="$(mktemp)"
+  cat > "$tmp" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>${CONFIG_AGENT_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${INSTALLED_APP}/Contents/MacOS/ASFW</string>
+    <string>--apply-config</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>StandardOutPath</key><string>/tmp/asfw-apply-config.log</string>
+  <key>StandardErrorPath</key><string>/tmp/asfw-apply-config.log</string>
+</dict>
+</plist>
+PLIST
+  if ! cmp -s "$tmp" "$CONFIG_AGENT_PLIST" 2>/dev/null; then
+    sudo install -o root -g wheel -m 0644 "$tmp" "$CONFIG_AGENT_PLIST"
+    info "Installed ${CONFIG_AGENT_PLIST}."
+  fi
+  rm -f "$tmp"
+  # (Re)start it for this login session; a fresh login starts it by itself.
+  launchctl bootout "gui/$(id -u)/${CONFIG_AGENT_LABEL}" 2>/dev/null || true
+  if launchctl bootstrap "gui/$(id -u)" "$CONFIG_AGENT_PLIST" 2>/dev/null; then
+    info "Device-settings agent running (log: /tmp/asfw-apply-config.log)."
+  else
+    info "Device-settings agent will start at the next login."
+  fi
+}
+
+remove_config_agent() {
+  launchctl bootout "gui/$(id -u)/${CONFIG_AGENT_LABEL}" 2>/dev/null || true
+  if [[ -e "$CONFIG_AGENT_PLIST" ]]; then
+    sudo rm -f "$CONFIG_AGENT_PLIST"
+    info "Removed ${CONFIG_AGENT_PLIST}."
+  fi
+}
+
 developer_mode_on() {
   systemextensionsctl developer 2>/dev/null | grep -qi 'is on'
 }
@@ -184,6 +234,8 @@ if [[ "$MODE" == uninstall ]]; then
     # With SIP disabled systemextensionsctl can remove it directly.
     systemextensionsctl uninstall - "$DEXT_ID" || true
   fi
+  step "Remove the device-settings login agent"
+  remove_config_agent
   step "Remove ${INSTALLED_APP}"
   if [[ -e "$INSTALLED_APP" ]]; then
     run_with_privilege rm -rf "$INSTALLED_APP"
@@ -288,6 +340,11 @@ if is_loader_app "$INSTALLED_APP"; then
 else
   open "$INSTALLED_APP" || info "Open ${INSTALLED_APP} manually."
   info "Press Install in the app to activate the system extension, then run ./install.sh --status."
+fi
+
+if is_loader_app "$INSTALLED_APP"; then
+  step "Device-settings login agent"
+  install_config_agent
 fi
 
 if report_driver_state; then

@@ -88,10 +88,26 @@ Every build has a higher build number (`b37`, `b38`, …). macOS only replaces a
 installed driver with a newer one, so always install the newest ZIP. Older ZIPs
 are deliberately not kept.
 
+## Device settings and the login agent
+
+The app's **Device Settings** page sets a MOTU device's clock source and what its optical
+ports carry (ADAT or TOSLINK S/PDIF). Changing an optical mode changes the channel
+count, so the audio device is republished with the new layout. Every change is remembered
+per device GUID, in the app's preferences.
+
+`install.sh` also installs a login agent, `/Library/LaunchAgents/net.asfw.apply-config.plist`,
+which runs `ASFW --apply-config` as the logged-in user. It watches every controller ASFW
+drives and, whenever a device with remembered settings appears (login, re-plug, power
+cycle, bus reset with a new generation), reads the device and writes back the remembered
+values that differ. Its log is `/tmp/asfw-apply-config.log`. With several FireWire cards each
+card is a separate entry in the app's sidebar; settings belong to the device, whichever
+card it is plugged into.
+
 ## Check
 
 ```sh
 ./install.sh --status                             # developer mode, installed build, driver state
+launchctl print gui/$(id -u)/net.asfw.apply-config | head -5   # device-settings agent loaded?
 systemextensionsctl list                          # net.asfw.driver … [activated enabled]
 ioreg -rc IOUserService | grep -i asfw            # driver attached to the controller?
 log show --last 10m --predicate 'process == "net.asfw.driver"' | tail -50
