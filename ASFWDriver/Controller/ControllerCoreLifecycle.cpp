@@ -160,7 +160,12 @@ bool ConfigurePhyOperationalRegisters(ASFW::Driver::HardwareInterface& hw,
     ASFW_LOG_PHY("PHY reg4 configured: link_on=1 contender=%d",
                  shouldAdvertiseContender ? 1 : 0);
     hw.InitializePhyReg4Cache();
+    return true;
+}
 
+// PHY register 5 arbitration enhancements (IEEE 1394a). Only these are tied
+// to HCControl.programPhyEnable (OHCI §5.7.2); register 4 above is not.
+bool ConfigurePhyEnhancements(ASFW::Driver::HardwareInterface& hw) {
     const uint8_t phyReg5EnhanceBits =
         ASFW::Driver::kPhyEnableAcceleration | ASFW::Driver::kPhyEnableMulti;
     const bool accelEnabled =
@@ -176,13 +181,25 @@ bool ConfigurePhyOperationalRegisters(ASFW::Driver::HardwareInterface& hw,
 
 // kIOReturnNoDevice when the PHY never answers; otherwise success, with
 // phyConfigOk telling whether the 1394a enhancements could be programmed.
+//
+// Link-on, contender and the gap count are the link driver's to program every
+// time, whatever programPhyEnable says: that bit is set only by a hardware
+// reset, so after a warm reboot (or a passthrough card in a VM) it is clear and
+// the PHY still holds whatever the previous instance left -- with L and C
+// cleared the local node's self-ID advertises no link and no IRM candidacy,
+// no node becomes IRM, and no isochronous channel can be allocated (b71:
+// playback refused with NoIRM). Linux ohci_enable writes register 4
+// unconditionally and gates only configure_1394a_enhancements().
 kern_return_t ConfigurePhyRegisters(ASFW::Driver::HardwareInterface& hw,
                                     const ASFW::Driver::ControllerConfig& config,
                                     const ASFW::Driver::RolePolicy& policy,
+                                    bool programPhyEnableSupported,
                                     bool& phyConfigOk) {
     phyConfigOk = false;
-    hw.SetHCControlBits(ASFW::Driver::HCControlBits::kProgramPhyEnable);
-    ASFW_LOG_PHY("Opened PHY programming gate (programPhyEnable=1)");
+    if (programPhyEnableSupported) {
+        hw.SetHCControlBits(ASFW::Driver::HCControlBits::kProgramPhyEnable);
+        ASFW_LOG_PHY("Opened PHY programming gate (programPhyEnable=1)");
+    }
     IODelay(1000);
 
     auto phyId = hw.ReadPhyRegister(1);
@@ -205,7 +222,14 @@ kern_return_t ConfigurePhyRegisters(ASFW::Driver::HardwareInterface& hw,
     const uint8_t reg1Value = phyId.value();
     ASFW_LOG_PHY("PHY probe OK (reg1=0x%02x)", reg1Value);
     ConfigureGapCount(hw, reg1Value);
-    phyConfigOk = ConfigurePhyOperationalRegisters(hw, config, policy);
+    const bool reg4Ok = ConfigurePhyOperationalRegisters(hw, config, policy);
+    if (!programPhyEnableSupported) {
+        ASFW_LOG(Hardware,
+                 "programPhyEnable=0 (no hardware reset since the PHY was last programmed): "
+                 "register 4 programmed, IEEE 1394a enhancements left as they are");
+        return kIOReturnSuccess;
+    }
+    phyConfigOk = reg4Ok && ConfigurePhyEnhancements(hw);
     return kIOReturnSuccess;
 }
 
@@ -691,21 +715,14 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
     ASFW_LOG(Hardware, "HCControl=0x%08x (programPhyEnable=%{public}s)", hcControlBefore,
              programPhyEnableSupported ? "YES" : "NO");
 
-    if (!programPhyEnableSupported) {
-        ASFW_LOG(Hardware,
-                 "WARNING: programPhyEnable=0 - PHY may be pre-configured by firmware/BIOS");
-        ASFW_LOG(Hardware, "Per OHCI §5.7.2: Generic software may not modify PHY configuration");
-        ASFW_LOG(Hardware,
-                 "Skipping PHY register 4 configuration (PHY should already be configured)");
-        // Don't fail - firmware may have already configured PHY correctly
-    }
-
+    // Register 4 (link-on, contender) and the gap count are programmed in
+    // every case; programPhyEnable only decides whether the 1394a enhancements
+    // (register 5, aPhyEnhanceEnable) are touched. See ConfigurePhyRegisters.
     bool phyConfigOk = false;
-    if (programPhyEnableSupported) {
-        if (const kern_return_t phyKr = ConfigurePhyRegisters(hw, config_, rolePolicy_, phyConfigOk);
-            phyKr != kIOReturnSuccess) {
-            return phyKr;
-        }
+    if (const kern_return_t phyKr =
+            ConfigurePhyRegisters(hw, config_, rolePolicy_, programPhyEnableSupported, phyConfigOk);
+        phyKr != kIOReturnSuccess) {
+        return phyKr;
     }
 
     phyConfigOk_ = phyConfigOk;
