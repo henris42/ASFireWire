@@ -10,8 +10,9 @@
 #   DIST_DIR=/tmp/out tools/build-for-macos.sh sequoia
 #   ASFW_DYLD_CACHE=~/dk12/dyld tools/build-for-macos.sh monterey   # + symbol check
 #
-# The full app needs macOS 14. Below that, ASFW.app is ASFWLoader instead: the
-# same bundle, entitlements and dext, with only activate/deactivate/status.
+# Below macOS 14, ASFW.app is the lite variant of the same app: no Metal
+# analyzer, meters, DV capture or MCP; same bundle, entitlements and dext, plus
+# the headless activate/deactivate/status commands install.sh uses.
 
 set -euo pipefail
 
@@ -38,44 +39,18 @@ cd "$ROOT"
 
 DIST_DIR="${DIST_DIR:-$HOME/dist}"
 SPEC="build/specs/project.${OS_NAME}.yml"
-# The full app needs macOS 14; older releases get ASFWLoader in its place.
+# Below macOS 14 the app is built "lite": the same app without the Metal audio
+# analyzer, meters, DV capture and the MCP server, with the loader's headless
+# --activate/--deactivate/--status for install.sh (tools/derive-spec.py).
 APP_KIND=full
-[[ "${MACOS%%.*}" -ge 14 ]] || APP_KIND=loader
+[[ "${MACOS%%.*}" -ge 14 ]] || APP_KIND=lite
 
 mkdir -p "$(dirname "$SPEC")"
 # The dext refuses to start unless the controller has an "asfw-armed" property
 # (OpenCore DeviceProperties); ASFW_ARMING=0 builds without that gate.
 ARMING="${ASFW_ARMING:-1}"
 
-python3 - "$SPEC" "$MACOS" "$DRIVERKIT" "$APP_KIND" "$ARMING" <<'PY'
-import re, sys
-out, macos, driverkit, app_kind, arming = sys.argv[1:]
-s = open("project.yml").read()
-s, n_mac = re.subn(r'(MACOSX_DEPLOYMENT_TARGET: )"[0-9.]+"', rf'\g<1>"{macos}"', s)
-s, n_dk = re.subn(r'(DRIVERKIT_DEPLOYMENT_TARGET: )"[0-9.]+"', rf'\g<1>"{driverkit}"', s)
-if n_mac == 0 or n_dk == 0:
-    sys.exit("project.yml: deployment target keys not found")
-if arming == "1":
-    s, n_arm = re.subn(r'(\n( *)- "ASFW_MOTU_V1_VALIDATION=\$\(ASFW_MOTU_V1_VALIDATION\)"\n)',
-                       r'\1\2- "ASFW_REQUIRE_ARMING=1"\n', s, count=1)
-    if n_arm != 1:
-        sys.exit("project.yml: driver preprocessor definitions not found")
-if app_kind == "loader":
-    # Only the installer pieces of the app, which need nothing past macOS 12.
-    s, n_src = re.subn(r'(\n  ASFW:\n    type: application\n(?:.*\n)*?    sources:\n)(?:      #.*\n)?      - path: ASFW\n',
-                       r'\1      - path: ASFWLoader\n'
-                       r'      - path: ASFW/DriverInstallManager.swift\n'
-                       r'      - path: ASFW/DriverExtensionRegistry.swift\n'
-                       r'      - path: ASFW/Assets.xcassets\n'
-                       r'      - path: ASFW/fwicons.icon\n', s, count=1)
-    if n_src != 1:
-        sys.exit("project.yml: ASFW app target sources not found")
-    # The MCP SDK requires macOS 13 and the loader does not use it.
-    s, n_pkg = re.subn(r'\n *- package: swift-sdk\n *product: MCP(?=\n)', '', s)
-    if n_pkg == 0:
-        sys.exit("project.yml: MCP package dependency not found")
-open(out, "w").write(s)
-PY
+python3 -I tools/derive-spec.py "$MACOS" "$DRIVERKIT" "$APP_KIND" "$ARMING" "$SPEC"
 
 # Leave the committed project matching project.yml whatever happens below.
 trap 'xcodegen generate --spec project.yml --quiet || echo "warning: could not restore ASFW.xcodeproj" >&2' EXIT
