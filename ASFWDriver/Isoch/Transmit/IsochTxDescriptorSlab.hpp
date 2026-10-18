@@ -54,6 +54,9 @@ public:
 
 private:
     Shared::DMARegion descRegion_{};
+    // The ring spans scattered pages; descriptor addresses are translated
+    // through the memory that allocated it. Null only in host tests.
+    const Memory::IIsochDMAMemory* dmaMemory_{nullptr};
 
 #ifdef ASFW_HOST_TEST
     uint32_t testDescBaseIOVA32_{0};

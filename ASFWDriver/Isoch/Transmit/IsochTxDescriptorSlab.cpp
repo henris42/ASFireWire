@@ -14,6 +14,7 @@ kern_return_t IsochTxDescriptorSlab::AllocateAndInitialize(Memory::IIsochDMAMemo
     if (!descR) return kIOReturnNoMemory;
 
     descRegion_ = *descR;
+    dmaMemory_ = &dmaMemory;
 
     if (descRegion_.deviceBase > 0xFFFFFFFFULL) {
         ASFW_LOG(Isoch, "IT: SetupRings - descriptor IOVA out of 32-bit range: 0x%llx",
@@ -69,6 +70,11 @@ const IsochTxDescriptorSlab::OHCIDescriptor* IsochTxDescriptorSlab::GetDescripto
 }
 
 uint32_t IsochTxDescriptorSlab::GetDescriptorIOVA(uint32_t logicalIndex) const noexcept {
+    if (dmaMemory_ != nullptr) {
+        // Each 4 KiB page of the ring is its own physical page; translate it.
+        return static_cast<uint32_t>(dmaMemory_->VirtToIOVA(GetDescriptorPtr(logicalIndex)));
+    }
+
     const uint32_t page = logicalIndex / Layout::kDescriptorsPerPage;
     const uint32_t offsetInPage = (logicalIndex % Layout::kDescriptorsPerPage) * Layout::kDescriptorStride;
 
@@ -92,10 +98,18 @@ bool IsochTxDescriptorSlab::DecodeCmdAddrToLogicalIndex(uint32_t cmdAddr, uint32
 #endif
 
     // Sanity checks
-    if (cmdAddr < baseAddr) return false;
     if ((cmdAddr & 0xFu) != 0) return false;  // Must be 16-byte aligned
 
-    const uint32_t offset = cmdAddr - baseAddr;
+    uint32_t offset = 0;
+    if (dmaMemory_ != nullptr) {
+        const std::byte* virt = dmaMemory_->IOVAToVirt(cmdAddr);
+        const auto* base = reinterpret_cast<const std::byte*>(descRegion_.virtualBase);
+        if (virt == nullptr || virt < base || virt >= base + descRegion_.size) return false;
+        offset = static_cast<uint32_t>(virt - base);
+    } else {
+        if (cmdAddr < baseAddr) return false;
+        offset = cmdAddr - baseAddr;
+    }
     const uint32_t page = offset / static_cast<uint32_t>(Layout::kOHCIPageSize);
     const uint32_t offsetInPage = offset % static_cast<uint32_t>(Layout::kOHCIPageSize);
 
