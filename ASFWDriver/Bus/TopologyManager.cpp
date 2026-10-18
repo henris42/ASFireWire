@@ -84,6 +84,17 @@ void LogTopologySummary(const TopologySnapshot& snapshot) {
                  "[SelfIDSpeed] gen=%u node=%u phyCode=%u phyMbps=%u linkActive=%d local=%d baseRaw=0x%08x",
                  snapshot.generation, node.physicalId, node.speedCode,
                  node.maxSpeedMbps, node.linkActive, node.isLocal, node.baseRaw);
+        // Self-ID packet #0: L is bit 22, C is bit 11. The local node is the
+        // one whose PHY this driver programs; missing bits mean register 4 was
+        // not written and there can be no IRM for this bus.
+        if (node.isLocal && (!node.linkActive || (node.baseRaw & (1u << 11)) == 0)) {
+            ASFW_LOG_ERROR(Topology,
+                           "❌ local node %u advertises linkActive=%d contender=%d in its self-ID: "
+                           "PHY register 4 is not programmed as intended; no IRM election is "
+                           "possible from this node",
+                           node.physicalId, node.linkActive ? 1 : 0,
+                           (node.baseRaw & (1u << 11)) ? 1 : 0);
+        }
     }
 }
 
