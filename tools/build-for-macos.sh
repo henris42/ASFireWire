@@ -138,6 +138,18 @@ STAGED_ENT="$STAGE/Entitlements/ASFWDriver.entitlements"
    && "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.driverkit.transport.pci:1:IOPCIPrimaryMatch' "$STAGED_ENT")" == "$match" ]] \
   || { echo "error: packaged entitlement order is not (builtin, match dict)" >&2; exit 1; }
 
+# Local installs are ad-hoc signed, so app and dext share no Team ID, and the
+# App Sandbox then refuses the app's DriverKit user client (sandboxd:
+# deny iokit-open-user-client IOUserUserClient; b62 report §6) even with
+# userclient-access naming the dext. Two measures, either sufficient: the
+# packaged app entitlements drop the sandbox (verified on the target), and the
+# packaged dext entitlements allow any user client (xnu's fallback when the
+# client's Team ID check fails). Signed builds from Xcode keep both as they are.
+/usr/libexec/PlistBuddy -c 'Delete :com.apple.security.app-sandbox' "$STAGE/Entitlements/App.entitlements"
+/usr/libexec/PlistBuddy -c 'Add :com.apple.developer.driverkit.allow-any-userclient-access bool true' "$STAGED_ENT"
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.app-sandbox' "$STAGE/Entitlements/App.entitlements" 2>&1)" == *"Does Not Exist"* ]] \
+  || { echo "error: app-sandbox still in the packaged app entitlements" >&2; exit 1; }
+
 {
   echo "name:        $NAME"
   echo "built:       $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
@@ -147,7 +159,7 @@ STAGED_ENT="$STAGE/Entitlements/ASFWDriver.entitlements"
   echo "DriverKit:   $DRIVERKIT"
   echo "app:         $APP_KIND"
   echo "arming:      $([[ "$ARMING" == 1 ]] && echo "required (asfw-armed = <01> on the controller; IOPropertyMatch + Start gate)" || echo off)"
-  echo "entitlements: transport.pci = (builtin, {0x11c1, 0x104c}) - string first"
+  echo "entitlements: transport.pci = (builtin, {0x11c1, 0x104c}) - string first; allow-any-userclient-access; app without app-sandbox"
   echo "dma:         slabs are scattered pages translated per page run (no kmem_alloc_contig); AR buffers 4 KiB; contiguous requests capped at 64 KiB"
   echo "dma mapping: cached/coherent on x86_64 (kIOMemoryMapCacheModeDefault), cache-inhibited on arm64"
   echo "dma reach:   32-bit (OHCI); every prepared buffer is probed through PerformOperation and Start fails with instructions if the kernel bounces it (pages above 4 GiB without an IOMMU)"

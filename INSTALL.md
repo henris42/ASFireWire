@@ -110,9 +110,12 @@ launchd-started app also shows a second Dock icon. With several FireWire cards e
 separate entry in the app's sidebar; settings belong to the device, whichever card it is
 plugged into.
 
-If the app's tools say the driver is disconnected while Core Audio shows the device, the
-**Overview** page's log lists the connection messages (`Connection closed: …` with the reason),
-and `log show --last 10m --predicate 'subsystem == "net.asfw.app"'` has the same lines.
+The packaged app is signed **without the App Sandbox**, and the packaged driver allows any
+user client: ad-hoc signatures carry no Team ID, and the sandbox refuses a DriverKit user
+client whose app and driver do not share one (`sandboxd: deny iokit-open-user-client`), which
+left every page except Core Audio "disconnected" in builds up to b68. If that ever shows again,
+the **Overview** page's Connection Log names the reason, as does
+`log show --last 10m --predicate 'subsystem == "net.asfw.app"'`.
 
 ## Check
 

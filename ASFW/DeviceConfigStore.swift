@@ -27,11 +27,20 @@ struct DeviceConfigStore {
         self.fileURL = nil
     }
 
-    /// Read-only view of the app's preferences from outside its sandbox.
+    /// Read-only view of the app's preferences from another process. A
+    /// sandboxed app keeps them in its container; an unsandboxed one (the
+    /// local-install builds, see tools/build-for-macos.sh) in
+    /// ~/Library/Preferences. Whichever file holds settings wins.
     static func readingAppContainer() -> DeviceConfigStore {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        let url = home.appendingPathComponent("Library/Containers/\(appBundleID)/Data/Library/Preferences/\(appBundleID).plist")
-        return DeviceConfigStore(fileURL: url)
+        let candidates = [
+            home.appendingPathComponent("Library/Preferences/\(appBundleID).plist"),
+            home.appendingPathComponent("Library/Containers/\(appBundleID)/Data/Library/Preferences/\(appBundleID).plist"),
+        ]
+        for url in candidates where !DeviceConfigStore(fileURL: url).table().isEmpty {
+            return DeviceConfigStore(fileURL: url)
+        }
+        return DeviceConfigStore(fileURL: candidates[0])
     }
 
     private init(fileURL: URL) {
