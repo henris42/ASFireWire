@@ -14,6 +14,7 @@
 #include "../Handlers/TopologyHandler.hpp"
 #include "../Handlers/TransactionHandler.hpp"
 #include "../Handlers/DiagnosticsHandler.hpp"
+#include "../Handlers/DeviceSettingsHandler.hpp"
 #include "../Storage/TransactionStorage.hpp"
 
 class ASFWDriver;
@@ -63,6 +64,7 @@ class UserClientRuntimeState final {
             return {core->GetSbp2AddressSpaceManager(), core->GetSbp2SessionRegistry()};
         });
         diagnosticsHandler_ = std::make_unique<DiagnosticsHandler>(driver);
+        deviceSettingsHandler_ = std::make_unique<DeviceSettingsHandler>(driver);
 
         return HandlersReady();
     }
@@ -81,6 +83,7 @@ class UserClientRuntimeState final {
         topologyHandler_.reset();
         busResetHandler_.reset();
         diagnosticsHandler_.reset();
+        deviceSettingsHandler_.reset();
         driver_ = nullptr;
     }
 
@@ -103,7 +106,8 @@ class UserClientRuntimeState final {
                statusHandler_ != nullptr && transactionHandler_ != nullptr &&
                configRomHandler_ != nullptr && deviceDiscoveryHandler_ != nullptr &&
                avcHandler_ != nullptr && isochHandler_ != nullptr &&
-               sbp2Handler_ != nullptr && diagnosticsHandler_ != nullptr;
+               sbp2Handler_ != nullptr && diagnosticsHandler_ != nullptr &&
+               deviceSettingsHandler_ != nullptr;
     }
 
     [[nodiscard]] TransactionStorage& TransactionResults() noexcept { return transactionStorage_; }
@@ -118,6 +122,7 @@ class UserClientRuntimeState final {
     }
     [[nodiscard]] AVCHandler& AVC() noexcept { return *avcHandler_; }
     [[nodiscard]] IsochHandler& Isoch() noexcept { return *isochHandler_; }
+    [[nodiscard]] DeviceSettingsHandler& DeviceSettings() noexcept { return *deviceSettingsHandler_; }
     [[nodiscard]] SBP2Handler& SBP2() noexcept { return *sbp2Handler_; }
     [[nodiscard]] DiagnosticsHandler& Diagnostics() noexcept { return *diagnosticsHandler_; }
 
@@ -136,6 +141,7 @@ class UserClientRuntimeState final {
     std::unique_ptr<IsochHandler> isochHandler_{};
     std::unique_ptr<SBP2Handler> sbp2Handler_{};
     std::unique_ptr<DiagnosticsHandler> diagnosticsHandler_{};
+    std::unique_ptr<DeviceSettingsHandler> deviceSettingsHandler_{};
 };
 
 template <typename ClientLike>

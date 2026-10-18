@@ -80,6 +80,9 @@ enum {
     kMethodSelectAudioObserver = 66,
     kMethodGetAudioObserverState = 67,
     kMethodGetAVCDiscoveryDocument = 68,
+    // Device settings (clock source, optical modes): request/result pair.
+    kMethodRequestDeviceSettings = 69,
+    kMethodGetDeviceSettingsResult = 70,
     // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
     kMethodTestIRMAllocation = 26,
     kMethodTestIRMRelease = 27,
@@ -638,6 +641,12 @@ kern_return_t ASFWDriverUserClient::ExternalMethod(uint64_t selector,
     }
     if (auto result = DispatchDiagnosticsMethods(*runtimeState, arguments, selector)) {
         return *result;
+    }
+    if (selector == kMethodRequestDeviceSettings) {
+        return runtimeState->DeviceSettings().RequestDeviceSettings(arguments);
+    }
+    if (selector == kMethodGetDeviceSettingsResult) {
+        return runtimeState->DeviceSettings().GetDeviceSettingsResult(arguments);
     }
 
     if (selector == kMethodSelectAudioObserver) {
