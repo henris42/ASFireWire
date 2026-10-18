@@ -3,6 +3,7 @@
 #include <atomic>
 #include <optional>
 #include <utility> // for std::pair
+#include <vector>
 
 
 #ifdef ASFW_HOST_TEST
@@ -143,10 +144,25 @@ class HardwareInterface {
         OSSharedPtr<IODMACommand> dmaCommand;
         uint64_t deviceAddress;
         size_t length;
+        // AllocateDMAPaged only: the device-address runs covering the buffer in
+        // offset order (their lengths sum to `length`), and the IODMACommands
+        // that keep each 32-page window mapped. Empty for AllocateDMA.
+        std::vector<IOAddressSegment> segments;
+        std::vector<OSSharedPtr<IODMACommand>> windowCommands;
     };
 
+    // One physically contiguous buffer. Buffers up to 4 KiB are aligned so they
+    // cannot straddle a page; up to kMaxContiguousDMABytes they are requested
+    // contiguous (a few pages, cheap); larger requests are refused because
+    // kmem_alloc_contig can stall the kernel for minutes on a long run (b49).
+    // Large rings go through AllocateDMAPaged + DMAMemoryManager instead.
+    static constexpr size_t kDMAPageGranule = 4096;
+    static constexpr size_t kMaxContiguousDMABytes = 64 * 1024;
     [[nodiscard]] std::optional<DMABuffer> AllocateDMA(size_t length, uint64_t options,
                                                        size_t alignment = 64);
+    // One virtually contiguous buffer of ordinary (scattered) pages, mapped for
+    // DMA page run by page run. Never enters the contiguous allocator.
+    [[nodiscard]] std::optional<DMABuffer> AllocateDMAPaged(size_t length, uint64_t options);
     [[nodiscard]] OSSharedPtr<IODMACommand> CreateDMACommand();
 
     [[nodiscard]] uint32_t ReadHCControl() const noexcept;

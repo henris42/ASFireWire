@@ -390,6 +390,16 @@ std::optional<HardwareInterface::DMABuffer> HardwareInterface::AllocateDMA(size_
     return result;
 }
 
+std::optional<HardwareInterface::DMABuffer> HardwareInterface::AllocateDMAPaged(size_t length,
+                                                                                uint64_t options) {
+    auto result = AllocateDMA(length, options, kDMAPageGranule);
+    if (result) {
+        result->segments.push_back(IOAddressSegment{result->deviceAddress, length});
+        result->windowCommands.push_back(result->dmaCommand);
+    }
+    return result;
+}
+
 OSSharedPtr<IODMACommand> HardwareInterface::CreateDMACommand() {
     return OSSharedPtr<IODMACommand>(new IODMACommand(), OSNoRetain);
 }

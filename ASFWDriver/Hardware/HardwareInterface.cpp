@@ -748,17 +748,23 @@ HardwareInterface::AllocateDMA(size_t length, uint64_t options, size_t alignment
         return std::nullopt;
     }
 
-    // Callers carve every buffer from one device address, so it must be one
+    // Callers carve this buffer from one device address, so it must be one
     // physical segment. A dext cannot pass kIOMemoryPhysicallyContiguous; xnu
     // allocates contiguously only when alignment exceeds the page size
-    // (IOBufferMemoryDescriptor.cpp -> IOKernelAllocateWithPhysicalRestrict),
-    // so ask for that whenever the buffer can span a page. 32 KiB covers both
-    // 4 KiB and 16 KiB pages. A buffer within one page just must not straddle
-    // one, which aligning it to its own size guarantees. Without this, a 1.6 MB
-    // slab came back as 393 scattered pages on macOS 12.
-    constexpr size_t kSmallestPageSize = 4096;
+    // (IOBufferMemoryDescriptor.cpp -> IOKernelAllocateWithPhysicalRestrict ->
+    // kmem_alloc_contig). That allocator walks physical memory for a free run
+    // and stalled the kernel indefinitely for a 393-page run on macOS 12 (b49),
+    // so only a few pages may be requested that way; 32 KiB alignment makes it
+    // contiguous on 4 KiB and 16 KiB pages alike. A buffer within one page
+    // just must not straddle one, which aligning it to its own size guarantees.
     constexpr size_t kContiguousAlignment = 32768;
-    if (length > kSmallestPageSize) {
+    if (length > kMaxContiguousDMABytes) {
+        ASFW_LOG_V0(Hardware,
+                    "AllocateDMA: %zu bytes exceeds the %zu-byte contiguous limit; use AllocateDMAPaged",
+                    length, kMaxContiguousDMABytes);
+        return std::nullopt;
+    }
+    if (length > kDMAPageGranule) {
         alignment = std::max(alignment, kContiguousAlignment);
     } else {
         alignment = std::max(alignment, std::bit_ceil(length));
@@ -770,7 +776,7 @@ HardwareInterface::AllocateDMA(size_t length, uint64_t options, size_t alignment
         ASFW_LOG_V0(Hardware,
                     "IOBufferMemoryDescriptor::Create failed: 0x%08x (%zu bytes, alignment %zu%{public}s)",
                     kr, length, alignment,
-                    length > kSmallestPageSize ? ", physically contiguous; memory may be fragmented" : "");
+                    length > kDMAPageGranule ? ", physically contiguous; memory may be fragmented" : "");
         return std::nullopt;
     }
 
@@ -847,6 +853,110 @@ HardwareInterface::AllocateDMA(size_t length, uint64_t options, size_t alignment
                      .dmaCommand = std::move(command),
                      .deviceAddress = mappedAddress,
                      .length = length};
+}
+
+std::optional<HardwareInterface::DMABuffer>
+HardwareInterface::AllocateDMAPaged(size_t length, uint64_t options) {
+    auto access = TryBeginAccess();
+    if (!access || !device_) {
+        ASFW_LOG_V0(Hardware, "DMA allocation failed - no PCI device");
+        return std::nullopt;
+    }
+    if (length == 0) {
+        return std::nullopt;
+    }
+
+    // Page alignment keeps IOBufferMemoryDescriptor on its ordinary allocator:
+    // the pages are scattered, the CPU mapping is contiguous, and DMAMemoryManager
+    // translates per page run.
+    IOBufferMemoryDescriptor* rawBuffer = nullptr;
+    kern_return_t kr = IOBufferMemoryDescriptor::Create(options, length, kDMAPageGranule, &rawBuffer);
+    if (kr != kIOReturnSuccess || rawBuffer == nullptr) {
+        ASFW_LOG_V0(Hardware, "AllocateDMAPaged: IOBufferMemoryDescriptor::Create failed: 0x%08x (%zu bytes)",
+                    kr, length);
+        return std::nullopt;
+    }
+    OSSharedPtr<IOBufferMemoryDescriptor> buffer(rawBuffer, OSNoRetain);
+    kr = buffer->SetLength(length);
+    if (kr != kIOReturnSuccess) {
+        ASFW_LOG_V0(Hardware, "AllocateDMAPaged: SetLength failed: 0x%08x", kr);
+        return std::nullopt;
+    }
+
+    DMABuffer result{};
+    result.descriptor = buffer;
+    result.length = length;
+
+    // PrepareForDMA returns at most 32 segments per call (IODMACommand.iig), so
+    // map the buffer in 32-page windows, one IODMACommand each; the commands stay
+    // alive for as long as the buffer is used.
+    constexpr size_t kWindowBytes = 32 * kDMAPageGranule;
+    const auto failWindows = [&result]() {
+        for (auto& command : result.windowCommands) {
+            command->CompleteDMA(kIODMACommandCompleteDMANoOptions);
+        }
+        return std::nullopt;
+    };
+    size_t covered = 0;
+    for (size_t offset = 0; offset < length; offset += kWindowBytes) {
+        const size_t window = std::min(kWindowBytes, length - offset);
+
+        IODMACommandSpecification spec{};
+        spec.options = kIODMACommandSpecificationNoOptions;
+        spec.maxAddressBits = kDefaultDMAMaxAddressBits;
+        IODMACommand* rawCommand = nullptr;
+        kr = IODMACommand::Create(device_.get(), kIODMACommandCreateNoOptions, &spec, &rawCommand);
+        if (kr != kIOReturnSuccess || rawCommand == nullptr) {
+            ASFW_LOG_V0(Hardware, "AllocateDMAPaged: IODMACommand::Create failed: 0x%08x", kr);
+            return failWindows();
+        }
+        OSSharedPtr<IODMACommand> command(rawCommand, OSNoRetain);
+
+        IOAddressSegment segments[32];
+        uint32_t segmentCount = 32;
+        uint64_t flags = 0;
+        kr = command->PrepareForDMA(kIODMACommandPrepareForDMANoOptions, buffer.get(), offset, window,
+                                    &flags, &segmentCount, segments);
+        if (kr != kIOReturnSuccess || segmentCount == 0) {
+            ASFW_LOG_V0(Hardware, "AllocateDMAPaged: PrepareForDMA failed at offset %zu: 0x%08x (segments=%u)",
+                        offset, kr, segmentCount);
+            return failWindows();
+        }
+        result.windowCommands.push_back(command);
+
+        size_t windowCovered = 0;
+        for (uint32_t i = 0; i < segmentCount; ++i) {
+            if (segments[i].address + segments[i].length - 1 > 0xFFFFFFFFULL) {
+                ASFW_LOG_V0(Hardware, "AllocateDMAPaged: segment iova=0x%llx len=%llu exceeds the OHCI 32-bit range",
+                            segments[i].address, segments[i].length);
+                return failWindows();
+            }
+            // Merge runs that happen to be physically adjacent.
+            if (!result.segments.empty() &&
+                result.segments.back().address + result.segments.back().length == segments[i].address) {
+                result.segments.back().length += segments[i].length;
+            } else {
+                result.segments.push_back(segments[i]);
+            }
+            windowCovered += segments[i].length;
+        }
+        if (windowCovered != window) {
+            ASFW_LOG_V0(Hardware, "AllocateDMAPaged: window at %zu mapped %zu of %zu bytes",
+                        offset, windowCovered, window);
+            return failWindows();
+        }
+        covered += windowCovered;
+    }
+    if (covered != length || result.segments.empty()) {
+        ASFW_LOG_V0(Hardware, "AllocateDMAPaged: mapped %zu of %zu bytes", covered, length);
+        return failWindows();
+    }
+
+    result.dmaCommand = result.windowCommands.front();
+    result.deviceAddress = result.segments.front().address;
+    ASFW_LOG(Hardware, "DMA paged buffer allocated: %zu bytes in %zu page run(s), %zu window(s), first iova=0x%llx",
+             length, result.segments.size(), result.windowCommands.size(), result.deviceAddress);
+    return result;
 }
 
 OSSharedPtr<IODMACommand> HardwareInterface::CreateDMACommand() {
