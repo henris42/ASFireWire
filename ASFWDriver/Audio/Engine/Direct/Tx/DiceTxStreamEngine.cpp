@@ -211,6 +211,12 @@ AMDTP::AmdtpTxPolicy DiceTxStreamEngine::BuildTxPolicy(
         case ASFW::Encoding::AudioWireFormat::kRawPcm24Upper24In32LE:
             policy.hostToDevicePcmEncoding = AMDTP::PcmSlotEncoding::RawPcm24Upper24In32LE;
             break;
+        case ASFW::Encoding::AudioWireFormat::kMotuPacked:
+            // Falling into AM824 here armed every MOTU block with 0x40000000
+            // (WriteDataPacketDefaults), so the message bytes -- the MIDI flag
+            // among them -- carried 0x40 on the wire (828mkII, 2026-10-18).
+            policy.hostToDevicePcmEncoding = AMDTP::PcmSlotEncoding::MotuPacked;
+            break;
         default:
             policy.hostToDevicePcmEncoding = AMDTP::PcmSlotEncoding::Am824MBLA;
             break;

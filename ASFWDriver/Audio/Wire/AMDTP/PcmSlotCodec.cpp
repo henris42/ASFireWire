@@ -78,6 +78,8 @@ uint32_t PcmSlotCodec::EncodeFloat32(float sample, PcmSlotEncoding encoding) noe
         return EncodeRawSigned24In32LE(sample);
     case PcmSlotEncoding::RawPcm24Upper24In32LE:
         return EncodeRawPcm24Upper24In32LE(sample);
+    case PcmSlotEncoding::MotuPacked:
+        return 0;  // not a slot format; MotuPayloadWriter writes the bytes
     case PcmSlotEncoding::Am824MBLA:
         break;
     }
@@ -100,6 +102,8 @@ uint32_t PcmSlotCodec::EncodeInt32(
         return ByteSwap32(static_cast<uint32_t>(signed24));
     case PcmSlotEncoding::RawPcm24Upper24In32LE:
         return ByteSwap32(static_cast<uint32_t>(sample));  // full precision
+    case PcmSlotEncoding::MotuPacked:
+        return 0;
     case PcmSlotEncoding::Am824MBLA:
         break;
     }

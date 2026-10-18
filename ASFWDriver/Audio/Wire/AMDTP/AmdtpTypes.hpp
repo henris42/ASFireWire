@@ -28,6 +28,12 @@ enum class PcmSlotEncoding : uint8_t {
     RawSigned24In32LE = 2,
     /// Signed 24-bit sample in bits 31:8 of a little-endian quadlet.
     RawPcm24Upper24In32LE = 3,
+    // MOTU protocol v2 blocks: 3-byte big-endian PCM from byte 10, written by
+    // MotuPayloadWriter, never by the slot writer. Its silence is 0x000000, so
+    // the slot encoders return 0 and the packetizer's silence arming is a no-op
+    // (hardware, 2026-10-18: AM824's 0x40000000 landed in every block,
+    // including the MIDI flag byte).
+    MotuPacked,
 };
 
 enum class DbsPolicy : uint8_t {

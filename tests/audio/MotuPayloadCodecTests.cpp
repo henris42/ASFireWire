@@ -282,6 +282,19 @@ TEST(MotuPayloadCodecTests, ProductionProfilePreservesMotuCipOnDataAndNoData) {
     EXPECT_EQ(provider.bytes[3], 8);           // End-event DBC.
     EXPECT_EQ((std::array<uint8_t, 4>{provider.bytes[4], provider.bytes[5], provider.bytes[6], provider.bytes[7]}),
               (std::array<uint8_t, 4>{0x82, 0x22, 0xff, 0xff}));
+    // Behind each block's SPH quadlet the message chunks (MIDI flag at byte 4,
+    // MIDI byte at 6) and the PCM are zero until the MOTU writer fills PCM:
+    // Linux writes 0x00 there (amdtp-motu.c), and the AM824 silence word
+    // 0x40000000 must never be armed into a MOTU block.
+    {
+        const uint32_t blockBytes = config.dbs * 4U;
+        for (uint32_t block = 0; block < 8; ++block) {
+            for (uint32_t byte = 4; byte < blockBytes; ++byte) {
+                ASSERT_EQ(provider.bytes[8 + block * blockBytes + byte], 0)
+                    << "block " << block << " byte " << byte;
+            }
+        }
+    }
 
     timing.disposition = AmdtpPacketDisposition::NoData;
     ASSERT_EQ(engine.PrepareNextTransmitSlot(1, timing), TxSlotPrepareResult::kPrepared);
