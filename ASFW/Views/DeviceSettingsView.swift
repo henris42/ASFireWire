@@ -154,6 +154,10 @@ struct DeviceSettingsView: View {
                        isOn: $viewModel.experiment.captureOnly)
                 Toggle("Transmit only: send data but do not receive (SPH free-runs, audio muted)",
                        isOn: $viewModel.experiment.transmitOnly)
+                Toggle("Prime with skip cycles like Linux (nothing on the wire before the first data packet)",
+                       isOn: $viewModel.experiment.skipCyclePrefill)
+                Toggle("Count DBC like the 828mkII does (data: first block, empty: next packet)",
+                       isOn: $viewModel.experiment.startEventDbc)
                 Picker("Hold data back after the start", selection: $viewModel.experiment.extraNoDataPackets) {
                     ForEach(MotuExperiment.dataDelayChoices, id: \.packets) { choice in
                         Text(choice.title).tag(choice.packets)

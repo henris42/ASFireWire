@@ -131,6 +131,8 @@ struct MotuExperiment: Equatable {
     static let captureOnlyFlag: UInt32 = 1 << 1
     static let holdAbsolutePhaseFlag: UInt32 = 1 << 2
     static let transmitOnlyFlag: UInt32 = 1 << 3
+    static let skipCyclePrefillFlag: UInt32 = 1 << 4
+    static let startEventDbcFlag: UInt32 = 1 << 5
 
     var forceFetchEnable = false
     var captureOnly = false
@@ -138,6 +140,10 @@ struct MotuExperiment: Equatable {
     var holdAbsolutePhase = false
     /// Start the transmit context only (no receive): the counterpart of capture only.
     var transmitOnly = false
+    /// Prime the ring with skip cycles (nothing on the wire) like Linux, not 1512 empty CIP packets.
+    var skipCyclePrefill = false
+    /// Count DBC as the 828mkII itself does (data: first block, empty: next packet).
+    var startEventDbc = false
     /// Packets (125 µs each) to keep sending as NO-DATA after the prefill.
     var extraNoDataPackets: UInt32 = 0
     /// SPH presentation lead in bus cycles for the next start; 0 = the model's default.
@@ -148,6 +154,8 @@ struct MotuExperiment: Equatable {
             | (captureOnly ? Self.captureOnlyFlag : 0)
             | (holdAbsolutePhase ? Self.holdAbsolutePhaseFlag : 0)
             | (transmitOnly ? Self.transmitOnlyFlag : 0)
+            | (skipCyclePrefill ? Self.skipCyclePrefillFlag : 0)
+            | (startEventDbc ? Self.startEventDbcFlag : 0)
     }
     var presentationLeadTicks: UInt32 { presentationLeadCycles * 3072 }
     var isDefault: Bool { self == MotuExperiment() }
