@@ -400,6 +400,10 @@ std::optional<HardwareInterface::DMABuffer> HardwareInterface::AllocateDMAPaged(
     return result;
 }
 
+bool HardwareInterface::VerifyDirectDMA(IODMACommand&, IOBufferMemoryDescriptor&, uint64_t, const char*) {
+    return true;
+}
+
 OSSharedPtr<IODMACommand> HardwareInterface::CreateDMACommand() {
     return OSSharedPtr<IODMACommand>(new IODMACommand(), OSNoRetain);
 }

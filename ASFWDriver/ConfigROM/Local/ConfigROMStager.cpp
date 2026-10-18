@@ -61,6 +61,14 @@ kern_return_t ConfigROMStager::Prepare(HardwareInterface& hw, size_t romBytes) {
         return (kr != kIOReturnSuccess) ? kr : kIOReturnNoResources;
     }
 
+    if (!hw.VerifyDirectDMA(*dma_, *buffer_, 0, "the config ROM")) {
+        dma_->CompleteDMA(kIODMACommandCompleteDMANoOptions);
+        dma_.reset();
+        map_.reset();
+        buffer_.reset();
+        return kIOReturnUnsupported;
+    }
+
     if ((segment.address & (ASFW::ConfigROM::kRomAlignmentBytes - 1)) != 0) {
         ASFW_LOG(Hardware, "Config ROM DMA address 0x%llx not 1KiB aligned", segment.address);
         dma_->CompleteDMA(kIODMACommandCompleteDMANoOptions);

@@ -124,6 +124,13 @@ kern_return_t SelfIDCapture::PrepareBuffers(size_t quadCapacity, HardwareInterfa
         return kIOReturnNotAligned;
     }
 
+    // The controller writes Self-IDs here; a bounced mapping shows up as a
+    // buffer whose generation never changes (b55).
+    if (!hw.VerifyDirectDMA(*dmaCommand_, *buffer_, 0, "the Self-ID buffer")) {
+        ReleaseBuffers();
+        return kIOReturnUnsupported;
+    }
+
     segment_ = segment;
     segmentValid_ = true;
     quadCapacity_ = allocBytes / sizeof(uint32_t);

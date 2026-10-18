@@ -846,6 +846,12 @@ HardwareInterface::AllocateDMA(size_t length, uint64_t options, size_t alignment
         return std::nullopt;
     }
 
+    if (!VerifyDirectDMA(*command, *buffer, 0, "a DMA buffer")) {
+        command->CompleteDMA(kIODMACommandCompleteDMANoOptions);
+        buffer->release();
+        return std::nullopt;
+    }
+
     ASFW_LOG_V2(Hardware, "DMA buffer allocated: iova=0x%llx size=%zu align=%zu", mappedAddress,
                 length, alignment);
 
@@ -923,6 +929,9 @@ HardwareInterface::AllocateDMAPaged(size_t length, uint64_t options) {
             return failWindows();
         }
         result.windowCommands.push_back(command);
+        if (!VerifyDirectDMA(*command, *buffer, offset, "the DMA slab")) {
+            return failWindows();
+        }
 
         size_t windowCovered = 0;
         for (uint32_t i = 0; i < segmentCount; ++i) {
@@ -957,6 +966,106 @@ HardwareInterface::AllocateDMAPaged(size_t length, uint64_t options) {
     ASFW_LOG(Hardware, "DMA paged buffer allocated: %zu bytes in %zu page run(s), %zu window(s), first iova=0x%llx",
              length, result.segments.size(), result.windowCommands.size(), result.deviceAddress);
     return result;
+}
+
+bool HardwareInterface::VerifyDirectDMA(IODMACommand& command, IOBufferMemoryDescriptor& buffer,
+                                        uint64_t preparedOffset, const char* what) {
+    constexpr uint64_t kProbeBytes = 16;
+
+    // A probe that cannot run must not stop the driver; it only loses the
+    // early diagnosis.
+    const auto skip = [what](const char* why, kern_return_t kr) {
+        ASFW_LOG(Hardware, "⚠️  DMA reach probe skipped for %{public}s: %{public}s (0x%08x)", what, why, kr);
+        return true;
+    };
+
+    if (!dmaProbeScratch_) {
+        IOBufferMemoryDescriptor* scratch = nullptr;
+        kern_return_t kr = IOBufferMemoryDescriptor::Create(kIOMemoryDirectionInOut, kDMAPageGranule,
+                                                            kDMAPageGranule, &scratch);
+        if (kr != kIOReturnSuccess || scratch == nullptr) {
+            return skip("scratch allocation failed", kr);
+        }
+        dmaProbeScratch_ = OSSharedPtr(scratch, OSNoRetain);
+        IOMemoryMap* scratchMap = nullptr;
+        kr = scratch->CreateMapping(0, 0, 0, 0, 0, &scratchMap);
+        if (kr != kIOReturnSuccess || scratchMap == nullptr) {
+            dmaProbeScratch_.reset();
+            return skip("scratch mapping failed", kr);
+        }
+        dmaProbeScratchMap_ = OSSharedPtr(scratchMap, OSNoRetain);
+    }
+
+    IOMemoryMap* window = nullptr;
+    kern_return_t kr = buffer.CreateMapping(0, 0, preparedOffset, kProbeBytes, 0, &window);
+    if (kr != kIOReturnSuccess || window == nullptr) {
+        return skip("buffer mapping failed", kr);
+    }
+    auto* cpuView = reinterpret_cast<volatile uint8_t*>(window->GetAddress());
+    auto* dmaView = reinterpret_cast<volatile uint8_t*>(dmaProbeScratchMap_->GetAddress());
+    if (cpuView == nullptr || dmaView == nullptr) {
+        window->release();
+        return skip("mapping has no address", kIOReturnNoMemory);
+    }
+
+    // A sentinel the buffer does not already hold, written after the
+    // preparation: a copy made at PrepareForDMA cannot contain it.
+    uint8_t saved[kProbeBytes];
+    uint8_t sentinel[kProbeBytes];
+    const uint64_t seed = mach_absolute_time() | 0x5Aull;
+    for (uint64_t i = 0; i < kProbeBytes; ++i) {
+        saved[i] = cpuView[i];
+        sentinel[i] = static_cast<uint8_t>((seed >> ((i % 8) * 8)) ^ (0xA5u + i));
+        if (sentinel[i] == saved[i]) {
+            sentinel[i] = static_cast<uint8_t>(~sentinel[i]);
+        }
+        cpuView[i] = sentinel[i];
+        dmaView[i] = 0;
+    }
+    FullBarrier();
+
+    // dmaOffset is documented as an offset into the DMA memory; accept either
+    // interpretation (absolute, or relative to this preparation) for windows
+    // that do not start at zero.
+    kr = command.PerformOperation(kIODMACommandPerformOperationOptionRead, preparedOffset, kProbeBytes, 0,
+                                  dmaProbeScratch_.get());
+    if (kr != kIOReturnSuccess && preparedOffset != 0) {
+        kr = command.PerformOperation(kIODMACommandPerformOperationOptionRead, 0, kProbeBytes, 0,
+                                      dmaProbeScratch_.get());
+    }
+    FullBarrier();
+    bool direct = (kr == kIOReturnSuccess);
+    if (direct) {
+        for (uint64_t i = 0; i < kProbeBytes; ++i) {
+            if (dmaView[i] != sentinel[i]) {
+                direct = false;
+                break;
+            }
+        }
+    }
+    for (uint64_t i = 0; i < kProbeBytes; ++i) {
+        cpuView[i] = saved[i];
+    }
+    FullBarrier();
+    window->release();
+
+    if (kr != kIOReturnSuccess) {
+        return skip("PerformOperation failed", kr);
+    }
+    if (!direct) {
+        ASFW_LOG_V0(Hardware,
+                    "❌ DMA to %{public}s is bounced through a kernel copy: its pages lie above 4 GiB and no "
+                    "IOMMU remaps them. The OHCI controller addresses 32 bits of physical memory, so the "
+                    "device reads and writes the copy while the driver sees its own untouched pages "
+                    "(Self-IDs and packets never arrive). This is fixed on the machine, not in the driver: "
+                    "enable VT-d (BIOS VT-d on, a DMAR table, OpenCore Quirks DisableIoMapper=false so "
+                    "AppleVTD loads), give a VM a virtual IOMMU, or limit RAM to 4 GiB.",
+                    what);
+        return false;
+    }
+    ASFW_LOG_V2(Hardware, "DMA reach probe OK for %{public}s (offset %llu): device sees the driver's pages",
+                what, preparedOffset);
+    return true;
 }
 
 OSSharedPtr<IODMACommand> HardwareInterface::CreateDMACommand() {

@@ -12,6 +12,7 @@
 #else
 #include <DriverKit/IOBufferMemoryDescriptor.h>
 #include <DriverKit/IODMACommand.h>
+#include <DriverKit/IOMemoryMap.h>
 #include <DriverKit/IOReturn.h>
 #include <DriverKit/OSObject.h>
 #include <DriverKit/OSSharedPtr.h>
@@ -163,6 +164,17 @@ class HardwareInterface {
     // One virtually contiguous buffer of ordinary (scattered) pages, mapped for
     // DMA page run by page run. Never enters the contiguous allocator.
     [[nodiscard]] std::optional<DMABuffer> AllocateDMAPaged(size_t length, uint64_t options);
+
+    // The OHCI controller addresses 32 bits of physical memory. When a buffer's
+    // pages lie above 4 GiB and no IOMMU remaps them, xnu silently routes the
+    // IODMACommand through a copy buffer: the device reads and writes the copy,
+    // the driver its own untouched pages (b55: Self-IDs never arrived). This
+    // writes a sentinel through the CPU mapping and reads it back through the
+    // DMA mapping (IODMACommand::PerformOperation); returns false, after
+    // explaining what to change on the machine, when the two differ. Call it
+    // right after PrepareForDMA on every buffer the controller must reach.
+    [[nodiscard]] bool VerifyDirectDMA(IODMACommand& command, IOBufferMemoryDescriptor& buffer,
+                                       uint64_t preparedOffset, const char* what);
     [[nodiscard]] OSSharedPtr<IODMACommand> CreateDMACommand();
 
     [[nodiscard]] uint32_t ReadHCControl() const noexcept;
@@ -270,6 +282,9 @@ class HardwareInterface {
 
     mutable HardwareAccessGate accessGate_;
     OSSharedPtr<IOPCIDevice> device_;
+    // Scratch page VerifyDirectDMA reads the DMA view into (created on first use)
+    OSSharedPtr<IOBufferMemoryDescriptor> dmaProbeScratch_;
+    OSSharedPtr<IOMemoryMap> dmaProbeScratchMap_;
     IOService* owner_{nullptr};
     uint8_t barIndex_{0};
     uint64_t barSize_{0};

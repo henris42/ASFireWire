@@ -10,6 +10,7 @@
 #include <mach/kern_return.h>
 #include <algorithm>
 #include <atomic>
+#include <cstring>
 #include <cassert>
 #include <chrono>
 #include <cstdint>
@@ -456,6 +457,8 @@ public:
         if (*segments > 32) {
             return kIOReturnOverrun;
         }
+        prepared_ = buffer;
+        preparedOffset_ = offset;
         IOAddressSegment seg;
         buffer->GetAddressRange(&seg);
         static std::atomic<uint32_t> sMockIOVA{0x10000000u};
@@ -466,6 +469,35 @@ public:
         *segments = 1;
         return kIOReturnSuccess;
     }
+
+    // Host stub: the "DMA view" is the prepared buffer itself (never bounced).
+    kern_return_t PerformOperation(uint64_t options, uint64_t dmaOffset, uint64_t length,
+                                   uint64_t dataOffset, IOMemoryDescriptor* data) {
+        if (!prepared_ || !data) {
+            return kIOReturnNotReady;
+        }
+        IOAddressSegment src{};
+        IOAddressSegment dst{};
+        prepared_->GetAddressRange(&src);
+        data->GetAddressRange(&dst);
+        if (dmaOffset + length > src.length || dataOffset + length > dst.length) {
+            return kIOReturnBadArgument;
+        }
+        auto* s = reinterpret_cast<uint8_t*>(src.address) + dmaOffset;
+        auto* d = reinterpret_cast<uint8_t*>(dst.address) + dataOffset;
+        if (options & 0x4) {
+            std::memset(s, 0, static_cast<size_t>(length));
+        } else if (options & 0x2) {
+            std::memcpy(s, d, static_cast<size_t>(length));
+        } else {
+            std::memcpy(d, s, static_cast<size_t>(length));
+        }
+        return kIOReturnSuccess;
+    }
+
+private:
+    IOMemoryDescriptor* prepared_{nullptr};
+    uint64_t preparedOffset_{0};
 };
 
 struct OSNoRetainTag {};
@@ -484,6 +516,9 @@ static constexpr uint64_t kIOMemoryDirectionOutIn = 3;
 static constexpr uint64_t kIODMACommandCreateNoOptions = 0;
 static constexpr uint64_t kIODMACommandPrepareForDMANoOptions = 0;
 static constexpr uint64_t kIODMACommandCompleteDMANoOptions = 0;
+static constexpr uint64_t kIODMACommandPerformOperationOptionRead = 0x1;
+static constexpr uint64_t kIODMACommandPerformOperationOptionWrite = 0x2;
+static constexpr uint64_t kIODMACommandPerformOperationOptionZero = 0x4;
 static constexpr uint64_t kIODMACommandSpecificationNoOptions = 0;
 static constexpr uint64_t kIOMemoryMapCacheModeDefault = 0;
 static constexpr uint64_t kIOMemoryMapCacheModeInhibit = 0;
