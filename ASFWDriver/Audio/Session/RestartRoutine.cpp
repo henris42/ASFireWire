@@ -438,8 +438,15 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
         if (TeardownRequested()) {
             return aborted("PrepareTransmit");
         }
+        // The CIP header's SID is our node id (amdtp-stream.c source_node_id_field);
+        // the producer reads it from the control block, so a profile never has to
+        // know the bus. Published before the first packet is prepared.
+        const uint8_t localSid = ReadLocalSid(deps_.hardware);
+        if (request.binding != nullptr) {
+            request.binding->PublishCipSourceId(localSid);
+        }
         const kern_return_t status = host.PrepareTransmit(
-            channels.hostToDeviceIsoChannel, deps_.hardware, ReadLocalSid(deps_.hardware),
+            channels.hostToDeviceIsoChannel, deps_.hardware, localSid,
             profile.linkSpeed);
         if (status != kIOReturnSuccess) {
             return rollback(status, "PrepareTransmit");
@@ -454,7 +461,7 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
                 return aborted("PrepareTransmitStream");
             }
             const kern_return_t streamStatus = host.PrepareTransmitStream(
-                i, channels.PlaybackChannel(i), deps_.hardware, ReadLocalSid(deps_.hardware),
+                i, channels.PlaybackChannel(i), deps_.hardware, localSid,
                 profile.linkSpeed);
             if (streamStatus != kIOReturnSuccess) {
                 return rollback(streamStatus, "PrepareTransmit");

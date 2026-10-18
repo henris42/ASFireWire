@@ -41,6 +41,10 @@ public:
     virtual ~IDirectAudioBindingSource() = default;
     [[nodiscard]] virtual bool IsTransmitTimingReady() noexcept { return false; }
     [[nodiscard]] virtual bool CopyDirectAudioBinding(DirectAudioBindingSnapshot& out) noexcept = 0;
+    // Our 6-bit node id for the CIP header's SID, from the session when it
+    // prepares the transmit context. Stored in the control block for the
+    // producer; a source without one ignores it.
+    virtual void PublishCipSourceId(uint8_t sid) noexcept { (void)sid; }
 };
 
 } // namespace ASFW::Audio::Runtime

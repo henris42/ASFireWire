@@ -304,6 +304,15 @@ public:
         return ready;
     }
 
+    void PublishCipSourceId(uint8_t sid) noexcept override {
+        if (!lock_) return;
+        IOLockLock(lock_);
+        if (HasCompleteDirectAudioMemoryLocked() && directControl_) {
+            directControl_->cipSourceId.store(sid & 0x3Fu, std::memory_order_release);
+        }
+        IOLockUnlock(lock_);
+    }
+
     [[nodiscard]] bool CopyDirectAudioBinding(Runtime::DirectAudioBindingSnapshot& out) noexcept override {
         out = {};
         if (!lock_) {

@@ -454,6 +454,12 @@ struct TxPreparationRequestState final {
 struct AudioTransportControlBlock final {
     std::atomic<uint64_t> generation{0};
 
+    // Our 6-bit node id for the CIP header's SID, published by the session
+    // when it prepares the transmit context (RestartRoutine). kNoSourceId
+    // until then; the producer keeps the packetizer's SID equal to it.
+    static constexpr uint32_t kNoSourceId = 0xFFFFFFFFu;
+    std::atomic<uint32_t> cipSourceId{kNoSourceId};
+
     AudioClientCursor client{};
     AudioRtCounters counters{};
     HostClockAnchorState hostClockAnchor{};

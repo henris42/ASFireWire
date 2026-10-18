@@ -98,6 +98,12 @@ public:
     [[nodiscard]] const AMDTP::AmdtpPacketTimeline& Timeline() const noexcept;
 
     [[nodiscard]] const AMDTP::AmdtpStreamConfig& StreamConfig() const noexcept;
+    // Keep the CIP header's SID equal to our node id (the session publishes it
+    // in the control block when it prepares the transmit context). Cheap when
+    // unchanged; called before every packet is prepared.
+    void SetSourceId(uint8_t sid) noexcept {
+        if (packetizer_.Sid() != (sid & 0x3F)) packetizer_.SetSid(sid);
+    }
 
     [[nodiscard]] const DiceTxEngineCounters& Counters() const noexcept;
     // The built-in AMDTP writer's counters (fill health; a MOTU stream uses

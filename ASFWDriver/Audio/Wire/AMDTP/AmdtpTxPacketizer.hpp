@@ -34,6 +34,9 @@ public:
     void RevertToNoData(TxPacketSlotView slot, PreparedTxPacket& packet) noexcept;
 
     [[nodiscard]] const AmdtpStreamConfig& StreamConfig() const noexcept;
+    // The CIP header's source node id (6 bits), ours on this bus generation.
+    void SetSid(uint8_t sid) noexcept;
+    [[nodiscard]] uint8_t Sid() const noexcept { return cipBuilder_.Sid(); }
     [[nodiscard]] const AmdtpTxPolicy& TxPolicy() const noexcept;
     [[nodiscard]] bool NextPacketWouldCarryData() const noexcept;
     [[nodiscard]] uint8_t CurrentCycleDataFrames() const noexcept;

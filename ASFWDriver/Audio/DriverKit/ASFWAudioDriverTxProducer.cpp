@@ -130,6 +130,22 @@ void LogMotuSphEdges(ASFWAudioDriver_IVars& ivars,
     }
 }
 
+// The CIP header's SID is our node id, which the session publishes in the
+// control block when it prepares the transmit context (RestartRoutine) and
+// which a bus reset can change. Before every packet, so the prefill and the
+// first live packets carry it too, and a restart on a new node id as well.
+void ApplyCipSourceId(ASFWAudioDriver_IVars& ivars,
+                      const ASFW::Audio::Runtime::AudioTransportControlBlock& control) noexcept {
+    const uint32_t sid = control.cipSourceId.load(std::memory_order_acquire);
+    if (sid == ASFW::Audio::Runtime::AudioTransportControlBlock::kNoSourceId) {
+        return;
+    }
+    ivars.runtime.txStreamEngine.SetSourceId(static_cast<uint8_t>(sid));
+    if (ivars.runtime.txSecondaryActive) {
+        ivars.runtime.txStreamEngineSecondary.SetSourceId(static_cast<uint8_t>(sid));
+    }
+}
+
 // The servo input hook, run before EVERY packet the producer prepares, NO-DATA
 // included: it hands the stamper the latest generation-checked RX clock
 // sample and keeps the payload writer on the regulator's mute.
@@ -727,6 +743,7 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
         if (motuSphActive) {
             ApplyMotuSphServoInput(ivars, *directControl);
         }
+        ApplyCipSourceId(ivars, *directControl);
 
         const auto prepareResult =
             ivars.runtime.txStreamEngine.PrepareNextTransmitSlot(
@@ -855,6 +872,9 @@ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
     auto* metadataRing = ivars.runtime.txSlotProvider.metadataRing;
     if (numSlots == 0 || metadataRing == nullptr) {
         return;
+    }
+    if (const auto* control = ivars.runtime.directAudioGraph.control; control != nullptr) {
+        ApplyCipSourceId(ivars, *control);
     }
 
     // Commit one complete shared-ring lap before IT RUN. The transport's arm

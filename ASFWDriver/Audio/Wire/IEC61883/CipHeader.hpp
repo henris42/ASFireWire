@@ -26,6 +26,9 @@ public:
     explicit CipHeaderBuilder(const CipHeaderConfig& config) noexcept;
 
     void Configure(const CipHeaderConfig& config) noexcept;
+    // Our node id changes with every bus reset; the configuration keeps the rest.
+    void SetSid(uint8_t sid) noexcept { config_.sid = static_cast<uint8_t>(sid & 0x3F); }
+    [[nodiscard]] uint8_t Sid() const noexcept { return config_.sid; }
     [[nodiscard]] const CipHeaderConfig& Config() const noexcept;
 
     [[nodiscard]] CipHeaderWords BuildData(uint8_t dbc, uint16_t syt) const noexcept;

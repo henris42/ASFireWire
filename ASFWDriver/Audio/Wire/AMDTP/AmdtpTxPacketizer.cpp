@@ -273,6 +273,11 @@ void AmdtpTxPacketizer::RevertToNoData(TxPacketSlotView slot, PreparedTxPacket& 
     packet.syt = IEC61883::SytFormatter::kNoInfo;
 }
 
+void AmdtpTxPacketizer::SetSid(uint8_t sid) noexcept {
+    streamConfig_.sid = static_cast<uint8_t>(sid & 0x3F);
+    cipBuilder_.SetSid(sid);
+}
+
 const AmdtpStreamConfig& AmdtpTxPacketizer::StreamConfig() const noexcept {
     return streamConfig_;
 }

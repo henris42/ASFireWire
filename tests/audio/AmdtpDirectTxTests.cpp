@@ -153,6 +153,35 @@ TEST(AmdtpDirectTxTests, Upper24LittleEndianCodecHasIndependentWireGoldens) {
                   PcmSlotEncoding::RawPcm24Upper24In32LE));
 }
 
+TEST(AmdtpDirectTxTests, SetSidRewritesTheCipSourceNodeId) {
+    AmdtpPacketTimeline timeline{};
+    std::array<PacketTimelineSlot, 8> timelineSlots{};
+    ASSERT_TRUE(timeline.AttachSlots(timelineSlots.data(), timelineSlots.size()));
+    AmdtpTxPacketizer packetizer{};
+    packetizer.BindTimeline(&timeline);
+    const AmdtpStreamConfig config = BlockingStereoConfig();
+    ASSERT_TRUE(packetizer.Configure(config, AmdtpTxPolicy{}));
+    EXPECT_EQ(packetizer.Sid(), 0U);
+
+    // Six bits: node 1 on this bus, whatever the caller's upper bits.
+    packetizer.SetSid(0x41);
+    EXPECT_EQ(packetizer.Sid(), 1U);
+    EXPECT_EQ(packetizer.StreamConfig().sid, 1U);
+
+    std::array<uint8_t, 128> bytes{};
+    PreparedTxPacket packet{};
+    uint64_t frame = 0;
+    AmdtpTimingState data{};
+    data.txClockValid = true;
+    data.disposition = AmdtpPacketDisposition::Data;
+    data.nextDataSyt = 0x1234;
+    data.replayValid = true;
+    data.replayDataBlocks = 8;
+    ASSERT_TRUE(ASFW::Testing::PrepareCadencePacket(
+        packetizer, {0, bytes.data(), config.maxPacketBytes}, data, frame, packet));
+    EXPECT_EQ(bytes[0] & 0x3FU, 1U);  // CIP q0[31:24] = SID
+}
+
 TEST(AmdtpDirectTxTests, HeaderlessPacketSizingAndNoDataOperationAreExplicit) {
     for (const uint32_t channels : {18U, 28U}) {
         AmdtpPacketTimeline timeline{};
