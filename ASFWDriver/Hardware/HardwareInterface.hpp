@@ -173,7 +173,7 @@ class HardwareInterface {
     // DMA mapping (IODMACommand::PerformOperation); returns false, after
     // explaining what to change on the machine, when the two differ. Call it
     // right after PrepareForDMA on every buffer the controller must reach.
-    [[nodiscard]] bool VerifyDirectDMA(IODMACommand& command, IOBufferMemoryDescriptor& buffer,
+    [[nodiscard]] bool VerifyDirectDMA(IODMACommand& command, IOMemoryDescriptor& buffer,
                                        uint64_t preparedOffset, const char* what);
     [[nodiscard]] OSSharedPtr<IODMACommand> CreateDMACommand();
 

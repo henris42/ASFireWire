@@ -968,7 +968,7 @@ HardwareInterface::AllocateDMAPaged(size_t length, uint64_t options) {
     return result;
 }
 
-bool HardwareInterface::VerifyDirectDMA(IODMACommand& command, IOBufferMemoryDescriptor& buffer,
+bool HardwareInterface::VerifyDirectDMA(IODMACommand& command, IOMemoryDescriptor& buffer,
                                         uint64_t preparedOffset, const char* what) {
     constexpr uint64_t kProbeBytes = 16;
 

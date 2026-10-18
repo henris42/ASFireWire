@@ -6,6 +6,7 @@
 //
 
 #include "IsochTransmitContext.hpp"
+#include "../../Hardware/HardwareInterface.hpp"
 #include "../../Common/DriverKitOwnership.hpp"
 #include "../../Hardware/OHCIConstants.hpp"
 #include "../../Logging/LogConfig.hpp"
@@ -105,10 +106,10 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
     payloadBase_ = nullptr;
     metadataRing_ = nullptr;
     controlBlock_ = nullptr;
-    if (payloadDmaCmd_) {
-        payloadDmaCmd_->CompleteDMA(kIODMACommandCompleteDMANoOptions);
-        payloadDmaCmd_ = nullptr;
+    for (auto& command : payloadDmaCmds_) {
+        command->CompleteDMA(kIODMACommandCompleteDMANoOptions);
     }
+    payloadDmaCmds_.clear();
     payloadDmaMap_.Reset();
 
     // 1. Map Payload Slab
@@ -121,79 +122,91 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
     payloadMap_ = Common::AdoptRetained(pMap);
     payloadBase_ = reinterpret_cast<uint8_t*>(payloadMap_->GetAddress());
 
-    // Prepare Payload Slab for DMA (to get IOVA)
+    // Prepare the payload slab for DMA, page run by page run. The slab is
+    // ordinary scattered memory (nothing contiguous above 64 KiB is requested,
+    // b49), so on 4 KiB pages a 2 MB slab is hundreds of runs, while
+    // PrepareForDMA returns at most 32 segments per call (IODMACommand.iig):
+    // prepare it in 32-page windows with one command each, as
+    // HardwareInterface::AllocateDMAPaged does for the async slab, and keep
+    // every command alive. Each window is also probed for a bounced mapping.
     if (hardware_) {
-        auto dmaCmd = hardware_->CreateDMACommand();
-        if (!dmaCmd) {
-            ASFW_LOG(Isoch, "IT: Failed to create DMA command for payload slab");
-            return kIOReturnNoMemory;
-        }
-
-        // CRITICAL / DriverKit RPC Limit:
-        // IODMACommand::PrepareForDMA has a fixed signature of:
-        //   PrepareForDMA(..., IOAddressSegment segments[32])
-        // If we initialize segmentCount to segments.size() (64) and pass it, the DriverKit
-        // user-kernel RPC serialization stub flags the count > 32 as an array bounds/overrun violation
-        // and immediately aborts the syscall returning kIOReturnOverrun (0xe00002e8).
-        //
-        // Thus, segmentCount MUST be initialized to at most 32. Since the 256KB payload slab is
-        // only 16 pages under Apple Silicon's 16KB page layout, it easily fits in 32 segments.
-        std::array<IOAddressSegment, 32> segments{};
-        uint32_t segmentCount = std::min<uint32_t>(segments.size(), 32);
-        uint64_t flags = 0;
         uint64_t slabLen = 0;
         payloadSlab->GetLength(&slabLen);
+        constexpr uint64_t kWindowBytes = 32ull * Driver::HardwareInterface::kDMAPageGranule;
+        std::vector<Tx::TxPayloadDmaSegment> payloadSegments;
+        const auto failWindows = [this](kern_return_t status) {
+            for (auto& command : payloadDmaCmds_) {
+                command->CompleteDMA(kIODMACommandCompleteDMANoOptions);
+            }
+            payloadDmaCmds_.clear();
+            return status;
+        };
 
-        kr = dmaCmd->PrepareForDMA(kIODMACommandPrepareForDMANoOptions, payloadSlab, 0, slabLen, &flags,
-                                    &segmentCount, segments.data());
-        if (kr != kIOReturnSuccess) {
-            ASFW_LOG(Isoch, "IT: PrepareForDMA failed for payload slab: 0x%08x (%{public}s)", kr, ASFW::Logging::IOReturnName(kr));
-            return kr;
-        }
-
-        std::array<Tx::TxPayloadDmaSegment, Tx::TxPayloadDmaMap::kMaxSegments>
-            payloadSegments{};
-        if (segmentCount == 0 || segmentCount > payloadSegments.size()) {
-            ASFW_LOG(Isoch,
-                     "IT: Payload DMA returned invalid segment count=%u capacity=%zu",
-                     segmentCount,
-                     payloadSegments.size());
-            dmaCmd->CompleteDMA(kIODMACommandCompleteDMANoOptions);
-            return kIOReturnInternalError;
-        }
-        for (uint32_t i = 0; i < segmentCount; ++i) {
-            payloadSegments[i] = Tx::TxPayloadDmaSegment{
-                .deviceAddress = segments[i].address,
-                .length = segments[i].length,
-            };
+        for (uint64_t offset = 0; offset < slabLen; offset += kWindowBytes) {
+            const uint64_t window = std::min(kWindowBytes, slabLen - offset);
+            auto dmaCmd = hardware_->CreateDMACommand();
+            if (!dmaCmd) {
+                ASFW_LOG(Isoch, "IT: Failed to create DMA command for payload slab window at %llu", offset);
+                return failWindows(kIOReturnNoMemory);
+            }
+            std::array<IOAddressSegment, 32> segments{};
+            uint32_t segmentCount = 32;
+            uint64_t flags = 0;
+            kr = dmaCmd->PrepareForDMA(kIODMACommandPrepareForDMANoOptions, payloadSlab, offset, window, &flags,
+                                       &segmentCount, segments.data());
+            if (kr != kIOReturnSuccess || segmentCount == 0) {
+                ASFW_LOG(Isoch, "IT: PrepareForDMA failed for payload slab window at %llu: 0x%08x (%{public}s)",
+                         offset, kr, ASFW::Logging::IOReturnName(kr));
+                return failWindows(kr != kIOReturnSuccess ? kr : kIOReturnInternalError);
+            }
+            payloadDmaCmds_.push_back(dmaCmd);
+            if (!hardware_->VerifyDirectDMA(*dmaCmd, *payloadSlab, offset, "the isoch transmit payload")) {
+                return failWindows(kIOReturnUnsupported);
+            }
+            uint64_t covered = 0;
+            for (uint32_t i = 0; i < segmentCount; ++i) {
+                // Merge runs that happen to be physically adjacent.
+                if (!payloadSegments.empty() &&
+                    payloadSegments.back().deviceAddress + payloadSegments.back().length == segments[i].address) {
+                    payloadSegments.back().length += segments[i].length;
+                } else {
+                    payloadSegments.push_back(Tx::TxPayloadDmaSegment{
+                        .deviceAddress = segments[i].address,
+                        .length = segments[i].length,
+                    });
+                }
+                covered += segments[i].length;
+            }
+            if (covered != window) {
+                ASFW_LOG(Isoch, "IT: payload slab window at %llu mapped %llu of %llu bytes", offset, covered, window);
+                return failWindows(kIOReturnInternalError);
+            }
         }
 
         if (!payloadDmaMap_.Configure(
-                std::span<const Tx::TxPayloadDmaSegment>(
-                    payloadSegments.data(), segmentCount),
+                std::span<const Tx::TxPayloadDmaSegment>(payloadSegments.data(), payloadSegments.size()),
                 slabLen)) {
             ASFW_LOG(
                 Isoch,
-                "IT: Payload DMA map does not provide complete 32-bit slab coverage bytes=%llu segments=%u",
+                "IT: Payload DMA map does not provide complete 32-bit slab coverage bytes=%llu segments=%zu",
                 slabLen,
-                segmentCount);
-            dmaCmd->CompleteDMA(kIODMACommandCompleteDMANoOptions);
-            return kIOReturnInternalError;
+                payloadSegments.size());
+            return failWindows(kIOReturnInternalError);
         }
 
-        payloadDmaCmd_ = std::move(dmaCmd);
         ASFW_LOG(Isoch,
-                 "IT: Payload DMA mapped bytes=%llu segments=%zu",
+                 "IT: Payload DMA mapped bytes=%llu segments=%zu windows=%zu",
                  payloadDmaMap_.SlabLength(),
-                 payloadDmaMap_.SegmentCount());
+                 payloadDmaMap_.SegmentCount(),
+                 payloadDmaCmds_.size());
         for (std::size_t i = 0; i < payloadDmaMap_.SegmentCount(); ++i) {
             const auto* segment = payloadDmaMap_.SegmentAt(i);
-            ASFW_LOG(Isoch,
-                     "IT: Payload DMA segment[%zu] slabOffset=%llu iova=0x%llx length=%llu",
-                     i,
-                     segment->slabOffset,
-                     segment->deviceAddress,
-                     segment->length);
+            ASFW_LOG_V2(Isoch,
+                        "IT: Payload DMA segment[%zu] slabOffset=%llu iova=0x%llx length=%llu",
+                        i,
+                        segment->slabOffset,
+                        segment->deviceAddress,
+                        segment->length);
         }
     }
 

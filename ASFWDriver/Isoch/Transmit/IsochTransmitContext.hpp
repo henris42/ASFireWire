@@ -16,6 +16,7 @@
 #include "../../Hardware/RegisterMap.hpp"
 
 #include "../../Logging/Logging.hpp"
+#include <vector>
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -172,7 +173,9 @@ private:
     IsochTxQueueControl* controlBlock_{nullptr};
 
     Tx::TxPayloadDmaMap payloadDmaMap_{};
-    OSSharedPtr<IODMACommand> payloadDmaCmd_{nullptr};
+    // One prepared command per 32-page window of the payload slab; they keep
+    // the DMA mapping alive until the next SetSharedMemoryDescriptors.
+    std::vector<OSSharedPtr<IODMACommand>> payloadDmaCmds_{};
 };
 
 } // namespace Isoch

@@ -400,7 +400,7 @@ std::optional<HardwareInterface::DMABuffer> HardwareInterface::AllocateDMAPaged(
     return result;
 }
 
-bool HardwareInterface::VerifyDirectDMA(IODMACommand&, IOBufferMemoryDescriptor&, uint64_t, const char*) {
+bool HardwareInterface::VerifyDirectDMA(IODMACommand&, IOMemoryDescriptor&, uint64_t, const char*) {
     return true;
 }
 

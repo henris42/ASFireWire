@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <limits>
 #include <span>
+#include <vector>
 
 namespace ASFW::Isoch::Tx {
 
@@ -21,8 +22,12 @@ struct TxPayloadDmaFragment {
 
 class TxPayloadDmaMap final {
 public:
-    // DriverKit's PrepareForDMA RPC serializes IOAddressSegment segments[32].
-    static constexpr std::size_t kMaxSegments = 32;
+    // The payload slab is ordinary scattered pages (nothing contiguous above
+    // 64 KiB is ever requested, b49), so on 4 KiB pages a 2 MB slab is several
+    // hundred runs. PrepareForDMA returns at most 32 per call; the context
+    // prepares the slab in windows and hands the whole list in here. The cap
+    // only bounds a malformed list.
+    static constexpr std::size_t kMaxSegments = 8192;
 
     struct MappedSegment {
         std::uint64_t slabOffset{0};
@@ -36,6 +41,7 @@ public:
         if (segments.empty() || segments.size() > kMaxSegments || slabLength == 0) {
             return false;
         }
+        segments_.reserve(segments.size());
 
         std::uint64_t remaining = slabLength;
         std::uint64_t slabOffset = 0;
@@ -58,11 +64,11 @@ public:
                 return false;
             }
 
-            segments_[segmentCount_++] = MappedSegment{
+            segments_.push_back(MappedSegment{
                 .slabOffset = slabOffset,
                 .deviceAddress = segment.deviceAddress,
                 .length = mappedLength,
-            };
+            });
             slabOffset += mappedLength;
             remaining -= mappedLength;
         }
@@ -77,17 +83,16 @@ public:
     }
 
     void Reset() noexcept {
-        segments_ = {};
-        segmentCount_ = 0;
+        segments_.clear();
         slabLength_ = 0;
     }
 
     [[nodiscard]] bool IsValid() const noexcept {
-        return segmentCount_ != 0 && slabLength_ != 0;
+        return !segments_.empty() && slabLength_ != 0;
     }
 
     [[nodiscard]] std::size_t SegmentCount() const noexcept {
-        return segmentCount_;
+        return segments_.size();
     }
 
     [[nodiscard]] std::uint64_t SlabLength() const noexcept {
@@ -95,7 +100,21 @@ public:
     }
 
     [[nodiscard]] const MappedSegment* SegmentAt(std::size_t index) const noexcept {
-        return index < segmentCount_ ? &segments_[index] : nullptr;
+        return index < segments_.size() ? &segments_[index] : nullptr;
+    }
+
+    /// The run containing `slabOffset`; runs are in slab order, so a binary
+    /// search keeps the per-packet cost flat however many pages the slab has.
+    [[nodiscard]] const MappedSegment* SegmentContaining(std::uint64_t slabOffset) const noexcept {
+        auto it = std::upper_bound(segments_.begin(), segments_.end(), slabOffset,
+                                   [](std::uint64_t value, const MappedSegment& segment) {
+                                       return value < segment.slabOffset;
+                                   });
+        if (it == segments_.begin()) {
+            return nullptr;
+        }
+        --it;
+        return slabOffset < it->slabOffset + it->length ? &*it : nullptr;
     }
 
     [[nodiscard]] bool ResolveTwoFragments(
@@ -116,15 +135,7 @@ public:
         std::size_t fragmentCount = 0;
 
         while (remaining != 0) {
-            const MappedSegment* mapped = nullptr;
-            for (std::size_t i = 0; i < segmentCount_; ++i) {
-                const auto& candidate = segments_[i];
-                if (currentOffset >= candidate.slabOffset &&
-                    currentOffset < candidate.slabOffset + candidate.length) {
-                    mapped = &candidate;
-                    break;
-                }
-            }
+            const MappedSegment* mapped = SegmentContaining(currentOffset);
             if (!mapped || fragmentCount == fragments.size()) {
                 return false;
             }
@@ -156,8 +167,7 @@ public:
     }
 
 private:
-    std::array<MappedSegment, kMaxSegments> segments_{};
-    std::size_t segmentCount_{0};
+    std::vector<MappedSegment> segments_{};
     std::uint64_t slabLength_{0};
 };
 

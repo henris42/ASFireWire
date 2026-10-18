@@ -462,10 +462,13 @@ public:
         IOAddressSegment seg;
         buffer->GetAddressRange(&seg);
         static std::atomic<uint32_t> sMockIOVA{0x10000000u};
-        const uint32_t size = static_cast<uint32_t>(length > 0 ? length : seg.length);
+        // The prepared window [offset, offset+length) as one segment, like a
+        // contiguous buffer would be; callers that prepare in windows get one
+        // segment per window.
+        const uint32_t size = static_cast<uint32_t>(length > 0 ? length : seg.length - offset);
         const uint32_t next = sMockIOVA.fetch_add(size + 0x1000u, std::memory_order_relaxed);
         segmentOut[0].address = next;
-        segmentOut[0].length = seg.length;
+        segmentOut[0].length = size;
         *segments = 1;
         return kIOReturnSuccess;
     }
