@@ -21,6 +21,20 @@
                ReferencedContainer = "container:ASFW.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "YES"
+            buildForProfiling = "YES"
+            buildForArchiving = "YES"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "59D4F7E38DF8A075FE49761C"
+               BuildableName = "asfw-config-agent"
+               BlueprintName = "ASFWConfigAgent"
+               ReferencedContainer = "container:ASFW.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction
