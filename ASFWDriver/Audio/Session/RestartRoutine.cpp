@@ -492,9 +492,22 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
 
     bool receiveStarted = false;
     bool transmitStarted = false;
+    const bool captureOnly = Audio::Motu::MotuExperiments::Take(Audio::Motu::kMotuExperimentCaptureOnly);
+    // Read, not taken: the producer reads the same flag when it arms; the
+    // start clears it once its readiness wait is over.
+    const bool transmitOnly = Audio::Motu::MotuExperiments::Has(Audio::Motu::kMotuExperimentTransmitOnly);
+    // A data hold (producer, MotuExperiments) delays the presentation timing
+    // the readiness wait below needs; give it that much longer.
+    const uint32_t holdMs = Audio::Motu::MotuExperiments::extraNoDataPackets.load(std::memory_order_relaxed) / 8;
     auto startReceive = [&](const char* step) -> std::optional<std::expected<RunningSession, RestartFailure>> {
         if (TeardownRequested()) {
             return aborted(step);
+        }
+        if (transmitOnly) {
+            ASFW_LOG(Audio, "[Session] experiment: transmit only, host receive not started GUID=%llx (%{public}s)",
+                     guid, step);
+            receiveStarted = true;
+            return std::nullopt;
         }
         const kern_return_t status = host.StartPreparedReceive();
         if (status != kIOReturnSuccess) {
@@ -506,10 +519,6 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
         receiveStarted = true;
         return std::nullopt;
     };
-    const bool captureOnly = Audio::Motu::MotuExperiments::Take(Audio::Motu::kMotuExperimentCaptureOnly);
-    // A data hold (producer, MotuExperiments) delays the presentation timing
-    // the readiness wait below needs; give it that much longer.
-    const uint32_t holdMs = Audio::Motu::MotuExperiments::extraNoDataPackets.load(std::memory_order_relaxed) / 8;
     auto startTransmit = [&](const char* step) -> std::optional<std::expected<RunningSession, RestartFailure>> {
         if (TeardownRequested()) {
             return aborted(step);
@@ -603,7 +612,7 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
         if (!stillWanted()) return superseded("TransmitTimingReady");
         const auto elapsed = UptimeMilliseconds() - readyStartMs;
         if (elapsed >= readiness.minimumHostRunMs &&
-            (!readiness.requireTransmitTiming || captureOnly || request.binding->IsTransmitTimingReady())) break;
+            (!readiness.requireTransmitTiming || captureOnly || transmitOnly || request.binding->IsTransmitTimingReady())) break;
         if (elapsed >= readiness.timeoutMs + holdMs) return rollback(kIOReturnTimeout, "TransmitTimingReady");
         IOSleep(1);
     }
@@ -611,6 +620,9 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
     if (readiness.requireTransmitTiming || readiness.minimumHostRunMs)
         ASFW_LOG(Audio, "[SessionTiming] playback presentation acquired GUID=%llx elapsedMs=%llu",
                  request.guid, UptimeMilliseconds() - readyStartMs);
+    if (transmitOnly) {
+        (void)Audio::Motu::MotuExperiments::Take(Audio::Motu::kMotuExperimentTransmitOnly);
+    }
 
     // 8. Confirm the device runs what was armed.
     if (TeardownRequested()) {

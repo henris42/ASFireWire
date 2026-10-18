@@ -373,15 +373,35 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
         ASFW::Protocols::Audio::AMDTP::AmdtpTimingState timing{};
         timing.disposition =
             ASFW::Protocols::Audio::AMDTP::AmdtpPacketDisposition::NoData;
+        // Transmit-only experiment (MotuExperiments): no receive history will
+        // ever establish, so the configured blocking cadence carries data and
+        // the SPH clock seeds from the packet's own transmit time.
+        const bool syntheticCadence =
+            motuSphActive && ivars.runtime.motuExperimentTransmitOnly && !allowRecoveredClock;
         const bool bootstrapCadence =
-            ivars.runtime.rxReplayAfterBootstrap.load(std::memory_order_acquire) &&
-            !allowRecoveredClock;
+            (ivars.runtime.rxReplayAfterBootstrap.load(std::memory_order_acquire) &&
+             !allowRecoveredClock) || syntheticCadence;
         // Start with configured cadence; after RX history establishes, the
         // next writable index is the immutable transition boundary.
         timing.replayValid = !bootstrapCadence;
         if (bootstrapCadence) {
             timing.disposition =
                 ASFW::Protocols::Audio::AMDTP::AmdtpPacketDisposition::Data;
+        }
+        if (syntheticCadence) {
+            int64_t anchorTicks = 0;
+            if (ivars.runtime.txExecutionTimeline.AnchorForPacket(nextPacketToPrepare, anchorTicks)) {
+                timing.transmitCycle = static_cast<uint32_t>(
+                    (ASFW::Timing::normalizeOffsetDomain(anchorTicks) / ASFW::Timing::kTicksPerCycle) %
+                    ASFW::Timing::kCyclesPerSecond);
+                timing.transmitCycleValid = true;
+                timing.transmitTicks = anchorTicks;
+                timing.txClockValid = true;
+            }
+            if (nextPacketToPrepare == numSlots) {
+                ASFW_LOG(DirectAudio,
+                         "[MotuExperiment] transmit only: configured blocking cadence, SPH free-running from transmit time, PCM muted");
+            }
         }
 
         ASFW::Audio::BeBoB::MAudioInternalTxTiming::PacketPlan mAudioPlan{};
@@ -990,6 +1010,8 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
 
     ivars.runtime.motuExperimentHoldUntilPacket = 0;
     ivars.runtime.motuStampLogged = 0;
+    ivars.runtime.motuExperimentTransmitOnly =
+        ASFW::Audio::Motu::MotuExperiments::Has(ASFW::Audio::Motu::kMotuExperimentTransmitOnly);
     ivars.runtime.txCadenceLastData = 0;
     ivars.runtime.txCadenceLastNoData = 0;
     ivars.runtime.txCadenceLastEmpty = 0;

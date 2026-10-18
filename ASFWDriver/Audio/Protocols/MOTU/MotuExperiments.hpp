@@ -13,6 +13,8 @@
 //                      before it resets.
 //   kCaptureOnly       do not start the host transmit context at all: if the
 //                      device still resets, our packets are exonerated.
+//   kTransmitOnly      do not start the host receive context: if the device
+//                      still resets, the receive side is out of the picture.
 //   kHoldAbsolutePhase  hold the absolute SPH phase at the mk3 setpoint.
 //   presentationLeadTicks  stamp the first data block this far ahead of its
 //                      transmit cycle instead of the model's lead.
@@ -34,9 +36,15 @@ enum MotuExperimentFlag : uint32_t {
     // Hold the absolute SPH phase at the 828mk3 setpoint (+510) on a model
     // whose loop is relative by default (protocol v2 since b98).
     kMotuExperimentHoldAbsolutePhase = 1u << 2,
+    // Start the host transmit context only: no receive context, so the
+    // transmit cadence is the configured blocking one and the SPH clock
+    // free-runs from the transmit time (no device clock to lock to, PCM
+    // muted). Cleared by the session once its start has used it.
+    kMotuExperimentTransmitOnly = 1u << 3,
 };
 inline constexpr uint32_t kMotuExperimentAllFlags =
-    kMotuExperimentForceFetchEnable | kMotuExperimentCaptureOnly | kMotuExperimentHoldAbsolutePhase;
+    kMotuExperimentForceFetchEnable | kMotuExperimentCaptureOnly | kMotuExperimentHoldAbsolutePhase |
+    kMotuExperimentTransmitOnly;
 
 struct MotuExperiments {
     static inline std::atomic<uint32_t> flags{0};
