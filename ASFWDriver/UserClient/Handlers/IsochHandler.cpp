@@ -329,15 +329,17 @@ kern_return_t IsochHandler::TestCMPDisconnectIPCR(IOUserClientMethodArguments* a
 // ============================================================================
 
 kern_return_t IsochHandler::StartIsochReceive(IOUserClientMethodArguments* args) {
-    // Arguments: [0] = channel, [1] = wireFormatRaw (optional), [2] = am824Slots (optional)
+    // Arguments: [0] = channel, [1] = packets to log (0: default; was wireFormatRaw),
+    // [2] = unused (was am824Slots). Starts a raw channel snoop (IsochSnoopConsumer).
     if (args->scalarInputCount < 1)
         return kIOReturnBadArgument;
     uint64_t channel = args->scalarInput[0];
-    uint64_t wireFormatRaw = args->scalarInputCount >= 2 ? args->scalarInput[1] : 0; // default 0 (kAM824)
-    uint64_t am824Slots = args->scalarInputCount >= 3 ? args->scalarInput[2] : 2; // default 2 channels
+    uint64_t wireFormatRaw = args->scalarInputCount >= 2 ? args->scalarInput[1] : 0;
+    uint64_t am824Slots = args->scalarInputCount >= 3 ? args->scalarInput[2] : 0;
+    if (channel > 63) return kIOReturnBadArgument;
 
-    ASFW_LOG(UserClient, "StartIsochReceive called for channel %llu wireFormat=%llu slots=%llu",
-             channel, wireFormatRaw, am824Slots);
+    ASFW_LOG(UserClient, "StartIsochReceive (snoop) called for channel %llu packetsToLog=%llu",
+             channel, wireFormatRaw);
     return driver_->StartIsochReceive(static_cast<uint8_t>(channel),
                                       static_cast<uint32_t>(wireFormatRaw),
                                       static_cast<uint32_t>(am824Slots));
