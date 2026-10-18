@@ -5,7 +5,9 @@
 //  Headless driver activation for install.sh, so installing or updating needs
 //  no clicks in the app:
 //
-//    ASFW.app/Contents/MacOS/ASFW --activate | --deactivate | --status
+//    ASFW.app/Contents/MacOS/ASFW --activate | --deactivate | --status | --apply-config
+//
+//  --apply-config is the login agent (ConfigApplier.swift): it never returns.
 //
 //  Run it from the logged-in user's session (Terminal, or over ssh through
 //  `launchctl asuser`): system-extension requests need a user session. Each
@@ -22,6 +24,7 @@ enum LoaderCommandLine {
         case activate = "--activate"
         case deactivate = "--deactivate"
         case status = "--status"
+        case applyConfig = "--apply-config"
     }
 
     /// The requested command, or nil to start the window UI.
@@ -37,6 +40,8 @@ enum LoaderCommandLine {
         case .status:
             printStatus()
             return 0
+        case .applyConfig:
+            return ConfigApplier.runForever()
         case .activate:
             return runRequest("activation") { progress, completion in
                 DriverInstallManager.shared.activate(progress: progress, completion: completion)

@@ -22,14 +22,15 @@ class DebugViewModel: ObservableObject {
     @Published var discoveredDevices: [ASFWDriverConnector.FWDeviceInfo] = []
     @Published var avcUnits: [ASFWDriverConnector.AVCUnitInfo] = []
 
-    let connector = ASFWDriverConnector()  // Internal access for TopologyViewModel
+    let connector: ASFWDriverConnector  // Internal access for TopologyViewModel
     private var driverViewModel: DriverViewModel?
     private let statusFetchQueue = DispatchQueue(label: "net.asfw.app.debug.fetch", qos: .userInitiated)
     private var inventoryRequestID = UUID()
     private var isRefreshingInventory = false
     private var cancellables = Set<AnyCancellable>()
     
-    init() {
+    init(connector: ASFWDriverConnector = ASFWDriverConnector()) {
+        self.connector = connector
         connector.$isConnected
             .receive(on: DispatchQueue.main)
             .sink { [weak self] connected in
@@ -138,6 +139,12 @@ class DebugViewModel: ObservableObject {
         guard isConnected else { return false }
         return BusInspectorNode.inventory(topology: topologyCache, devices: discoveredDevices)
             .contains { $0.isDICEDevice }
+    }
+
+    /// A device whose clock source and optical modes the host can set (MOTU).
+    var hasConfigurableDevice: Bool {
+        guard isConnected else { return false }
+        return discoveredDevices.contains { $0.vendorId == ASFWDriverConnector.motuVendorID }
     }
 
     var hasDuetDevice: Bool {

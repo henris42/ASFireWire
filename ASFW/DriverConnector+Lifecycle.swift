@@ -30,10 +30,22 @@ extension ASFWDriverConnector {
         monitoringActive = false
     }
 
+    /// Whether `service` is the one this connector is bound to (always, unbound).
+    func isBoundService(_ service: io_object_t) -> Bool {
+        guard let bound = boundRegistryEntryID else { return true }
+        var entryID: UInt64 = 0
+        guard IORegistryEntryGetRegistryEntryID(service, &entryID) == KERN_SUCCESS else { return false }
+        return entryID == bound
+    }
+
     func handleMatched(iterator: io_iterator_t) {
         while true {
             let service = IOIteratorNext(iterator)
             if service == 0 { break }
+            guard isBoundService(service) else {
+                IOObjectRelease(service)
+                continue
+            }
             log("Matched service 0x\(String(service, radix: 16))", level: .info)
 
             IOObjectRetain(service)
@@ -51,8 +63,10 @@ extension ASFWDriverConnector {
         while true {
             let service = IOIteratorNext(iterator)
             if service == 0 { break }
-            terminationObserved = true
-            log("Service terminated 0x\(String(service, radix: 16))", level: .warning)
+            if isBoundService(service) {
+                terminationObserved = true
+                log("Service terminated 0x\(String(service, radix: 16))", level: .warning)
+            }
             IOObjectRelease(service)
         }
 
@@ -68,7 +82,8 @@ extension ASFWDriverConnector {
             return
         }
 
-        let matchingDict = IOServiceNameMatching(serviceName)
+        let matchingDict = boundRegistryEntryID.map { IORegistryEntryIDMatching($0) }
+            ?? IOServiceNameMatching(serviceName)
         let service = IOServiceGetMatchingService(kIOMainPortDefault, matchingDict)
         guard service != 0 else {
             log("ASFWDriver service not found in IORegistry", level: .error)

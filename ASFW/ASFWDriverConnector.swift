@@ -64,6 +64,9 @@ final class ASFWDriverConnector: ObservableObject {
         // One unit's FCP exchange log, paged (UserClient/WireFormats/AVCExchangeLogWire.hpp).
         case getFCPExchangeLog = 65
         case getAVCDiscoveryDocument = 68
+        // Device settings (clock source, optical modes): request/result pair.
+        case requestDeviceSettings = 69
+        case getDeviceSettingsResult = 70
         // Read-only audio telemetry diagnostics.
         case getAudioTelemetry = 1013
         // Driver-owned LogRing category names and named filter presets.
@@ -112,6 +115,11 @@ final class ASFWDriverConnector: ObservableObject {
     /// "dispatch_sync called on queue already owned by current thread".
     private static let connectionQueueKey = DispatchSpecificKey<UInt8>()
     let serviceName = "ASFWDriver"
+    /// With several FireWire controllers each has its own ASFWDriver service.
+    /// A bound connector talks to exactly that one (by IORegistry entry ID) and
+    /// ignores the others' match and termination notifications; unbound, it
+    /// follows whichever service matches, as before.
+    let boundRegistryEntryID: UInt64?
 
     var notificationPort: IONotificationPortRef?
     var matchedIterator: io_iterator_t = 0
@@ -142,7 +150,8 @@ final class ASFWDriverConnector: ObservableObject {
 
     // MARK: - Initialisation
 
-    init() {
+    init(registryEntryID: UInt64? = nil) {
+        boundRegistryEntryID = registryEntryID
         connectionQueue.setSpecific(key: Self.connectionQueueKey, value: 1)
         startMonitoring()
     }

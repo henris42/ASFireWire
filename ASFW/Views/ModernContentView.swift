@@ -10,16 +10,9 @@ import Foundation
 
 struct ModernContentView: View {
     @StateObject private var driverVM = DriverViewModel()
-    @StateObject private var debugVM = DebugViewModel()
-    @StateObject private var topologyVM: TopologyViewModel
-    @StateObject private var romExplorerVM: RomExplorerViewModel
-    @StateObject private var diagnosticsStore: DiagnosticsStore
-    @StateObject private var diceReportStore: DiceReportStore
-    @StateObject private var avcReportStore: AvcReportStore
-    @StateObject private var avcUnitsStore: AvcUnitsStore
-#if !ASFW_LITE
-    @StateObject private var mcpVM: ASFWMCPControlViewModel
-#endif
+    /// One session (connector + view models) per FireWire controller the driver
+    /// claims; the sidebar picks which one the window shows.
+    @StateObject private var workspace = CardWorkspace()
     @State private var publishedAudioDevices: [AudioWrapperDevice] = []
     @State private var selectedSection: SidebarSection? = .overview
     @AppStorage(AdvancedToolsSettings.storageKey)
@@ -27,29 +20,10 @@ struct ModernContentView: View {
     @AppStorage(DriverInstallSettings.requireNewerBuildKey)
     private var requireNewerBuild = DriverInstallSettings.defaultRequireNewerBuild
 
-    init() {
-        let driverViewModel = DriverViewModel()
-        let debugViewModel = DebugViewModel()
-        let topologyViewModel = TopologyViewModel(connector: debugViewModel.connector)
-        _driverVM = StateObject(wrappedValue: driverViewModel)
-        _debugVM = StateObject(wrappedValue: debugViewModel)
-        _topologyVM = StateObject(wrappedValue: topologyViewModel)
-        _romExplorerVM = StateObject(wrappedValue: RomExplorerViewModel(
-            connector: debugViewModel.connector,
-            topologyViewModel: topologyViewModel
-        ))
-        _diagnosticsStore = StateObject(wrappedValue: DiagnosticsStore(connector: debugViewModel.connector))
-        _diceReportStore = StateObject(wrappedValue: DiceReportStore(connector: debugViewModel.connector))
-        _avcReportStore = StateObject(wrappedValue: AvcReportStore(connector: debugViewModel.connector))
-        _avcUnitsStore = StateObject(wrappedValue: AvcUnitsStore(connector: debugViewModel.connector))
-#if !ASFW_LITE
-        _mcpVM = StateObject(wrappedValue: ASFWMCPControlViewModel(connector: debugViewModel.connector))
-#endif
-    }
-
     enum SidebarSection: String, CaseIterable, Identifiable {
         case overview = "Overview"
         case busInspector = "Bus Inspector"
+        case deviceSettings = "Device Settings"
         case avcUnits = "AV/C Units"
         case avcCommands = "AV/C Commands"
         case controller = "Controller Status"
@@ -82,6 +56,7 @@ struct ModernContentView: View {
             switch self {
             case .overview: return "info.circle"
             case .busInspector: return "network"
+            case .deviceSettings: return "dial.min"
             case .avcUnits: return "music.note"
             case .avcCommands: return "command"
             case .controller: return "cpu"
@@ -108,9 +83,9 @@ struct ModernContentView: View {
             switch self {
             case .overview: .general
 #if ASFW_LITE
-            case .busInspector, .avcUnits, .duet: .devices
+            case .busInspector, .deviceSettings, .avcUnits, .duet: .devices
 #else
-            case .busInspector, .avcUnits, .duet, .audioAnalyzer: .devices
+            case .busInspector, .deviceSettings, .avcUnits, .duet, .audioAnalyzer: .devices
             case .dvCapture: .video
 #endif
             case .diagnostics, .diceReport, .avcReport: .reports
@@ -120,15 +95,27 @@ struct ModernContentView: View {
         }
 
         var requiresAdvancedTools: Bool { group == .advanced }
+
+        /// Everything but the overview and Core Audio works on one controller.
+        var needsController: Bool {
+            switch self {
+            case .overview, .audio: return false
+            default: return true
+            }
+        }
     }
-    
+
+    private var session: CardSession? { workspace.selectedSession }
+
     private var visibleSections: [SidebarSection] {
         SidebarSection.allCases.filter { section in
             guard showAdvancedTools || !section.requiresAdvancedTools else { return false }
+            if section.needsController && session == nil { return false }
             switch section {
-            case .avcUnits, .avcCommands, .avcReport: return debugVM.hasAVCDevice
-            case .diceReport: return debugVM.hasDICEDevice
-            case .duet: return debugVM.hasDuetDevice
+            case .avcUnits, .avcCommands, .avcReport: return session?.debugVM.hasAVCDevice ?? false
+            case .deviceSettings: return session?.debugVM.hasConfigurableDevice ?? false
+            case .diceReport: return session?.debugVM.hasDICEDevice ?? false
+            case .duet: return session?.debugVM.hasDuetDevice ?? false
 #if ASFW_LITE
             case .audioGeometry:
                 return !publishedAudioDevices.isEmpty
@@ -155,6 +142,7 @@ struct ModernContentView: View {
     var body: some View {
         NavigationSplitView {
             List(selection: $selectedSection) {
+                controllersSection
                 ForEach(SidebarGroup.allCases) { group in
                     let sections = visibleSections.filter { $0.group == group }
                     if !sections.isEmpty {
@@ -179,57 +167,11 @@ struct ModernContentView: View {
                     .help("Show technical inspection and command tools. Logging is configured separately.")
             }
         } detail: {
-            // Detail view
             Group {
-                switch selectedSection {
-                case .overview:
-                    OverviewView(viewModel: driverVM,
-                                 requireNewerBuild: $requireNewerBuild)
-                case .busInspector:
-                    BusInspectorView(debugViewModel: debugVM, topologyViewModel: topologyVM, romViewModel: romExplorerVM)
-                case .avcUnits:
-                    AvcUnitsView(store: avcUnitsStore, connector: debugVM.connector, developerTools: showAdvancedTools)
-                case .avcCommands:
-                    AVCCommandView(viewModel: debugVM)
-                case .controller:
-                    ControllerDetailView(viewModel: debugVM)
-                case .async:
-                    CommandsView(viewModel: debugVM)
-#if !ASFW_LITE
-                case .audioTelemetry:
-                    AudioTelemetryView(connector: debugVM.connector)
-                case .dvCapture:
-                    DVCaptureView(viewModel: debugVM)
-#endif
-                case .audioGeometry:
-                    AudioGeometryView(connector: debugVM.connector)
-                case .busReset:
-                    BusResetHistoryView(viewModel: debugVM)
-                case .logs:
-                    SystemLogsView(connector: debugVM.connector)
-                case .loggingSettings:
-                    LoggingSettingsView(connector: debugVM.connector, showAdvancedControls: showAdvancedTools)
-#if !ASFW_LITE
-                case .mcpSettings:
-                    MCPSettingsView(viewModel: mcpVM)
-                case .audioAnalyzer:
-                    AudioAnalyzerView(devices: publishedAudioDevices, refresh: refreshPublishedAudioDevices)
-#endif
-                case .audio:
-                    AudioDebugView()
-                case .duet:
-                    DuetControlView(connector: debugVM.connector)
-                case .diagnostics:
-                    DiagnosticsView(store: diagnosticsStore, showAdvancedTools: showAdvancedTools)
-                case .diceReport:
-                    DiceReportView(store: diceReportStore)
-                case .avcReport:
-                    AvcReportView(store: avcReportStore)
-                case .none:
-                    Text("Select a section")
-                        .foregroundStyle(.secondary)
-                }
+                detail(for: selectedSection)
             }
+            // Switching controllers rebuilds the detail so no view keeps the old card's state.
+            .id(workspace.selectedCardID)
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     HStack(spacing: 12) {
@@ -237,7 +179,7 @@ struct ModernContentView: View {
                             ProgressView()
                                 .controlSize(.small)
                         }
-                        
+
                         Button {
                             driverVM.installDriver(requireNewerBuild: requireNewerBuild)
                         } label: {
@@ -246,7 +188,7 @@ struct ModernContentView: View {
                         .labelStyle(.titleAndIcon)
                         .disabled(driverVM.isBusy)
                         .keyboardShortcut("i", modifiers: .command)
-                        
+
                         Button {
                             driverVM.uninstallDriver()
                         } label: {
@@ -257,51 +199,125 @@ struct ModernContentView: View {
                         .tint(.red)
                         .keyboardShortcut("u", modifiers: .command)
                     }
-                    }
-                
+                }
             }
         }
         .onAppear {
-            debugVM.setDriverViewModel(driverVM)
-            debugVM.connect()
-            topologyVM.startAutoRefresh()
-            romExplorerVM.setConnector(debugVM.connector, topologyViewModel: topologyVM)
-#if !ASFW_LITE
-            if mcpVM.isEnabled {
-                Task { await mcpVM.start() }
-            }
-#endif
+            workspace.attach(driverVM: driverVM)
         }
         .onDisappear {
-#if !ASFW_LITE
-            Task { await mcpVM.stop() }
-#endif
-            debugVM.disconnect()
-            topologyVM.stopAutoRefresh()
+            workspace.stopAll()
         }
         .task {
             // Discovery can finish after the bus status notification. Poll its cached
             // inventory globally so AV/C navigation also updates while on Overview.
             while !Task.isCancelled {
-                debugVM.refreshDiscovery()
+                for session in workspace.sessions.values {
+                    session.debugVM.refreshDiscovery()
+                }
                 refreshPublishedAudioDevices()
                 do { try await Task.sleep(nanoseconds: 2_000_000_000) } catch { return }
             }
-        }
-        .onChange(of: debugVM.topologyCache?.generation) { _, _ in
-            topologyVM.refresh()
         }
         .onChange(of: visibleSections) { _, sections in
             if let selectedSection, !sections.contains(selectedSection) {
                 self.selectedSection = .overview
             }
         }
-        .onChange(of: topologyVM.topology?.generation) { _, _ in
-            // Update available nodes when topology generation changes
-            romExplorerVM.refreshAvailableNodes()
+    }
+
+    @ViewBuilder
+    private var controllersSection: some View {
+        Section("Controllers") {
+            if workspace.cards.isEmpty {
+                Label("No controller driven by ASFW", systemImage: "cable.connector.slash")
+                    .foregroundColor(.secondary)
+            } else {
+                Picker("Controller", selection: $workspace.selectedCardID) {
+                    ForEach(workspace.cards) { card in
+                        Label(card.displayName, systemImage: "pcicard")
+                            .tag(Optional(card.id))
+                    }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+            }
         }
     }
-    
+
+    @ViewBuilder
+    private func detail(for section: SidebarSection?) -> some View {
+        switch section {
+        case .overview:
+            OverviewView(viewModel: driverVM,
+                         requireNewerBuild: $requireNewerBuild)
+        case .audio:
+            AudioDebugView()
+        case .none:
+            Text("Select a section")
+                .foregroundStyle(.secondary)
+        case .some(let section):
+            if let session {
+                controllerDetail(section, session: session)
+            } else {
+                ContentUnavailableView(
+                    "No Controller",
+                    systemImage: "cable.connector.slash",
+                    description: Text("ASFW is not driving a FireWire controller. Install and activate the driver and arm the controller.")
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func controllerDetail(_ section: SidebarSection, session: CardSession) -> some View {
+        switch section {
+        case .busInspector:
+            BusInspectorView(debugViewModel: session.debugVM, topologyViewModel: session.topologyVM,
+                             romViewModel: session.romExplorerVM)
+        case .deviceSettings:
+            DeviceSettingsView(viewModel: session.deviceSettingsVM)
+        case .avcUnits:
+            AvcUnitsView(store: session.avcUnitsStore, connector: session.connector,
+                         developerTools: showAdvancedTools)
+        case .avcCommands:
+            AVCCommandView(viewModel: session.debugVM)
+        case .controller:
+            ControllerDetailView(viewModel: session.debugVM)
+        case .async:
+            CommandsView(viewModel: session.debugVM)
+#if !ASFW_LITE
+        case .audioTelemetry:
+            AudioTelemetryView(connector: session.connector)
+        case .dvCapture:
+            DVCaptureView(viewModel: session.debugVM)
+#endif
+        case .audioGeometry:
+            AudioGeometryView(connector: session.connector)
+        case .busReset:
+            BusResetHistoryView(viewModel: session.debugVM)
+        case .logs:
+            SystemLogsView(connector: session.connector)
+        case .loggingSettings:
+            LoggingSettingsView(connector: session.connector, showAdvancedControls: showAdvancedTools)
+#if !ASFW_LITE
+        case .mcpSettings:
+            MCPSettingsView(viewModel: session.mcpVM)
+        case .audioAnalyzer:
+            AudioAnalyzerView(devices: publishedAudioDevices, refresh: refreshPublishedAudioDevices)
+#endif
+        case .duet:
+            DuetControlView(connector: session.connector)
+        case .diagnostics:
+            DiagnosticsView(store: session.diagnosticsStore, showAdvancedTools: showAdvancedTools)
+        case .diceReport:
+            DiceReportView(store: session.diceReportStore)
+        case .avcReport:
+            AvcReportView(store: session.avcReportStore)
+        case .overview, .audio:
+            EmptyView()
+        }
+    }
 }
 
 struct AsyncCommandView: View {
