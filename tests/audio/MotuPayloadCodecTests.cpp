@@ -315,6 +315,20 @@ TEST(MotuPayloadCodecTests, ProductionProfileCarriesTheModelPresentationLeadAndS
                   model->runtime.presentationLeadTicks);
         EXPECT_EQ(profile.TxStreamPolicy().motuAbsolutePhaseSetpointTicks48k,
                   model->runtime.absolutePhaseSetpointTicks48k);
+        EXPECT_EQ(profile.TxStreamPolicy().motuHoldAbsolutePhase, model->runtime.holdAbsolutePhase48k);
+    }
+    // Protocol v2 drives like Linux: a 12800-tick lead (4.17 cycles) and a
+    // relative loop; the mk3 keeps its measured 3 cycles and the +510 hold.
+    for (const uint32_t version : {0x3U, 0x5U, 0x9U, 0xdU, 0xfU}) {
+        SCOPED_TRACE(version);
+        const auto policy = ASFW::Isoch::Audio::MOTU::Profiles::MotuProfile{version}.TxStreamPolicy();
+        EXPECT_EQ(policy.motuPresentationLeadTicks, 12800U);
+        EXPECT_FALSE(policy.motuHoldAbsolutePhase);
+    }
+    {
+        const auto mk3 = ASFW::Isoch::Audio::MOTU::Profiles::MotuProfile{0x15}.TxStreamPolicy();
+        EXPECT_EQ(mk3.motuPresentationLeadTicks, 3U * 3072U);
+        EXPECT_TRUE(mk3.motuHoldAbsolutePhase);
     }
 }
 

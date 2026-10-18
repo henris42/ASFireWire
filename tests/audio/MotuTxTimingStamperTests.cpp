@@ -45,6 +45,8 @@ using ASFW::Protocols::Audio::DICE::TxSlotPrepareResult;
 
 constexpr int64_t kOneQ32 = MotuSphQ32Accumulator::kOneQ32;
 constexpr int64_t kLead = kDefaultPresentationLeadTicks;
+// The lead a model's profile configures (v2: Linux's 12800 ticks; mk3: 3 cycles).
+int64_t ModelLead(uint32_t version) { return FindModel(version)->runtime.presentationLeadTicks; }
 // No absolute-phase setpoint: the loop holds the phase the stream started with.
 constexpr std::optional<int32_t> kRelativeLoop = std::nullopt;
 constexpr uint32_t k828 = 0x1;     // protocol v1
@@ -195,6 +197,7 @@ INSTANTIATE_TEST_SUITE_P(EveryProtocolVersion, MotuTxTimingStamperLayoutTests,
 // starts after it (v1) or after it and two message chunks (v2, v3).
 TEST_P(MotuTxTimingStamperLayoutTests, StampsFreeRunningSphFromTheFirstTransmitTimeAndNeverReseeds) {
     MotuTx tx{GetParam()};
+    const int64_t kLead = ModelLead(GetParam());
     ASSERT_TRUE(tx.Arm());
     EXPECT_TRUE(tx.engine.IsSytUnaware());
     EXPECT_EQ(tx.txConfig.motuPcmByteOffset, PcmByteOffset(GetParam()));
@@ -249,6 +252,7 @@ TEST_P(MotuTxTimingStamperLayoutTests, StampsFreeRunningSphFromTheFirstTransmitT
 // still goes out as DATA, stamped from the clock.
 TEST_P(MotuTxTimingStamperLayoutTests, RevertsToNoDataOnlyBeforeTheSeed) {
     MotuTx tx{GetParam()};
+    const int64_t kLead = ModelLead(GetParam());
     ASSERT_TRUE(tx.Arm());
     tx.provider.bytes.fill(0xEE);
 

@@ -26,6 +26,12 @@ inline constexpr uint32_t kDefaultPresentationLeadTicks = 3 * kTicksPerCycle;
 // analysed for (the same cadence-period mean); that the loop holds it is seen
 // only through that instrument.
 inline constexpr int32_t kDefaultAbsolutePhaseSetpointTicks48k = 510;
+// Linux's presentation lead for a MOTU transmit stream: amdtp-stream.c sets
+// transfer_delay = TRANSFER_DELAY_TICKS (0x2e00) - TICKS_PER_CYCLE + one
+// blocking interval (8 frames at 48 kHz = 4096 ticks), and amdtp-motu.c
+// seeds its SPH cycle from the packet's cycle plus that delay. FFADO's MOTU
+// transmit uses a similar constant. 12800 ticks = 4.17 cycles.
+inline constexpr uint32_t kLinuxTransferDelayTicks48k = 0x2e00 - kTicksPerCycle + 8 * 512;
 struct RuntimePolicy final {
     bool requireTimingBeforeFetch{false};
     uint32_t minimumHostRunMs{0};
@@ -34,6 +40,10 @@ struct RuntimePolicy final {
     bool write48kStreamConfig{false};
     uint32_t presentationLeadTicks{kDefaultPresentationLeadTicks};
     int32_t absolutePhaseSetpointTicks48k{kDefaultAbsolutePhaseSetpointTicks48k};
+    // Whether the regulator holds the absolute phase at that setpoint at
+    // 48 kHz; false keeps the loop relative, holding the lead the stream
+    // started with. The setpoint was measured on the 828mk3 only.
+    bool holdAbsolutePhase48k{true};
 };
 // The setpoint the regulator holds at a rate, or none. Only 48 kHz has one:
 // at every other rate the loop is relative and holds the phase the stream
@@ -46,6 +56,15 @@ struct RuntimePolicy final {
     return setpointTicks48k;
 }
 inline constexpr RuntimePolicy kTimingBeforeFetch{.requireTimingBeforeFetch = true};
+// Protocol v2 (828mk2, 896HD, Traveler, UltraLite, 8pre): the mk3's 3-cycle
+// lead and +510 setpoint are not theirs. On the wire the 828mk2 got blocks
+// stamped ~2 cycles ahead of their transmit cycle and initiated a bus reset
+// 14-19 ms after the first data (2026-10-18), while Linux and FFADO drive it
+// with a ~4-cycle lead. Linux's lead, and no absolute setpoint to pull it.
+inline constexpr RuntimePolicy kV2Policy{
+    .requireTimingBeforeFetch = true,
+    .presentationLeadTicks = kLinuxTransferDelayTicks48k,
+    .holdAbsolutePhase48k = false};
 inline constexpr RuntimePolicy kOriginal828{.requireTimingBeforeFetch = true, .minimumHostRunMs = 100};
 inline constexpr RuntimePolicy k828mk3Policy{
     .requireTimingBeforeFetch = true, .deactivateBeforeStart = true,
@@ -79,11 +98,11 @@ struct Model final {
 inline constexpr std::array kModels{
     Model{0x1, "828", ProtocolVersion::V1, {10,0,0}, {10,0,0}, OpticalLayout::None, FetchRule::None, 0, kOriginal828},
     Model{0x2, "896", ProtocolVersion::V1, {10,10,0}, {10,10,0}, OpticalLayout::None, FetchRule::None, 2, kTimingBeforeFetch},
-    Model{0x3, "828mk2", ProtocolVersion::V2, {14,14,0}, {14,14,0}, OpticalLayout::V2, FetchRule::None, 0, kTimingBeforeFetch},
-    Model{0x5, "896HD", ProtocolVersion::V2, {14,14,8}, {14,14,8}, OpticalLayout::V2, FetchRule::None, 0, kTimingBeforeFetch},
-    Model{0x9, "Traveler", ProtocolVersion::V2, {14,14,8}, {14,14,8}, OpticalLayout::V2, FetchRule::Traveler, 0, kTimingBeforeFetch},
-    Model{0xd, "UltraLite", ProtocolVersion::V2, {14,14,0}, {14,14,0}, OpticalLayout::None, FetchRule::Spartan, 0, kTimingBeforeFetch},
-    Model{0xf, "8pre", ProtocolVersion::V2, {10,10,0}, {6,6,0}, OpticalLayout::V2EightPre, FetchRule::Spartan, 0, kTimingBeforeFetch},
+    Model{0x3, "828mk2", ProtocolVersion::V2, {14,14,0}, {14,14,0}, OpticalLayout::V2, FetchRule::None, 0, kV2Policy},
+    Model{0x5, "896HD", ProtocolVersion::V2, {14,14,8}, {14,14,8}, OpticalLayout::V2, FetchRule::None, 0, kV2Policy},
+    Model{0x9, "Traveler", ProtocolVersion::V2, {14,14,8}, {14,14,8}, OpticalLayout::V2, FetchRule::Traveler, 0, kV2Policy},
+    Model{0xd, "UltraLite", ProtocolVersion::V2, {14,14,0}, {14,14,0}, OpticalLayout::None, FetchRule::Spartan, 0, kV2Policy},
+    Model{0xf, "8pre", ProtocolVersion::V2, {10,10,0}, {6,6,0}, OpticalLayout::V2EightPre, FetchRule::Spartan, 0, kV2Policy},
     Model{0x15, "828mk3", ProtocolVersion::V3, {18,18,14}, {14,14,10}, OpticalLayout::V3Banks, FetchRule::V3, 0, k828mk3Policy},
     Model{0x17, "896mk3", ProtocolVersion::V3, {18,14,10}, {18,14,10}, OpticalLayout::V3Banks, FetchRule::V3, 0, kTimingBeforeFetch},
     Model{0x19, "UltraLite mk3", ProtocolVersion::V3, {18,14,10}, {14,14,14}, OpticalLayout::None, FetchRule::V3, 0, kTimingBeforeFetch},

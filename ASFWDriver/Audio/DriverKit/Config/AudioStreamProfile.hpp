@@ -55,6 +55,9 @@ struct AudioStreamTxPolicy final {
     Encoding::Motu::MotuPortMap motuPlaybackPorts{};
     /// MOTU only: the model's transmit presentation lead (RuntimePolicy).
     uint32_t motuPresentationLeadTicks{Encoding::Motu::kDefaultPresentationLeadTicks};
+    // Hold the absolute phase at the setpoint below (48 kHz); false keeps the
+    // SPH loop relative to the lead the stream started with.
+    bool motuHoldAbsolutePhase{true};
     /// MOTU only: the model's absolute-phase setpoint at 48 kHz (RuntimePolicy).
     int32_t motuAbsolutePhaseSetpointTicks48k{
         Encoding::Motu::kDefaultAbsolutePhaseSetpointTicks48k};

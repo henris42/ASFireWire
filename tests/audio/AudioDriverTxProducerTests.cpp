@@ -952,7 +952,8 @@ TEST(AudioDriverTxProducerTests, MotuStreamsRegulatorTimedSphAndUnmutesOnLock) {
             ASFW::Timing::kTicksPerCycle;
         EXPECT_EQ(blockSph(*firstData, 0),
                   ASFW::Encoding::Motu::SphFromTick(ASFW::Encoding::Motu::WrapTick(
-                      firstTransmitTicks + ASFW::Encoding::Motu::kDefaultPresentationLeadTicks)));
+                      firstTransmitTicks +
+                      ASFW::Encoding::Motu::FindModel(version)->runtime.presentationLeadTicks)));
 
         // The loop locked once and lifted the mute. It locks while the
         // prefilled NO-DATA lap is still draining -- the hook runs before

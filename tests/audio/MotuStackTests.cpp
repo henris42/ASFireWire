@@ -77,13 +77,23 @@ TEST(MotuStack, ActivationPoliciesAreChosenPerModel) {
     EXPECT_FALSE(SupportsRate(*FindModel(2), 96000));
     EXPECT_FALSE(ResolvePcmChunks(0, 1, 2).opticalDecoded);
 }
-// The transmit presentation lead is a model parameter; every model carries the
-// three cycles seen on the wire of the official 828mk3 driver.
-TEST(MotuStack, PresentationLeadIsThreeCyclesForEveryModel) {
+// The transmit presentation lead is a model parameter. The 828mk3 (and the
+// models with nothing measured) carry the three cycles seen on the wire of the
+// official 828mk3 driver and hold the absolute phase at its setpoint;
+// protocol v2 carries Linux's transfer delay (12800 ticks, 4.17 cycles) and
+// keeps the loop relative (828mk2 wire, 2026-10-18).
+TEST(MotuStack, PresentationLeadFollowsTheProtocolGeneration) {
     EXPECT_EQ(kDefaultPresentationLeadTicks, 9216U);
+    EXPECT_EQ(kLinuxTransferDelayTicks48k, 12800U);
     for (const auto& model : kModels) {
         SCOPED_TRACE(model.name);
-        EXPECT_EQ(model.runtime.presentationLeadTicks, 3U * kTicksPerCycle);
+        if (model.protocol == ProtocolVersion::V2) {
+            EXPECT_EQ(model.runtime.presentationLeadTicks, kLinuxTransferDelayTicks48k);
+            EXPECT_FALSE(model.runtime.holdAbsolutePhase48k);
+        } else {
+            EXPECT_EQ(model.runtime.presentationLeadTicks, 3U * kTicksPerCycle);
+            EXPECT_TRUE(model.runtime.holdAbsolutePhase48k);
+        }
     }
 }
 
