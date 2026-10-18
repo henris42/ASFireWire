@@ -85,6 +85,10 @@ public:
     void HandleHostTimingLoss(uint64_t guid) noexcept;
     [[nodiscard]] IOReturn MotuCaptureCommand(uint64_t guid, uint32_t stream,
                                             uint32_t command, std::string& output) noexcept;
+    /// The host changed a setting that alters the device's stream layout
+    /// (DeviceSettings.hpp optical modes): restart a running stream, otherwise
+    /// re-describe and republish the endpoint.
+    void NotifyDeviceConfigChanged(uint64_t guid) noexcept;
 
     [[nodiscard]] ASFWAudioNub* GetNub(uint64_t guid) const noexcept { return publisher_.GetNub(guid); }
 

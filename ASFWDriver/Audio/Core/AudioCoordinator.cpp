@@ -297,6 +297,15 @@ IOReturn AudioCoordinator::StartStreaming(uint64_t guid, AudioClockConfig clock)
     return kIOReturnSuccess;
 }
 
+void AudioCoordinator::NotifyDeviceConfigChanged(uint64_t guid) noexcept {
+    if (guid == 0) return;
+    if (sessions_.IsStreaming(guid) || sessions_.IsReconciling(guid)) {
+        host_.OnDeviceEvent(guid, Host::DeviceEvent::kStreamConfigChanged, 0);
+        return;
+    }
+    host_.RefreshPublication(guid);
+}
+
 IOReturn AudioCoordinator::StopStreaming(uint64_t guid) noexcept {
     if (guid == 0) return kIOReturnBadArgument;
 

@@ -7,6 +7,7 @@
 #include "../Runtime/ResolvedAudioConfiguration.hpp"
 
 #include "AudioTypes.hpp"
+#include "DeviceSettings.hpp"
 #include "../../Discovery/DeviceRouteToken.hpp"
 
 #include <DriverKit/IOReturn.h>
@@ -151,6 +152,23 @@ public:
         (void)element;
         (void)value;
         return kIOReturnUnsupported;
+    }
+
+    /// Host-settable configuration (DeviceSettings.hpp): the device's current
+    /// clock source and optical port modes with the options it offers. The
+    /// default has none.
+    virtual void ReadDeviceSettings(std::function<void(IOReturn, DeviceSettingsSnapshot)> callback) {
+        if (callback) callback(kIOReturnUnsupported, DeviceSettingsSnapshot{});
+    }
+
+    /// Change one setting on the device. Completes once the register write has
+    /// been acknowledged; the caller re-reads the settings and, for an optical
+    /// mode, republishes the endpoint since the stream layout changed.
+    virtual void ApplyDeviceSetting(DeviceSetting setting, uint32_t value,
+                                    std::function<void(IOReturn)> callback) {
+        (void)setting;
+        (void)value;
+        if (callback) callback(kIOReturnUnsupported);
     }
 };
 

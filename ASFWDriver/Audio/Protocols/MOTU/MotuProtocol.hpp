@@ -137,6 +137,13 @@ public:
     /// Read and decode the clock status register.
     void ReadClockStatus(ClockStatusCallback callback);
 
+    // IDeviceProtocol device settings: v2 models expose the clock source
+    // (clock status register bits [2:0]) and the optical port modes (in/out
+    // config register bits [9:8] and [11:10]); v1 and v3 report none yet.
+    void ReadDeviceSettings(std::function<void(IOReturn, DeviceSettingsSnapshot)> callback) override;
+    void ApplyDeviceSetting(DeviceSetting setting, uint32_t value,
+                            std::function<void(IOReturn)> callback) override;
+
     /// Read-modify-write the sample rate, preserving the clock source and all other bits.
     /// Fails with kIOReturnUnsupported for a rate the device does not implement.
     void SetSampleRate(uint32_t rateHz, CompletionCallback callback);
@@ -177,6 +184,10 @@ private:
     /// it holding a half-updated value and the caller sees the failure.
     [[nodiscard]] bool IsV3() const noexcept;
     [[nodiscard]] bool IsV1() const noexcept { return unitSwVersion_ == 1 || unitSwVersion_ == 2; }
+    [[nodiscard]] bool IsV2() const noexcept { return !IsV1() && !IsV3(); }
+    /// What the model's hardware offers (MotuModel.hpp); the app shows only these.
+    [[nodiscard]] uint32_t V2ClockSourceOptions() const noexcept;
+    [[nodiscard]] uint32_t V2OpticalModeOptions() const noexcept;
     [[nodiscard]] Reg ClockRegister() const noexcept { return unitSwVersion_ == 1 ? Reg::IsocCommControl : Reg::ClockStatusV2; }
     void EnsureAsyncAddress(CompletionCallback callback);
     void SetSampleRateV3(uint32_t rate, ClockStatus clock, CompletionCallback callback);

@@ -959,4 +959,126 @@ IOReturn MotuProtocol::Stop() {
     return StopDuplex();
 }
 
+//==============================================================================
+// Device settings (IDeviceProtocol): clock source and optical port modes
+//==============================================================================
+
+uint32_t MotuProtocol::V2ClockSourceOptions() const noexcept {
+    using CS = ClockSourceV2;
+    const auto bit = [](CS source) { return 1u << static_cast<uint32_t>(source); };
+    // Front-panel choices per model, from the MOTU manuals; SPH (slave to the
+    // bus) is a streaming-time mode, not a user choice.
+    switch (unitSwVersion_) {
+    case 0x3:   // 828mk2: ADAT optical, S/PDIF (coax/TOSLINK), word clock
+        return bit(CS::Internal) | bit(CS::AdatOnOpt) | bit(CS::Spdif) | bit(CS::WordOnBnc);
+    case 0x5:   // 896HD: adds AES/EBU
+        return bit(CS::Internal) | bit(CS::AdatOnOpt) | bit(CS::Spdif) | bit(CS::WordOnBnc) |
+               bit(CS::AesEbuOnXlr);
+    case 0x9:   // Traveler: adds ADAT on D-sub and AES/EBU
+        return bit(CS::Internal) | bit(CS::AdatOnOpt) | bit(CS::Spdif) | bit(CS::WordOnBnc) |
+               bit(CS::AdatOnDsub) | bit(CS::AesEbuOnXlr);
+    case 0xd:   // UltraLite: S/PDIF coax only
+        return bit(CS::Internal) | bit(CS::Spdif);
+    case 0xf:   // 8pre: ADAT optical only
+        return bit(CS::Internal) | bit(CS::AdatOnOpt);
+    default:
+        return bit(CS::Internal) | bit(CS::Spdif);
+    }
+}
+
+uint32_t MotuProtocol::V2OpticalModeOptions() const noexcept {
+    const auto* model = Encoding::Motu::FindModel(unitSwVersion_);
+    const auto bit = [](DeviceOpticalMode mode) { return 1u << static_cast<uint32_t>(mode); };
+    if (!model || model->optical == Encoding::Motu::OpticalLayout::None) {
+        return 0;
+    }
+    if (model->optical == Encoding::Motu::OpticalLayout::V2EightPre) {
+        return bit(DeviceOpticalMode::Off) | bit(DeviceOpticalMode::Adat);
+    }
+    return bit(DeviceOpticalMode::Off) | bit(DeviceOpticalMode::Adat) | bit(DeviceOpticalMode::Spdif);
+}
+
+void MotuProtocol::ReadDeviceSettings(std::function<void(IOReturn, DeviceSettingsSnapshot)> callback) {
+    if (!IsV2()) {
+        if (callback) callback(kIOReturnUnsupported, DeviceSettingsSnapshot{});
+        return;
+    }
+    ReadClockStatus([this, callback = std::move(callback)](IOReturn status, ClockStatus clock) mutable {
+        if (status != kIOReturnSuccess) {
+            if (callback) callback(status, DeviceSettingsSnapshot{});
+            return;
+        }
+        (void)io_.ReadQuadBE(
+            AddressOf(Reg::InOutConfV2),
+            [this, clock, callback = std::move(callback)](Async::AsyncStatus optStatus, uint32_t optRaw) mutable {
+                const IOReturn result = Protocols::Ports::MapAsyncStatusToIOReturn(optStatus);
+                if (result != kIOReturnSuccess) {
+                    if (callback) callback(result, DeviceSettingsSnapshot{});
+                    return;
+                }
+                DeviceSettingsSnapshot snapshot{};
+                snapshot.clockRaw = clock.raw;
+                snapshot.opticalRaw = optRaw;
+                snapshot.clockSource = clock.raw & 0x7u;
+                snapshot.clockSourceOptions = V2ClockSourceOptions();
+                snapshot.supportedSettings = SettingBit(DeviceSetting::ClockSource);
+                const uint32_t opticalOptions = V2OpticalModeOptions();
+                if (opticalOptions != 0) {
+                    snapshot.opticalModeOptions = opticalOptions;
+                    snapshot.supportedSettings |= SettingBit(DeviceSetting::OpticalInputMode) |
+                                                  SettingBit(DeviceSetting::OpticalOutputMode);
+                    const auto optical = DecodeOptIfaceConfig(optRaw);
+                    snapshot.opticalInputMode = optical ? static_cast<uint32_t>(optical->input) : 0;
+                    snapshot.opticalOutputMode = optical ? static_cast<uint32_t>(optical->output) : 0;
+                }
+                if (callback) callback(kIOReturnSuccess, snapshot);
+            });
+    });
+}
+
+void MotuProtocol::ApplyDeviceSetting(DeviceSetting setting, uint32_t value,
+                                      std::function<void(IOReturn)> callback) {
+    if (!IsV2()) {
+        if (callback) callback(kIOReturnUnsupported);
+        return;
+    }
+    switch (setting) {
+    case DeviceSetting::ClockSource:
+        if (value > 7 || (V2ClockSourceOptions() & (1u << value)) == 0) {
+            if (callback) callback(kIOReturnBadArgument);
+            return;
+        }
+        ASFW_LOG(Audio, "MotuProtocol: clock source -> %u", value);
+        // Bits [2:0] of the clock status register; rate and fetch bits preserved
+        // (motu-protocol-v2.c clock source field).
+        ModifyRegister(ClockRegister(),
+                       [value](uint32_t current) { return (current & ~0x7u) | (value & 0x7u); },
+                       std::move(callback));
+        return;
+    case DeviceSetting::OpticalInputMode:
+    case DeviceSetting::OpticalOutputMode: {
+        if (value > 2 || (V2OpticalModeOptions() & (1u << value)) == 0) {
+            if (callback) callback(kIOReturnBadArgument);
+            return;
+        }
+        const uint32_t shift = setting == DeviceSetting::OpticalInputMode ? 8u : 10u;
+        ASFW_LOG(Audio, "MotuProtocol: optical %{public}s -> %u",
+                 setting == DeviceSetting::OpticalInputMode ? "input" : "output", value);
+        ModifyRegister(Reg::InOutConfV2,
+                       [shift, value](uint32_t current) {
+                           return (current & ~(0x3u << shift)) | ((value & 0x3u) << shift);
+                       },
+                       [this, callback = std::move(callback)](IOReturn status) mutable {
+                           if (status == kIOReturnSuccess) {
+                               // The chunk geometry changed; the next describe re-reads it.
+                               opticalSnapshot_.store(0U, std::memory_order_release);
+                           }
+                           if (callback) callback(status);
+                       });
+        return;
+    }
+    }
+    if (callback) callback(kIOReturnBadArgument);
+}
+
 } // namespace ASFW::Audio::Motu
