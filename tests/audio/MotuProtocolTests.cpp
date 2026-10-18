@@ -767,10 +767,14 @@ TEST(MotuV2DuplexTests, PrepareSetsBothExcludeBitsWhenOpticalIsNotAdat) {
     // Optical config must be consulted before the packet format can be computed.
     // The clock rate is applied before the optical config is consulted, so its
     // read-modify-write leads both sequences.
-    ASSERT_EQ(bus.reads.size(), 3U);
+    // Every read-modify-write reads the register back after the write (the
+    // device, not the acknowledged transaction, is what the log shows), so the
+    // packet-format write is followed by a fourth read.
+    ASSERT_EQ(bus.reads.size(), 4U);
     EXPECT_EQ(bus.reads[0], LowOf(Reg::ClockStatusV2));
     EXPECT_EQ(bus.reads[1], LowOf(Reg::InOutConfV2));
     EXPECT_EQ(bus.reads[2], LowOf(Reg::PacketFormat));
+    EXPECT_EQ(bus.reads[3], LowOf(Reg::PacketFormat));
 
     // The device is already at the requested rate here, and SetSampleRate skips a
     // no-op clock write, so only the packet format is written.

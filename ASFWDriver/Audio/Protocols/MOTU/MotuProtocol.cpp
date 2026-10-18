@@ -174,23 +174,36 @@ void MotuProtocol::SetSampleRate(uint32_t rateHz, CompletionCallback callback) {
         }
 
         if (*encoded == clock.raw) {
+            ASFW_LOG(Audio, "MotuProtocol: reg 0x%08x 0x%08x (clock already at %u Hz, not written)",
+                     AddressOf(ClockRegister()).addressLo, clock.raw, rateHz);
             if (callback) {
                 callback(kIOReturnSuccess);
             }
             return;
         }
 
+        ASFW_LOG(Audio, "MotuProtocol: reg 0x%08x 0x%08x -> 0x%08x (clock rate %u Hz)",
+                 AddressOf(ClockRegister()).addressLo, clock.raw, *encoded, rateHz);
         (void)io_.WriteQuadBE(
             AddressOf(ClockRegister()),
             *encoded,
-            [this, rateHz, callback = std::move(callback)](Async::AsyncStatus writeStatus) mutable {
+            [this, rateHz, written = *encoded, callback = std::move(callback)](Async::AsyncStatus writeStatus) mutable {
                 const IOReturn result = Protocols::Ports::MapAsyncStatusToIOReturn(writeStatus);
-                if (result == kIOReturnSuccess) {
-                    cachedSampleRateHz_.store(rateHz, std::memory_order_release);
+                if (result != kIOReturnSuccess) {
+                    if (callback) callback(result);
+                    return;
                 }
-                if (callback) {
-                    callback(result);
-                }
+                cachedSampleRateHz_.store(rateHz, std::memory_order_release);
+                (void)io_.ReadQuadBE(
+                    AddressOf(ClockRegister()),
+                    [this, written, callback = std::move(callback)](Async::AsyncStatus readStatus, uint32_t held) mutable {
+                        if (readStatus == Async::AsyncStatus::kSuccess) {
+                            ASFW_LOG(Audio, "MotuProtocol: reg 0x%08x readback 0x%08x%{public}s",
+                                     AddressOf(ClockRegister()).addressLo, held,
+                                     held == written ? " (as written)" : " (DIFFERS from written)");
+                        }
+                        if (callback) callback(kIOReturnSuccess);
+                    });
             });
     });
 }
@@ -328,10 +341,25 @@ void MotuProtocol::ModifyRegister(Reg reg,
             (void)io_.WriteQuadBE(
                 AddressOf(reg),
                 next,
-                [callback = std::move(callback)](Async::AsyncStatus writeStatus) mutable {
-                    if (callback) {
-                        callback(Protocols::Ports::MapAsyncStatusToIOReturn(writeStatus));
+                [this, reg, next, callback = std::move(callback)](Async::AsyncStatus writeStatus) mutable {
+                    const IOReturn written = Protocols::Ports::MapAsyncStatusToIOReturn(writeStatus);
+                    if (written != kIOReturnSuccess) {
+                        if (callback) callback(written);
+                        return;
                     }
+                    // Read back what the device holds: an accepted write is not
+                    // a changed register (CHANGE_* bits, read-only fields).
+                    (void)io_.ReadQuadBE(
+                        AddressOf(reg),
+                        [reg, next, callback = std::move(callback)](Async::AsyncStatus readStatus,
+                                                                    uint32_t held) mutable {
+                            if (readStatus == Async::AsyncStatus::kSuccess) {
+                                ASFW_LOG(Audio, "MotuProtocol: reg 0x%08x readback 0x%08x%{public}s",
+                                         AddressOf(reg).addressLo, held,
+                                         held == next ? " (as written)" : " (DIFFERS from written)");
+                            }
+                            if (callback) callback(kIOReturnSuccess);
+                        });
                 });
         });
 }
