@@ -95,6 +95,13 @@ ports carry (ADAT or TOSLINK S/PDIF). Changing an optical mode changes the chann
 count, so the audio device is republished with the new layout. Every change is remembered
 per device GUID, in the app's preferences.
 
+Each unit is published to Core Audio under its own name, **"828mkII #128791 — ASFW"**, and
+its own device UID, both derived from the unit's GUID (the EUI-64 in its config ROM). So the
+Sound pane, Audio MIDI Setup and DAW selections stay with the physical unit whichever card or
+port it is on, whatever order the units were found in, and two units of one model can be told
+apart. The number after `#` is the unit-specific part of the GUID, shown in decimal for MOTU,
+which numbers its units there; compare it with the serial label on the bottom of the unit.
+
 On a MOTU whose front panel says **"Use Computer"** for the clock source, this page is the
 only way to set it: the device defers to the host once a computer is connected. The sample
 rate itself follows Core Audio (Audio MIDI Setup).

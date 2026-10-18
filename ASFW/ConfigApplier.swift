@@ -90,7 +90,7 @@ final class ConfigApplier {
     private func apply(_ wanted: [DeviceSetting: UInt32],
                        to device: ASFWDriverConnector.FWDeviceInfo,
                        via connector: ASFWDriverConnector) async {
-        let name = String(format: "%@ %@ %016llX", device.vendorName, device.modelName, device.guid)
+        let name = String(format: "%@ (%016llX)", device.displayLabel, device.guid)
         guard case .ready(var current) = await connector.performDeviceSettings(guid: device.guid) else {
             Self.say("\(name): settings not readable yet; will retry.")
             return

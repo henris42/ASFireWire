@@ -523,6 +523,26 @@ struct DriverConnectorFWDeviceInfo: Identifiable {
     let deviceKind: UInt8  // DeviceKind enum value from driver
 
     var stateString: String { state.description }
+
+    /// The unit's serial as the driver puts it in the Core Audio device name
+    /// ("828mkII #128791 — ASFW"): the low 40 bits of the GUID, which MOTU
+    /// numbers its units with, in decimal for MOTU and hex for other vendors.
+    /// Mirrors FormatUnitSerial in ASFWDriver/Audio/DriverKit/UnitSerialLabel.hpp.
+    var unitSerial: String {
+        let extensionBits = guid & 0xFF_FFFF_FFFF
+        guard guid != 0 else { return "" }
+        return vendorId == ASFWDriverConnector.motuVendorID
+            ? String(extensionBits)
+            : String(format: "%010llX", extensionBits)
+    }
+
+    /// "MOTU 828mkII #128791": the name people see for the unit, matching the
+    /// Core Audio device name without the driver suffix.
+    var displayLabel: String {
+        let serial = unitSerial
+        return serial.isEmpty ? "\(vendorName) \(modelName)" : "\(vendorName) \(modelName) #\(serial)"
+    }
+
     var isStorage: Bool { deviceKind == 4 }  // DeviceKind::Storage = 4
     var hasSBP2Unit: Bool { units.contains(where: \.isSBP2Unit) }
     var sbp2Units: [DriverConnectorFWUnitInfo] { units.filter(\.isSBP2Unit) }

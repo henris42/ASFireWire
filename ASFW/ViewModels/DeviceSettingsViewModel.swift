@@ -40,7 +40,7 @@ final class DeviceSettingsViewModel: ObservableObject {
         debugVM.$discoveredDevices
             .map { devices in
                 devices.filter { $0.vendorId == ASFWDriverConnector.motuVendorID }
-                    .map { Device(guid: $0.guid, name: "\($0.vendorName) \($0.modelName)") }
+                    .map { Device(guid: $0.guid, name: $0.displayLabel) }
             }
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
