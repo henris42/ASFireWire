@@ -656,8 +656,8 @@ void MotuProtocol::ApplyFetchingModeIfNeeded(bool enable,
         }, std::move(callback));
         return;
     }
-    const bool forced = !IsV3() && !NeedsFetchingModeWrite(unitSwVersion_) &&
-                        Audio::Motu::MotuExperiments::Has(Audio::Motu::kMotuExperimentForceFetchEnable);
+    const bool forced = !IsV3() && !NeedsFetchingModeWrite(unitSwVersion_) && enable &&
+                        Audio::Motu::MotuExperiments::Take(Audio::Motu::kMotuExperimentForceFetchEnable);
     if (!IsV3() && !NeedsFetchingModeWrite(unitSwVersion_) && !forced) {
         if (callback) {
             callback(kIOReturnSuccess);

@@ -58,7 +58,7 @@ kern_return_t IsochHandler::SetMotuExperiment(IOUserClientMethodArguments* args)
     }
     ASFW::Audio::Motu::MotuExperiments::flags.store(flags, std::memory_order_relaxed);
     ASFW::Audio::Motu::MotuExperiments::extraNoDataPackets.store(extra, std::memory_order_relaxed);
-    ASFW_LOG(UserClient, "[MotuExperiment] flags=0x%x (forceFetchEnable=%u captureOnly=%u) extraNoDataPackets=%u; applies at the next stream start",
+    ASFW_LOG(UserClient, "[MotuExperiment] flags=0x%x (forceFetchEnable=%u captureOnly=%u) extraNoDataPackets=%u; consumed by the next stream start (one-shot)",
              flags, (flags & ASFW::Audio::Motu::kMotuExperimentForceFetchEnable) ? 1U : 0U,
              (flags & ASFW::Audio::Motu::kMotuExperimentCaptureOnly) ? 1U : 0U, extra);
     return kIOReturnSuccess;

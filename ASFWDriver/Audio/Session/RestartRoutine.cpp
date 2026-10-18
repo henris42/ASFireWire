@@ -506,7 +506,10 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
         receiveStarted = true;
         return std::nullopt;
     };
-    const bool captureOnly = Audio::Motu::MotuExperiments::Has(Audio::Motu::kMotuExperimentCaptureOnly);
+    const bool captureOnly = Audio::Motu::MotuExperiments::Take(Audio::Motu::kMotuExperimentCaptureOnly);
+    // A data hold (producer, MotuExperiments) delays the presentation timing
+    // the readiness wait below needs; give it that much longer.
+    const uint32_t holdMs = Audio::Motu::MotuExperiments::extraNoDataPackets.load(std::memory_order_relaxed) / 8;
     auto startTransmit = [&](const char* step) -> std::optional<std::expected<RunningSession, RestartFailure>> {
         if (TeardownRequested()) {
             return aborted(step);
@@ -601,7 +604,7 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
         const auto elapsed = UptimeMilliseconds() - readyStartMs;
         if (elapsed >= readiness.minimumHostRunMs &&
             (!readiness.requireTransmitTiming || captureOnly || request.binding->IsTransmitTimingReady())) break;
-        if (elapsed >= readiness.timeoutMs) return rollback(kIOReturnTimeout, "TransmitTimingReady");
+        if (elapsed >= readiness.timeoutMs + holdMs) return rollback(kIOReturnTimeout, "TransmitTimingReady");
         IOSleep(1);
     }
 

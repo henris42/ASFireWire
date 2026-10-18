@@ -4,8 +4,8 @@
 // MotuExperiments.hpp - diagnostic knobs for the 828mkII bus-reset
 // investigation (hardware, 2026-10-18: the device initiates a bus reset on
 // the first packet of ours that carries data). Set by the app through the
-// user client (selector 71), process-wide, never persisted, read at the next
-// stream start. Each knob isolates one hypothesis:
+// user client (selector 71), process-wide, never persisted, consumed by the
+// next stream start (one-shot). Each knob isolates one hypothesis:
 //
 //   kForceFetchEnable  write the clock register's fetch-enable bit before
 //                      the start on models Linux exempts (828mk2, 896HD);
@@ -36,6 +36,15 @@ struct MotuExperiments {
 
     [[nodiscard]] static bool Has(MotuExperimentFlag flag) noexcept {
         return (flags.load(std::memory_order_relaxed) & flag) != 0;
+    }
+    // Each knob is one-shot: the start that uses it clears it, so a later
+    // plain start is plain again (b92 report: a sticky hold surprised the
+    // next afplay).
+    [[nodiscard]] static bool Take(MotuExperimentFlag flag) noexcept {
+        return (flags.fetch_and(~static_cast<uint32_t>(flag), std::memory_order_acq_rel) & flag) != 0;
+    }
+    [[nodiscard]] static uint32_t TakeExtraNoDataPackets() noexcept {
+        return extraNoDataPackets.exchange(0, std::memory_order_acq_rel);
     }
 };
 
