@@ -156,6 +156,13 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
     // A failed or superseded step rolls back through the stop routine, except
     // under teardown, when nothing may touch the hardware.
     auto rollback = [&](IOReturn status, const char* step) {
+        if (Audio::Motu::MotuExperiments::AnyArmed()) {
+            ASFW_LOG(Audio, "[MotuExperiment] start failed at %{public}s; clearing armed flags=0x%x extra=%u lead=%u",
+                     step, Audio::Motu::MotuExperiments::flags.load(std::memory_order_relaxed),
+                     Audio::Motu::MotuExperiments::extraNoDataPackets.load(std::memory_order_relaxed),
+                     Audio::Motu::MotuExperiments::presentationLeadTicks.load(std::memory_order_relaxed));
+            Audio::Motu::MotuExperiments::ClearAll();
+        }
         if (status == kIOReturnAborted && TeardownRequested()) {
             return std::unexpected(RestartFailure{.status = status, .step = step, .stopped = false,
                                                   .channels = channels, .runtimeCaps = caps});
@@ -492,6 +499,12 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
 
     bool receiveStarted = false;
     bool transmitStarted = false;
+    if (Audio::Motu::MotuExperiments::AnyArmed()) {
+        ASFW_LOG(Audio, "[MotuExperiment] armed for this start GUID=%llx: flags=0x%x extra=%u lead=%u",
+                 guid, Audio::Motu::MotuExperiments::flags.load(std::memory_order_relaxed),
+                 Audio::Motu::MotuExperiments::extraNoDataPackets.load(std::memory_order_relaxed),
+                 Audio::Motu::MotuExperiments::presentationLeadTicks.load(std::memory_order_relaxed));
+    }
     const bool captureOnly = Audio::Motu::MotuExperiments::Take(Audio::Motu::kMotuExperimentCaptureOnly);
     // Read, not taken: the producer reads the same flag when it arms; the
     // start clears it once its readiness wait is over.

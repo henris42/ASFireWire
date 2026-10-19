@@ -76,6 +76,20 @@ struct MotuExperiments {
     [[nodiscard]] static uint32_t TakePresentationLeadTicks() noexcept {
         return presentationLeadTicks.exchange(0, std::memory_order_acq_rel);
     }
+    // Everything still armed, for the start log; and a start that failed
+    // before the stream clears what it did not consume, so the next,
+    // unrelated start is plain (b110: a flag armed for a start the wedged
+    // device never reached made the next afplay transmit-only).
+    [[nodiscard]] static bool AnyArmed() noexcept {
+        return flags.load(std::memory_order_relaxed) != 0 ||
+               extraNoDataPackets.load(std::memory_order_relaxed) != 0 ||
+               presentationLeadTicks.load(std::memory_order_relaxed) != 0;
+    }
+    static void ClearAll() noexcept {
+        flags.store(0, std::memory_order_relaxed);
+        extraNoDataPackets.store(0, std::memory_order_relaxed);
+        presentationLeadTicks.store(0, std::memory_order_relaxed);
+    }
 };
 
 } // namespace ASFW::Audio::Motu
