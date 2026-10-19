@@ -56,6 +56,14 @@ void IsochTxDmaRing::ResetForStart() noexcept {
     cycleTrackingValid_ = false;
     lastHwTimestamp_ = 0;
     firstDataHeaderLogged_ = false;
+    lastCompletionCycle_ = 0xFFFFFFFFu;
+    cycleWindowCompleted_ = 0;
+    cycleWindowElapsed_ = 0;
+    cycleWindowLost_ = 0;
+    counters_.completedPackets.store(0, std::memory_order_relaxed);
+    counters_.lostCycles.store(0, std::memory_order_relaxed);
+    counters_.abnormalCompletions.store(0, std::memory_order_relaxed);
+    counters_.lastAbnormalStatus.store(0, std::memory_order_relaxed);
 
     counters_.lastDmaGapPackets.store(Layout::kNumPackets, std::memory_order_relaxed);
     counters_.minDmaGapPackets.store(Layout::kNumPackets, std::memory_order_relaxed);
@@ -64,6 +72,50 @@ void IsochTxDmaRing::ResetForStart() noexcept {
     // Per stream, like the gap counters: the IT context outlives devices, so
     // a stale value would report an earlier stream's fault.
     counters_.mappedRegionExhausted.store(0, std::memory_order_relaxed);
+}
+
+// One packet per bus cycle is the IT contract; the OUTPUT_LAST timestamp says
+// which cycle each packet really went out in. Consecutive completions more
+// than one cycle apart mean cycles the context did not transmit in (a lost
+// cycle takes the skip branch and the packet goes out later). b110 on the
+// 828mkII: the transmit side exposed frames at ~57 % of real time while the
+// receive side ran at 100 %, and the b104 wire capture showed our packets in
+// cycles 174, 177, 181 with the device's in every cycle.
+void IsochTxDmaRing::NoteCompletion(uint16_t hwTimestamp, uint32_t statusWord) noexcept {
+    const uint32_t cycle = hwTimestamp & 0x1FFFu;
+    if (lastCompletionCycle_ != 0xFFFFFFFFu) {
+        const uint32_t delta = (cycle + 8000u - lastCompletionCycle_) % 8000u;
+        if (delta > 1) {
+            cycleWindowLost_ += delta - 1;
+            counters_.lostCycles.fetch_add(delta - 1, std::memory_order_relaxed);
+        }
+        cycleWindowElapsed_ += delta == 0 ? 1 : delta;
+    }
+    lastCompletionCycle_ = cycle;
+    ++cycleWindowCompleted_;
+    counters_.completedPackets.fetch_add(1, std::memory_order_relaxed);
+    // xferStatus [4:0] is the event code; 0x11 is ack_complete.
+    const uint32_t event = (statusWord >> 16) & 0x1Fu;
+    if (event != 0x11u) {
+        counters_.abnormalCompletions.fetch_add(1, std::memory_order_relaxed);
+        counters_.lastAbnormalStatus.store(statusWord >> 16, std::memory_order_relaxed);
+    }
+    // About every five seconds of transmission.
+    if (cycleWindowCompleted_ >= 40000) {
+        ASFW_LOG(Isoch,
+                 "[TxCycles] %llu packets over %llu cycles, %llu lost (%llu%%); totals completed=%llu lost=%llu abnormal=%llu last=0x%04x",
+                 static_cast<unsigned long long>(cycleWindowCompleted_),
+                 static_cast<unsigned long long>(cycleWindowElapsed_),
+                 static_cast<unsigned long long>(cycleWindowLost_),
+                 static_cast<unsigned long long>(cycleWindowElapsed_ ? cycleWindowLost_ * 100 / cycleWindowElapsed_ : 0),
+                 static_cast<unsigned long long>(counters_.completedPackets.load(std::memory_order_relaxed)),
+                 static_cast<unsigned long long>(counters_.lostCycles.load(std::memory_order_relaxed)),
+                 static_cast<unsigned long long>(counters_.abnormalCompletions.load(std::memory_order_relaxed)),
+                 counters_.lastAbnormalStatus.load(std::memory_order_relaxed));
+        cycleWindowCompleted_ = 0;
+        cycleWindowElapsed_ = 0;
+        cycleWindowLost_ = 0;
+    }
 }
 
 void IsochTxDmaRing::NoteFirstDataHeader(uint32_t payloadLength, uint32_t q0, uint32_t q1,
@@ -576,6 +628,7 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
             Layout::kCompletionBlock);
         const uint16_t hwTimestamp =
             static_cast<uint16_t>(desc2->statusWord & 0xFFFF);
+        NoteCompletion(hwTimestamp, desc2->statusWord);
 
         // OHCI OUTPUT_LAST reports sec[2:0]:cycle[12:0] and omits the
         // intra-cycle offset. Reconstruct the packet cycle at offset zero.

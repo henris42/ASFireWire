@@ -488,6 +488,11 @@ kern_return_t IsochTransmitContext::Stop() noexcept {
                  ringCounters.criticalGapEvents.load(std::memory_order_relaxed),
                  ringCounters.maxDeltaConsumed.load(std::memory_order_relaxed),
                  ringCounters.mappedRegionExhausted.load(std::memory_order_relaxed));
+        ASFW_LOG(Isoch, "IT: cycle accounting: completed=%llu lostCycles=%llu abnormalCompletions=%llu lastAbnormal=0x%04x",
+                 static_cast<unsigned long long>(ringCounters.completedPackets.load(std::memory_order_relaxed)),
+                 static_cast<unsigned long long>(ringCounters.lostCycles.load(std::memory_order_relaxed)),
+                 static_cast<unsigned long long>(ringCounters.abnormalCompletions.load(std::memory_order_relaxed)),
+                 ringCounters.lastAbnormalStatus.load(std::memory_order_relaxed));
         return kIOReturnSuccess;
     }
 

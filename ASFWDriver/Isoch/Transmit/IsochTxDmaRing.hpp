@@ -58,6 +58,16 @@ public:
         // The hardware finished every mapped packet before a refill ran: the
         // finite queue ran dry and the stream is stopped.
         std::atomic<uint64_t> mappedRegionExhausted{0};
+
+        // From the OUTPUT_LAST status of every completed packet: packets
+        // completed, bus cycles that passed between consecutive completions
+        // without a packet of ours (one packet per cycle is the contract; a
+        // lost cycle is a cycle the context did not transmit in), and
+        // completions whose event code was not ack_complete.
+        std::atomic<uint64_t> completedPackets{0};
+        std::atomic<uint64_t> lostCycles{0};
+        std::atomic<uint64_t> abnormalCompletions{0};
+        std::atomic<uint32_t> lastAbnormalStatus{0};
     };
 
     struct PrimeStats {
@@ -199,6 +209,13 @@ private:
     // with a wrong tag and reject data (828mkII, 2026-10-18).
     bool firstDataHeaderLogged_{false};
     void NoteFirstDataHeader(uint32_t payloadLength, uint32_t q0, uint32_t q1, uint32_t descBase) noexcept;
+
+    // Cycle accounting across completions (refill path only).
+    uint32_t lastCompletionCycle_{0xFFFFFFFFu};
+    uint64_t cycleWindowCompleted_{0};
+    uint64_t cycleWindowElapsed_{0};
+    uint64_t cycleWindowLost_{0};
+    void NoteCompletion(uint16_t hwTimestamp, uint32_t statusWord) noexcept;
 
     Counters counters_{};
 };
