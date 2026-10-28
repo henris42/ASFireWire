@@ -96,6 +96,7 @@ void ROMScanSession::Start(ROMScanRequest request, ScanCompletionCallback comple
         session->rootCapabilityCallback_ = std::move(request.rootCapabilityCallback);
         session->completionNotified_ = false;
         session->hadBusyNodes_ = false;
+        session->partialNotified_ = false;
         session->inflight_ = 0;
         session->completedROMs_.clear();
         session->nodeScans_.clear();
@@ -173,6 +174,7 @@ void ROMScanSession::Abort() {
         session->completion_ = nullptr;
         session->rootCapabilityCallback_ = nullptr;
         session->completionNotified_ = true;
+        session->partialNotified_ = false;
         session->nodeScans_.clear();
         session->completedROMs_.clear();
         session->inflight_ = 0;
@@ -842,10 +844,12 @@ void ROMScanSession::MaybeFinish() {
     const bool allTerminal = std::ranges::all_of(
         nodeScans_, [](const ROMScanNodeStateMachine& node) { return node.IsTerminal(); });
     if (!nodeScans_.empty() && !allTerminal) {
+        MaybeDeliverPartial();
         return;
     }
 
     completionNotified_ = true;
+    partialNotified_ = false;
 
     auto completion = std::move(completion_);
     auto roms = std::move(completedROMs_);
@@ -862,6 +866,28 @@ void ROMScanSession::MaybeFinish() {
     if (completion) {
         completion(gen, std::move(roms), hadBusyNodes);
     }
+}
+
+void ROMScanSession::MaybeDeliverPartial() {
+    if (partialNotified_ || completionNotified_ || completion_ == nullptr || inflight_ > 0 ||
+        completedROMs_.empty() || gen_ == Generation{0}) {
+        return;
+    }
+    bool waiting = false;
+    for (const auto& node : nodeScans_) {
+        if (node.IsTerminal()) continue;
+        if (node.CurrentState() != ROMScanNodeStateMachine::State::WaitingConfigROMReady) return;
+        waiting = true;
+    }
+    if (!waiting) return;
+
+    partialNotified_ = true;
+    ASFW_LOG(ConfigROM,
+             "ROMScanSession: gen=%u delivering %zu ROM(s) early; a node is still booting",
+             gen_.value, completedROMs_.size());
+    std::vector<ConfigROM> roms = completedROMs_;
+    const Generation gen = gen_;
+    completion_(gen, std::move(roms), /*hadBusyNodes=*/true);
 }
 
 } // namespace ASFW::Discovery

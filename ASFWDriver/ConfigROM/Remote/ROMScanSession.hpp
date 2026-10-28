@@ -49,6 +49,12 @@ class ROMScanSession final : public std::enable_shared_from_this<ROMScanSession>
     void DrainPending();
     void Pump();
     void MaybeFinish();
+    // Every node the bus can answer for is done and the rest wait for a device
+    // still booting: hand the ROMs read so far to the completion once, so the
+    // devices already known rebind now instead of after the booting node's
+    // retries (a third 828mkII plugged in paused a running one for 12 s,
+    // 2026-10-28). The final completion follows with the full set.
+    void MaybeDeliverPartial();
 
     [[nodiscard]] ROMScanNodeStateMachine* FindNode(uint8_t nodeId);
 
@@ -109,6 +115,7 @@ class ROMScanSession final : public std::enable_shared_from_this<ROMScanSession>
     uint16_t inflight_{0};
     bool hadBusyNodes_{false};
     bool completionNotified_{false};
+    bool partialNotified_{false};
     ScanCompletionCallback completion_;
     std::function<void(Driver::Role::RootCapabilityEvidence)> rootCapabilityCallback_;
     bool rootProbeStarted_{false};

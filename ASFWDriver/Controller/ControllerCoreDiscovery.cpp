@@ -682,7 +682,14 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
                  deviceRecord.isAudioCandidate ? "YES" : "NO");
     }
 
-    if (deps_.deviceManager && !zeroRomScanInconclusive) {
+    if (deps_.deviceManager && hadBusyNodes && !zeroRomScanInconclusive) {
+        // A node did not answer its Config ROM read yet (booting): the devices
+        // it may hold are not missing, and this result may be the early
+        // partial one (ROMScanSession::MaybeDeliverPartial).
+        ASFW_LOG(Discovery,
+                 "ROM scan for gen=%u had busy nodes; keeping devices it did not reach",
+                 gen.value);
+    } else if (deps_.deviceManager && !zeroRomScanInconclusive) {
         auto devices = deps_.deviceManager->GetAllDevices();
         for (const auto& device : devices) {
             if (!device) {
