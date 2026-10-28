@@ -55,11 +55,11 @@ IsochService::PrepareReceive(uint8_t channel, HardwareInterface& hardware,
 
     isochReceiveContext_->SetReceiveConsumer(receiveConsumers_[0]);
 
-    // Master stream: contextIndex 0, channelOffset 0, isSecondary false.
-    // streamChannels 0 == full binding width (single-stream back-compat);
+    // Master stream: this service's base context, channelOffset 0, isSecondary
+    // false. streamChannels 0 == full binding width (single-stream back-compat);
     // multi-stream devices pass their first slice's PCM count.
     const kern_return_t kr =
-        isochReceiveContext_->Configure(channel, 0);
+        isochReceiveContext_->Configure(channel, contextBase_);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(Isoch, "IsochService: IR Configure failed: 0x%08x", kr);
         return kr;
@@ -78,7 +78,7 @@ kern_return_t IsochService::PrepareReceiveStream(
     uint32_t channelOffset, uint32_t streamChannels) {
     hardware_ = &hardware;
     // Stream 0 is the master; callers use PrepareReceive() for it.
-    if (streamIndex == 0 || streamIndex >= kMaxStreamsPerDirection) {
+    if (streamIndex == 0 || streamIndex >= streamLimit_) {
         return kIOReturnBadArgument;
     }
 
@@ -109,10 +109,10 @@ kern_return_t IsochService::PrepareReceiveStream(
 
     slot->SetReceiveConsumer(receiveConsumers_[streamIndex]);
 
-    // contextIndex == streamIndex routes this stream to its own OHCI IR context.
-    // isSecondary=true makes it write PCM only (no clock/replay/ZTS).
+    // contextIndex == contextBase + streamIndex routes this stream to its own
+    // OHCI IR context. isSecondary=true makes it write PCM only (no clock/replay/ZTS).
     const kern_return_t kr =
-        slot->Configure(channel, static_cast<uint8_t>(streamIndex));
+        slot->Configure(channel, static_cast<uint8_t>(contextBase_ + streamIndex));
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(Isoch, "IsochService: secondary IR Configure failed (stream %u): 0x%08x",
                  streamIndex, kr);
@@ -250,6 +250,7 @@ kern_return_t IsochService::PrepareTransmit(uint8_t channel, HardwareInterface& 
             ASFW_LOG(Isoch, "IsochService: Failed to create IT context");
             return kIOReturnNoMemory;
         }
+        isochTransmitContext_->SetContextIndex(contextBase_);
         isochTransmitContext_->SetTxPreparationCallback(txPreparationCallback_);
     }
 
@@ -278,7 +279,7 @@ kern_return_t IsochService::PrepareTransmitStream(uint32_t streamIndex, uint8_t 
                                                   FW::FwSpeed speed) {
     hardware_ = &hardware;
     // Stream 0 is the master; callers use PrepareTransmit() for it.
-    if (streamIndex == 0 || streamIndex >= kMaxStreamsPerDirection) {
+    if (streamIndex == 0 || streamIndex >= streamLimit_) {
         return kIOReturnBadArgument;
     }
 
@@ -307,9 +308,9 @@ kern_return_t IsochService::PrepareTransmitStream(uint32_t streamIndex, uint8_t 
         // No TX-preparation callback on secondaries; the master drives refill.
     }
 
-    // Each secondary stream runs on its own OHCI IT context (== streamIndex) so
-    // it does not collide with the master (context 0) on the hardware registers.
-    slot->SetContextIndex(static_cast<uint8_t>(streamIndex));
+    // Each secondary stream runs on its own OHCI IT context (contextBase +
+    // streamIndex) so it does not collide with the master on the hardware registers.
+    slot->SetContextIndex(static_cast<uint8_t>(contextBase_ + streamIndex));
 
     const kern_return_t kr = slot->Configure(channel, sid, speed);
     if (kr != kIOReturnSuccess) {

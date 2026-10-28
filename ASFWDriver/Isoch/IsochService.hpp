@@ -31,7 +31,31 @@ class IsochService {
     using ZtsAnchorReadyCallback = std::function<void(uint64_t generation)>;
 
     IsochService() = default;
+    // A service whose contexts start at `contextBase`: stream i runs on OHCI
+    // context contextBase + i, and only kLaneWidth streams per direction are
+    // offered, so several services (one per streaming device) share one
+    // controller without touching each other's contexts (IsochLanes).
+    explicit IsochService(uint8_t contextBase) noexcept
+        : contextBase_(contextBase), streamLimit_(kLaneWidth) {}
     ~IsochService() = default;
+    // Streams per direction a device may use on a shared controller: its
+    // master and one secondary. Devices with more streams need the whole card.
+    static constexpr uint32_t kLaneWidth = 2;
+    [[nodiscard]] uint8_t ContextBase() const noexcept { return contextBase_; }
+    [[nodiscard]] uint32_t StreamLimit() const noexcept { return streamLimit_; }
+    // Narrow the service to the first `limit` streams per direction (lane 0
+    // gives up contexts 2..3 when a second lane is created on them).
+    void SetStreamLimit(uint32_t limit) noexcept {
+        streamLimit_ = limit == 0 ? 1 : (limit > kMaxStreamsPerDirection ? kMaxStreamsPerDirection : limit);
+    }
+    // True when a secondary stream at index >= firstStream has a context: the
+    // hardware contexts above the lane width are in use by this service.
+    [[nodiscard]] bool HasContextsFrom(uint32_t firstStream) const noexcept {
+        for (uint32_t i = firstStream == 0 ? 1 : firstStream; i < kMaxStreamsPerDirection; ++i) {
+            if (secondaryReceiveContexts_[i - 1] || secondaryTransmitContexts_[i - 1]) return true;
+        }
+        return false;
+    }
 
     // Maximum isochronous streams per direction. Stream 0 is the "master"
     // (owns the clock/ZTS/replay role); streams 1+ are secondary slices used by
@@ -189,6 +213,8 @@ class IsochService {
     OSSharedPtr<IOBufferMemoryDescriptor> txMetadataRing_[kMaxStreamsPerDirection]{};
     OSSharedPtr<IOBufferMemoryDescriptor> txControlBlock_[kMaxStreamsPerDirection]{};
 
+    uint8_t contextBase_{0};
+    uint32_t streamLimit_{kMaxStreamsPerDirection};
     uint64_t activeGuid_{0};
     TimingLossCallback timingLossCallback_{};
     TxPreparationCallback txPreparationCallback_{};

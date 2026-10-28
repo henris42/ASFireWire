@@ -50,7 +50,8 @@ kern_return_t IsochReceiveContext::Configure(uint8_t channel, uint8_t contextInd
         return kIOReturnNotReady;
     }
 
-    if (contextIndex >= 4) {
+    // OHCI implements up to 32 IR contexts; the lanes use at most eight.
+    if (contextIndex >= 8) {
         return kIOReturnBadArgument;
     }
 
