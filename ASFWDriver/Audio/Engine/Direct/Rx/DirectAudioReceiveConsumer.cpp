@@ -457,12 +457,19 @@ void DirectAudioReceiveConsumer::ConsumePacket(
                 const uint64_t gaps = inputView_.control->counters.rxDiscontinuities.fetch_add(
                                           1, std::memory_order_relaxed) + 1;
                 if (gaps == 1 || gaps % 100 == 0) {
+                    // The gap recurs once per receive ring lap at one descriptor
+                    // (b140). Our transmit ring is 504 packets deep as well: if
+                    // the gap is the device answering something at our transmit
+                    // ring's wrap, txPackets mod 504 reads the same every time.
+                    const uint64_t txPackets =
+                        inputView_.control->counters.txPackets.load(std::memory_order_relaxed);
                     ASFW_LOG(DirectAudio,
                              "[RxCycleGap] count=%llu cycles=%u desc=%u bytes=%zu expected=%u observed=%u "
-                             "frame=%llu; re-anchored, not restarted",
+                             "frame=%llu txPackets=%llu txSlot=%llu rawTs=0x%04x; re-anchored, not restarted",
                              gaps, cycleDelta - 1U, packet.descriptorIndex, packet.payload.size(),
                              (lastReplayCycleOrdinal_ + 1) % kCycleDomain, cycleOrdinal,
-                             absoluteFrameCursor_);
+                             absoluteFrameCursor_, txPackets, txPackets % 504ULL,
+                             result.receiveCycleTimestamp);
                 }
             }
             ResetReplayEpochForDiscontinuity(
