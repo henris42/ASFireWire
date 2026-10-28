@@ -1118,8 +1118,42 @@ uint32_t HardwareInterface::ProbeIsochContextCount() noexcept {
     };
     const uint32_t transmit = probe(Register32::kIsoXmitIntMaskSet, Register32::kIsoXmitIntMaskClear);
     const uint32_t receive = probe(Register32::kIsoRecvIntMaskSet, Register32::kIsoRecvIntMaskClear);
-    ASFW_LOG(Hardware, "Isoch contexts implemented: IT=%u IR=%u", transmit, receive);
-    return transmit < receive ? transmit : receive;
+
+    // The mask bits can outnumber the contexts: a controller may implement
+    // eight interrupt bits per direction and decode fewer context register
+    // sets, so a write to context 4 lands in context 0 (three 828mkIIs on a
+    // TI XIO2213, 2026-10-28: the lane on contexts 4/5 corrupted lane 0's
+    // receive ring). Confirm each context by writing its CommandPtr (idle at
+    // bring-up, Z=0 so nothing could run) and checking that it reads back
+    // there and nowhere below it. Every register is restored afterwards.
+    const auto confirm = [&](uint32_t claimed, auto commandPtrOf) -> uint32_t {
+        constexpr uint32_t kMaxProbe = 8;
+        const uint32_t limit = claimed < kMaxProbe ? claimed : kMaxProbe;
+        uint32_t saved[kMaxProbe]{};
+        for (uint32_t n = 0; n < limit; ++n) {
+            saved[n] = access.Read(static_cast<Register32>(commandPtrOf(n)));
+        }
+        uint32_t confirmed = 0;
+        for (uint32_t n = 0; n < limit; ++n) {
+            const uint32_t pattern = 0x00010000u * (n + 1);  // 16-byte aligned, Z=0
+            access.WriteAndFlush(static_cast<Register32>(commandPtrOf(n)), pattern);
+            bool ok = access.Read(static_cast<Register32>(commandPtrOf(n))) == pattern;
+            for (uint32_t m = 0; ok && m < n; ++m) {
+                ok = access.Read(static_cast<Register32>(commandPtrOf(m))) == 0x00010000u * (m + 1);
+            }
+            if (!ok) break;
+            confirmed = n + 1;
+        }
+        for (uint32_t n = 0; n < limit; ++n) {
+            access.WriteAndFlush(static_cast<Register32>(commandPtrOf(n)), saved[n]);
+        }
+        return confirmed;
+    };
+    const uint32_t transmitConfirmed = confirm(transmit, [](uint32_t n) { return DMAContextHelpers::IsoXmitCommandPtr(n); });
+    const uint32_t receiveConfirmed = confirm(receive, [](uint32_t n) { return DMAContextHelpers::IsoRcvCommandPtr(n); });
+    ASFW_LOG(Hardware, "Isoch contexts implemented: IT=%u (mask bits %u) IR=%u (mask bits %u)",
+             transmitConfirmed, transmit, receiveConfirmed, receive);
+    return transmitConfirmed < receiveConfirmed ? transmitConfirmed : receiveConfirmed;
 }
 
 uint32_t HardwareInterface::ReadNodeID() const noexcept {

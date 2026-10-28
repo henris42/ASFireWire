@@ -554,6 +554,12 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
     }
     ScheduleAsyncWatchdog(kAsyncWatchdogPeriodUsec);
 
+    // Count the isoch contexts now, while every context is idle: the probe
+    // writes their CommandPtr registers (HardwareInterface::ProbeIsochContextCount).
+    if (ctx.deps.hardware) {
+        (void)ctx.isochLanes.LaneCount(*ctx.deps.hardware);
+    }
+
     ctx.controller = std::make_shared<ControllerCore>(ctx.config, ctx.rolePolicy, ctx.deps);
 
     // FCP shares the driver's cancellable control-plane timer with SBP-2. It
