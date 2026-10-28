@@ -269,6 +269,38 @@ void AudioDeviceHost::OfferDiscoveredDescription(uint64_t guid,
     RefreshPublication(guid);
 }
 
+// A hot-plugged 828mkII answered its config ROM but timed out every register
+// read for a few seconds while it powered up (2026-10-28); the describe was
+// refused and the device stayed unpublished until a bus reset. Transient
+// statuses get another describe after a delay.
+void AudioDeviceHost::ScheduleDescribeRetry(uint64_t guid, IOReturn status) noexcept {
+    const bool transient = status == kIOReturnTimeout || status == kIOReturnNotResponding ||
+                           status == kIOReturnNotReady || status == kIOReturnBusy;
+    if (!transient || timer_ == nullptr || Stopping()) {
+        return;
+    }
+    uint32_t attempt = 0;
+    if (lock_) {
+        IOLockLock(lock_);
+        attempt = ++describeRetries_[guid];
+        IOLockUnlock(lock_);
+    }
+    if (attempt > kDescribeRetries) {
+        ASFW_LOG(Audio, "[AudioHost] guid=%016llx describe refused %u times (kr=0x%x); giving up until the next generation",
+                 guid, attempt - 1, status);
+        return;
+    }
+    ASFW_LOG(Audio, "[AudioHost] guid=%016llx describe refused (kr=0x%x); retry %u/%u in %u ms",
+             guid, status, attempt, kDescribeRetries, kDescribeRetryDelayMs);
+    (void)timer_->ScheduleAfter(static_cast<uint64_t>(kDescribeRetryDelayMs) * 1'000'000ULL, [this, guid] {
+        (void)Dispatch([this, guid] {
+            if (!Stopping() && publisher_.GetNub(guid) == nullptr) {
+                RefreshPublication(guid);
+            }
+        });
+    });
+}
+
 void AudioDeviceHost::RefreshPublication(uint64_t guid) noexcept {
     if (guid == 0) return;
 
@@ -383,6 +415,11 @@ void AudioDeviceHost::RefreshPublication(uint64_t guid) noexcept {
             Record(guid, family, HostEvent::Publish,
                    published ? HostOutcome::Published : HostOutcome::PublishFailed,
                    published ? kIOReturnSuccess : kIOReturnError, 0, detailText);
+            if (published && lock_) {
+                IOLockLock(lock_);
+                describeRetries_.erase(guid);
+                IOLockUnlock(lock_);
+            }
         };
 
         std::visit(
@@ -393,6 +430,7 @@ void AudioDeviceHost::RefreshPublication(uint64_t guid) noexcept {
                     snprintf(detail, sizeof(detail), "reason=%s", value.reason ? value.reason : "?");
                     Record(guid, family, HostEvent::Publish, HostOutcome::RefusedDescribe, value.status,
                            0, detail);
+                    ScheduleDescribeRetry(guid, value.status);
                 } else if constexpr (std::is_same_v<T, KeepCommitted>) {
                     Record(guid, family, HostEvent::Publish, HostOutcome::KeptCommittedFormation);
                 } else if constexpr (std::is_same_v<T, DescribedWithNote>) {

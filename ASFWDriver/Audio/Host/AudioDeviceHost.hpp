@@ -25,6 +25,7 @@
 #include "FamilyAdapter.hpp"
 #include "PublicationGate.hpp"
 #include "../Protocols/DeviceProtocolChoice.hpp"
+#include "../../Scheduling/ITimerScheduler.hpp"
 
 #include <DriverKit/IODispatchQueue.h>
 #include <DriverKit/IOLib.h>
@@ -148,6 +149,10 @@ public:
     /// abort their waits once teardown is latched.
     static constexpr uint32_t kSecondaryTeardownWaitMs = 10000;
 
+    // The timer that paces describe retries (ScheduleDescribeRetry); installed
+    // by the coordinator with the session timer.
+    void SetTimerScheduler(Scheduling::ITimerScheduler* timer) noexcept { timer_ = timer; }
+
 #ifdef ASFW_HOST_TEST
     void SetBeforePublishHookForTesting(std::function<void()> hook) noexcept {
         beforePublishHookForTesting_ = std::move(hook);
@@ -183,6 +188,14 @@ private:
     void FinishRecovery(uint64_t guid) noexcept;
     /// Queue `work` on the host queue. False (work dropped) without a queue.
     [[nodiscard]] bool Dispatch(std::function<void()> work) noexcept;
+    // A describe that failed on a transient bus error (a device still powering
+    // up answers nothing for a while) is retried after kDescribeRetryDelayMs,
+    // up to kDescribeRetries times, when a timer is installed.
+    void ScheduleDescribeRetry(uint64_t guid, IOReturn status) noexcept;
+    static constexpr uint32_t kDescribeRetries = 5;
+    static constexpr uint32_t kDescribeRetryDelayMs = 2000;
+    Scheduling::ITimerScheduler* timer_{nullptr};
+    std::unordered_map<uint64_t, uint32_t> describeRetries_{};
     void ProbeClock(uint64_t guid, const char* family, uint32_t detail) noexcept;
     [[nodiscard]] bool Stopping() const noexcept { return stopping_.load(std::memory_order_acquire); }
 
