@@ -218,12 +218,9 @@ uint32_t AudioCoordinator::ClaimLaneLocked(uint64_t guid) noexcept {
     if (current != kAllLanes) return current;
     const uint32_t count = lanes_.LaneCount(hardware_);
     uint32_t lane = kAllLanes;
-    // A device keeps its lane across stops so its contexts, channel and
-    // transport state stay where its last session left them.
-    if (auto it = laneByGuid_.find(guid); it != laneByGuid_.end() && it->second < count &&
-        laneOwner_[it->second] == 0) {
-        lane = it->second;
-    }
+    // The lowest free lane, not the one the device used last: a unit that
+    // once landed on a high lane must not stay there when it plays alone
+    // (three 828mkIIs, 2026-10-28: the third unit kept lane 2 by itself).
     for (uint32_t candidate = 0; lane == kAllLanes && candidate < count && candidate < laneOwner_.size();
          ++candidate) {
         if (laneOwner_[candidate] == 0) lane = candidate;

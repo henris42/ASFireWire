@@ -93,7 +93,7 @@ public:
     // refused only when every lane the controller offers is taken, and the
     // running ones are left alone (two 828mkIIs, 2026-10-28: the second
     // StartIO re-allocated the shared TX slot under the first and both died).
-    // A GUID keeps its lane across stops while the lane stays free.
+    // A start takes the lowest free lane.
     [[nodiscard]] IOReturn ClaimTransport(uint64_t guid) noexcept;
     void ReleaseTransportClaim(uint64_t guid) noexcept;
     [[nodiscard]] IOReturn StartStreaming(uint64_t guid, AudioClockConfig clock = {}) noexcept;
@@ -162,7 +162,7 @@ private:
     // device's lane; none owns a second wrapper around an IsochService.
     std::array<std::unique_ptr<IsochDuplexHostTransport>, Driver::IsochLanes::kMaxLanes> transports_{};
     // laneOwner_[lane] is the GUID claiming it (0 = free); laneByGuid_ is the
-    // sticky lane a GUID last used.
+    // lane a GUID last used (its transport after a stop, for diagnostics).
     std::array<uint64_t, Driver::IsochLanes::kMaxLanes> laneOwner_{};
     std::unordered_map<uint64_t, uint32_t> laneByGuid_{};
     std::unordered_map<uint64_t, std::unique_ptr<LaneTransport>> sessionTransports_{};

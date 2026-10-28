@@ -285,15 +285,19 @@ uint64_t RestartLikeOutcomes(ASFW::Audio::Host::AudioDeviceHost& host) {
 // ---------------------------------------------------------------------------
 
 // Each streaming device claims its own isoch lane (the host stub models a
-// four-context controller: two lanes). A device beyond the last lane is refused
-// at the claim, before any transmit resource is touched, and its stop is not a
-// failure (two 828mkIIs, 2026-10-28: the refused unit's unwind was refused too
-// and it could never start again until the driver restarted).
+// four-context controller: four lanes of one context). A device beyond the
+// last lane is refused at the claim, before any transmit resource is touched,
+// and its stop is not a failure (two 828mkIIs, 2026-10-28: the refused unit's
+// unwind was refused too and it could never start again until the driver
+// restarted).
 TEST(AudioCoordinatorRoutingTests, DevicesClaimTheirOwnLanesAndARefusedDeviceCanStillStop) {
     CoordinatorHarness h;
     constexpr uint64_t kA = 0x0001f2000001f717ULL;
     constexpr uint64_t kB = 0x0001f2000000f944ULL;
     constexpr uint64_t kC = 0x0001f2000000aa55ULL;
+    constexpr uint64_t kD = 0x0001f2000000bb66ULL;
+    constexpr uint64_t kE = 0x0001f2000000cc77ULL;
+    ASSERT_EQ(h.lanes.LaneCount(h.hardware), 4U);
     EXPECT_EQ(h.coordinator.ActiveGuid(), 0ULL);
     EXPECT_FALSE(h.coordinator.HasActiveSession());
     EXPECT_EQ(h.coordinator.IsochServiceForGuid(kA), nullptr);
@@ -305,38 +309,44 @@ TEST(AudioCoordinatorRoutingTests, DevicesClaimTheirOwnLanesAndARefusedDeviceCan
     EXPECT_EQ(h.coordinator.ClaimTransport(kA), kIOReturnSuccess);  // idempotent for the owner
     EXPECT_EQ(h.coordinator.GuidForLane(0), kA);
 
-    // A second device streams at the same time, on the second lane.
+    // Further devices stream at the same time, each on the next lane.
     EXPECT_EQ(h.coordinator.ClaimTransport(kB), kIOReturnSuccess);
     EXPECT_EQ(h.coordinator.GuidForLane(1), kB);
     ASFW::Driver::IsochService* laneB = h.coordinator.IsochServiceForGuid(kB);
     ASSERT_NE(laneB, nullptr);
     EXPECT_NE(laneB, &h.isoch);
-    EXPECT_EQ(laneB->ContextBase(), 2U);
+    EXPECT_EQ(laneB->ContextBase(), IsochLanes::kLaneWidth);
     EXPECT_EQ(laneB, h.lanes.Lane(1));
     EXPECT_EQ(h.isoch.StreamLimit(), IsochLanes::kLaneWidth);
     EXPECT_TRUE(h.coordinator.HasActiveSession());
+    EXPECT_EQ(h.coordinator.ClaimTransport(kC), kIOReturnSuccess);
+    EXPECT_EQ(h.coordinator.GuidForLane(2), kC);
+    EXPECT_EQ(h.coordinator.ClaimTransport(kD), kIOReturnSuccess);
+    EXPECT_EQ(h.coordinator.GuidForLane(3), kD);
 
-    // No lane left for a third device; it owns nothing, so its stop succeeds
-    // and leaves A and B alone.
-    EXPECT_EQ(h.coordinator.ClaimTransport(kC), kIOReturnBusy);
-    EXPECT_EQ(h.coordinator.IsochServiceForGuid(kC), nullptr);
-    EXPECT_EQ(h.coordinator.StopStreaming(kC), kIOReturnSuccess);
+    // No lane left for a fifth device; it owns nothing, so its stop succeeds
+    // and leaves the others alone.
+    EXPECT_EQ(h.coordinator.ClaimTransport(kE), kIOReturnBusy);
+    EXPECT_EQ(h.coordinator.IsochServiceForGuid(kE), nullptr);
+    EXPECT_EQ(h.coordinator.StopStreaming(kE), kIOReturnSuccess);
     EXPECT_EQ(h.coordinator.GuidForLane(0), kA);
-    EXPECT_EQ(h.coordinator.GuidForLane(1), kB);
+    EXPECT_EQ(h.coordinator.GuidForLane(3), kD);
 
-    // A claim nothing came of is given back; the freed lane goes to C, and A
-    // returns to its own lane once one is free again (sticky per GUID).
+    // A claim nothing came of is given back; the freed lane goes to E, and A
+    // takes the lowest free lane once one is free again.
     h.coordinator.ReleaseTransportClaim(kA);
     EXPECT_EQ(h.coordinator.GuidForLane(0), 0ULL);
     EXPECT_EQ(h.coordinator.ActiveGuid(), kB);
-    EXPECT_EQ(h.coordinator.ClaimTransport(kC), kIOReturnSuccess);
-    EXPECT_EQ(h.coordinator.GuidForLane(0), kC);
+    EXPECT_EQ(h.coordinator.ClaimTransport(kE), kIOReturnSuccess);
+    EXPECT_EQ(h.coordinator.GuidForLane(0), kE);
     EXPECT_EQ(h.coordinator.ClaimTransport(kA), kIOReturnBusy);
-    h.coordinator.ReleaseTransportClaim(kC);
-    h.coordinator.ReleaseTransportClaim(kB);
+    h.coordinator.ReleaseTransportClaim(kE);
+    h.coordinator.ReleaseTransportClaim(kD);
     EXPECT_EQ(h.coordinator.ClaimTransport(kA), kIOReturnSuccess);
     EXPECT_EQ(h.coordinator.GuidForLane(0), kA);
     h.coordinator.ReleaseTransportClaim(kA);
+    h.coordinator.ReleaseTransportClaim(kB);
+    h.coordinator.ReleaseTransportClaim(kC);
     EXPECT_FALSE(h.coordinator.HasActiveSession());
 }
 
