@@ -224,6 +224,10 @@ TEST_P(MotuTxTimingStamperLayoutTests, StampsFreeRunningSphFromTheFirstTransmitT
         EXPECT_EQ(tx.BlockSph(block), SphAt(seed + block * 512)) << "block " << block;
         EXPECT_NE(tx.provider.bytes[tx.HostChannelZeroAt(block)], 0u) << "block " << block;
     }
+    // The writer's own meter: 0.5 full scale is 0x400000 in 24 bits, and the
+    // interval restarts once read.
+    EXPECT_EQ(tx.writer.TakePeakWrittenQ24(), 0x400000u);
+    EXPECT_EQ(tx.writer.TakePeakWrittenQ24(), 0u);
 
     // A header-only packet carries no SPH and does not advance the clock.
     ASSERT_EQ(tx.engine.PrepareNextTransmitSlot(1, NoDataTiming()),

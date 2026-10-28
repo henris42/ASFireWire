@@ -1706,7 +1706,9 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
             const auto& fill = ivars->runtime.txStreamEngine.PayloadWriterCounters();
             const auto& motuFill = ivars->runtime.motuPayloadWriter.Counters();
             uint32_t peakWord = 0;
-            const uint32_t peakQ24 = ivars->runtime.txStreamEngine.TakePeakWrittenQ24(&peakWord);
+            const uint32_t peakQ24 = motuWriter
+                ? ivars->runtime.motuPayloadWriter.TakePeakWrittenQ24()
+                : ivars->runtime.txStreamEngine.TakePeakWrittenQ24(&peakWord);
             ASFW_LOG(DirectAudio,
                      "[TxContent] writer=%{public}s peakQ24=%u word=0x%08x visited=%llu written=%llu noPkt=%llu outside=%llu "
                      "missed=%llu muted=%llu writeEnd=%llu filledEnd=%llu",

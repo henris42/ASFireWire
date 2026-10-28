@@ -72,6 +72,7 @@ void MotuPayloadWriter::WriteFloat32Interleaved(
     const MotuPortMap ports = EffectivePortMap(streamConfig_.ports, streamConfig_.pcmChunks);
     // One decision per call: a call never mixes muted and audible frames.
     const bool muted = muted_.load(std::memory_order_acquire);
+    uint32_t peakQ24 = 0;
 
     for (uint32_t i = 0; i < hostBuffer.frameCount; ++i) {
         const uint64_t absoluteFrame = hostBuffer.firstFrame + i;
@@ -131,10 +132,16 @@ void MotuPayloadWriter::WriteFloat32Interleaved(
             // always covers every physical port, including ones CoreAudio is not
             // driving, and those must carry silence rather than stale bytes.
             const float sample = (!muted && srcCh < hostBuffer.channels) ? source[srcCh] : 0.0f;
+            const int32_t encoded = Float32ToMotuSample(sample);
+            // The 24 significant bits sit in the high bytes; their magnitude is the meter.
+            const uint32_t magnitude = static_cast<uint32_t>(encoded < 0 ? -(encoded >> 8) : (encoded >> 8));
+            if (magnitude > peakQ24) {
+                peakQ24 = magnitude;
+            }
             WritePcmSample(
                 std::span<uint8_t>(block + streamConfig_.pcmByteOffset + chunk * kBytesPerChunk,
                                    kBytesPerChunk),
-                Float32ToMotuSample(sample));
+                encoded);
         }
 
         ++written;
@@ -144,6 +151,13 @@ void MotuPayloadWriter::WriteFloat32Interleaved(
         }
     }
 
+    if (peakQ24 != 0) {
+        uint32_t current = counters_.intervalPeakWrittenQ24.load(std::memory_order_relaxed);
+        while (peakQ24 > current &&
+               !counters_.intervalPeakWrittenQ24.compare_exchange_weak(current, peakQ24,
+                                                                       std::memory_order_relaxed)) {
+        }
+    }
     counters_.framesVisited.fetch_add(visited, std::memory_order_relaxed);
     counters_.framesWritten.fetch_add(written, std::memory_order_relaxed);
     counters_.framesWithoutPacket.fetch_add(withoutPacket, std::memory_order_relaxed);

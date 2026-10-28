@@ -54,6 +54,9 @@ struct MotuPayloadWriterCounters final {
     /// Frames written as silence because the output was muted (SetPcmMuted).
     /// Included in framesWritten: the frame reached its packet, as zero.
     std::atomic<uint64_t> framesMuted{0};
+    /// Largest |sample| written since the last TakePeakWrittenQ24(), as a
+    /// 24-bit magnitude (0x7FFFFF = full scale). Zero while muted.
+    std::atomic<uint32_t> intervalPeakWrittenQ24{0};
 };
 
 struct MotuPayloadStreamConfig final {
@@ -92,6 +95,10 @@ public:
     [[nodiscard]] bool IsPcmMuted() const noexcept;
 
     [[nodiscard]] const MotuPayloadWriterCounters& Counters() const noexcept;
+    /// The interval's peak written magnitude (24-bit); the interval restarts.
+    [[nodiscard]] uint32_t TakePeakWrittenQ24() noexcept {
+        return counters_.intervalPeakWrittenQ24.exchange(0, std::memory_order_relaxed);
+    }
 
 private:
     MotuPayloadStreamConfig streamConfig_{};
