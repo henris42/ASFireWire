@@ -81,6 +81,9 @@ private:
     size_t last_dequeued_bytes_{0};
     size_t last_observed_total_bytes_{0};
     size_t lastLinkedIndex_{0};
+    // Buffers recycled without the hardware ever writing them while their
+    // successor filled: the receive program jumped over them.
+    uint64_t skippedBuffers_{0};
     bool wakeRequired_{false};
     uint32_t descIOVABase_{0};
     uint32_t bufIOVABase_{0};

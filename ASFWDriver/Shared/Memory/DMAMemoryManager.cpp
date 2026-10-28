@@ -7,6 +7,7 @@
 #include <bit>
 #include <cstring>
 #include <cstdio>
+#include <unordered_map>
 #include <DriverKit/IOLib.h>
 
 #include "../../Hardware/HardwareInterface.hpp"
@@ -38,7 +39,57 @@ bool DMAMemoryManager::IsTracingEnabled() noexcept {
 
 DMAMemoryManager::~DMAMemoryManager() { Reset(); }
 
+namespace {
+
+// Every bus-visible page any slab holds, by its device address. Two slabs
+// owning one page would let one engine's writes land in another's ring (a
+// fixed receive descriptor was corrupted once per lap whenever three lanes
+// ran, 2026-10-28); a collision is an error worth a line, whatever its cause.
+class DMAPageRegistry final {
+  public:
+    void Add(const DMAMemoryManager* owner, uint64_t iova, size_t length) noexcept {
+        Lock();
+        for (uint64_t page = iova & ~kPageMask; page < iova + length; page += kPage) {
+            const auto [it, inserted] = pages_.try_emplace(page, owner);
+            if (!inserted && it->second != owner) {
+                ++collisions_;
+                ASFW_LOG_ERROR(Async,
+                               "DMAMemoryManager: device page 0x%llx is already mapped by another slab "
+                               "(%p, now %p); collisions=%llu",
+                               page, static_cast<const void*>(it->second),
+                               static_cast<const void*>(owner), collisions_);
+            }
+        }
+        Unlock();
+    }
+    void Remove(const DMAMemoryManager* owner) noexcept {
+        Lock();
+        for (auto it = pages_.begin(); it != pages_.end();) {
+            if (it->second == owner) it = pages_.erase(it);
+            else ++it;
+        }
+        Unlock();
+    }
+
+  private:
+    static constexpr uint64_t kPage = 4096;
+    static constexpr uint64_t kPageMask = kPage - 1;
+    void Lock() noexcept { while (lock_.test_and_set(std::memory_order_acquire)) {} }
+    void Unlock() noexcept { lock_.clear(std::memory_order_release); }
+    std::atomic_flag lock_ = ATOMIC_FLAG_INIT;
+    std::unordered_map<uint64_t, const DMAMemoryManager*> pages_{};
+    uint64_t collisions_{0};
+};
+
+DMAPageRegistry& PageRegistry() noexcept {
+    static DMAPageRegistry registry;
+    return registry;
+}
+
+} // namespace
+
 void DMAMemoryManager::Reset() noexcept {
+    PageRegistry().Remove(this);
     // Release CPU mapping first
     if (dmaMemoryMap_) {
         dmaMemoryMap_->release();
@@ -119,6 +170,7 @@ bool DMAMemoryManager::Initialize(Driver::HardwareInterface& hw, size_t totalSiz
     runsByIOVA_.resize(runs_.size());
     for (size_t i = 0; i < runs_.size(); ++i) {
         runsByIOVA_[i] = i;
+        PageRegistry().Add(this, runs_[i].iova, runs_[i].length);
     }
     std::sort(runsByIOVA_.begin(), runsByIOVA_.end(),
               [this](size_t a, size_t b) { return runs_[a].iova < runs_[b].iova; });

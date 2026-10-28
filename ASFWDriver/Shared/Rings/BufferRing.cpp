@@ -220,6 +220,23 @@ std::optional<FilledBufferInfo> BufferRing::Dequeue() noexcept {
                     next_resCount,
                     next_reqCount);
 
+        if (total_bytes_in_buffer == 0) {
+            // The successor has data and this buffer never got any: the
+            // controller did not run this descriptor. Its branch word and
+            // device address tell whether the program is what we think it is
+            // (a unit on one lane of three lost one packet per ring lap at a
+            // fixed index, 2026-10-28).
+            ++skippedBuffers_;
+            if (skippedBuffers_ == 1 || skippedBuffers_ % 100 == 0) {
+                ASFW_LOG(Async,
+                         "BufferRing: buffer[%zu] skipped by the controller (count=%llu) control=0x%08x "
+                         "branch=0x%08x descIOVA=0x%llx nextDescIOVA=0x%llx dataIOVA=0x%llx "
+                         "nextControl=0x%08x",
+                         index, skippedBuffers_, desc.control, desc.branchWord,
+                         GetDescriptorIOVA(index), GetDescriptorIOVA(next_index), GetElementIOVA(index),
+                         next_desc.control);
+            }
+        }
         const kern_return_t recycleKr = Recycle(index);
         if (recycleKr != kIOReturnSuccess) {
             ASFW_LOG(Async,
