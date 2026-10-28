@@ -202,6 +202,8 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedBackend = Audio::AudioBackendKind::MotuRegister,
             .expectedBootstrap = Audio::ProbeBootstrap::MotuRegister,
             .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
+            // Any channel: the iso-comm register takes 6-bit channel numbers.
+            .expectedIrmChoosesAnyChannel = true,
         },
         // 10. MOTU UltraLite
         {
@@ -215,6 +217,8 @@ const std::vector<DeviceTestCase>& GetHistoricalRegressionTable() {
             .expectedBackend = Audio::AudioBackendKind::MotuRegister,
             .expectedBootstrap = Audio::ProbeBootstrap::MotuRegister,
             .expectedFilter = Discovery::AvcCommandFilterId::Unrestricted,
+            // Any channel: the iso-comm register takes 6-bit channel numbers.
+            .expectedIrmChoosesAnyChannel = true,
         },
         // 11. M-Audio FireWire 1814
         {

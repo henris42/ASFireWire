@@ -124,6 +124,10 @@ constexpr AudioDeviceDefinition MotuDefinition(DeviceDefinitionId id,
         .protocolImplementation = implementation,
         .support = support,
         .guidReliability = GuidReliability::ReliableWhenUnique,
+        // The IRM picks the channels: the iso-comm register takes any of the
+        // 64 (6-bit fields), and a fixed 0/1 pair collides as soon as a second
+        // unit streams on the same bus (three 828mkIIs on one card).
+        .streamTraits = {.resource = {.irmChannelMask = kAnyIsoChannel}},
         .vendorName = kMotuVendorName,
         .modelName = modelName,
     };
