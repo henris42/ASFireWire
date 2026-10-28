@@ -669,6 +669,17 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
                                ivars.inputStream->SetStartingChannel(1))) {
             return error;
         }
+        // Capture never reached a client (b104-b137). The sample driver names
+        // its terminal types and leaves the streams active; both are set here
+        // so the host sees the same stream as in that driver.
+        if (!requireAdkSuccess("inputStream.SetTerminalType",
+                               ivars.inputStream->SetTerminalType(IOUserAudioStreamTerminalType::Line))) {
+            return error;
+        }
+        if (!requireAdkSuccess("inputStream.SetStreamIsActive",
+                               ivars.inputStream->SetStreamIsActive(true))) {
+            return error;
+        }
     }
 
     if (hasOutputStream) {
@@ -719,6 +730,14 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         }
         if (!requireAdkSuccess("outputStream.SetStartingChannel",
                                ivars.outputStream->SetStartingChannel(1))) {
+            return error;
+        }
+        if (!requireAdkSuccess("outputStream.SetTerminalType",
+                               ivars.outputStream->SetTerminalType(IOUserAudioStreamTerminalType::Line))) {
+            return error;
+        }
+        if (!requireAdkSuccess("outputStream.SetStreamIsActive",
+                               ivars.outputStream->SetStreamIsActive(true))) {
             return error;
         }
     }
