@@ -13,6 +13,7 @@
 #include "../Timing/PostResetTiming.hpp"
 #include "LocalCSRAccessor.hpp"
 #include <cstdint>
+#include <functional>
 #include <memory>
 
 namespace ASFW::Bus {
@@ -120,6 +121,12 @@ public:
         Driver::HardwareInterface& hardware;
         Timing::PostResetTimingCoordinator* timing{nullptr};
         Driver::Scheduler* scheduler{nullptr};
+        // Called once the Annex H gate has opened and the BUS_MANAGER_ID probe
+        // has answered: the policies that wait on the fallback IRM (gap count)
+        // are evaluated again. Without it a bus with no bus manager kept gap
+        // 63 for the whole session (four nodes, 2026-10-28): the gate opened
+        // after the last policy evaluation and nothing re-ran it.
+        std::function<void()> onSettled{};
     };
 
     explicit IRMFallbackCoordinator(Deps deps) noexcept;

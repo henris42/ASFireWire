@@ -143,6 +143,12 @@ void IRMFallbackCoordinator::MaybeEvaluate(uint64_t nowNs) noexcept {
         snapshot_.state = IRMFallbackState::BMExists;
         snapshot_.plannedAction = IRMFallbackAction::BMAlreadyExists;
     }
+    ASFW_LOG(Controller, "[IRM Fallback] gen=%u settled: %{public}s (bmid=0x%08x)", generation,
+             snapshot_.noBusManagerDetected ? "no bus manager; the IRM acts" : "a bus manager exists",
+             bmidValue);
+    if (deps_.onSettled) {
+        deps_.onSettled();
+    }
 }
 
 void IRMFallbackCoordinator::OnRuntimeEvidenceUpdated(const BusManagerRuntimeState& bmState) noexcept {

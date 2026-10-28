@@ -424,7 +424,15 @@ ControllerCore::ControllerCore(ControllerConfig config, RolePolicy initialPolicy
         Bus::IRMFallbackCoordinator::Deps fallbackDeps{
             .hardware = *deps_.hardware,
             .timing = &deps_.busReset->PostResetTiming(),
-            .scheduler = deps_.scheduler.get()
+            .scheduler = deps_.scheduler.get(),
+            // After the current call chain, on the controller's queue: the
+            // probe may settle synchronously inside OnTopologyReady, which
+            // evaluates the policies itself right after.
+            .onSettled = [this] {
+                if (deps_.scheduler) {
+                    deps_.scheduler->DispatchAsyncAfter(0, [this] { EvaluateActivePolicies(); });
+                }
+            }
         };
         irmFallback_ = std::make_shared<Bus::IRMFallbackCoordinator>(fallbackDeps);
         ASFW_LOG(Controller, "✅ IRMFallbackCoordinator created");
