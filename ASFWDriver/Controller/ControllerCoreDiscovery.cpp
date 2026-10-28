@@ -962,10 +962,47 @@ void ControllerCore::EvaluateGapPolicy() noexcept {
     in.isochSessionActive = deps_.isochSessionActive && deps_.isochSessionActive();
 
     gapPolicy_->Evaluate(in, *this);
-    if (gapPolicy_->Snapshot().lastDecision == Bus::GapPolicyDecision::DeferIsochSessionActive) {
+    const auto decision = gapPolicy_->Snapshot().lastDecision;
+    if (decision == Bus::GapPolicyDecision::DeferIsochSessionActive) {
         ASFW_LOG(Controller,
                  "[GapPolicy] gap=%u (optimal %u) left alone while an isoch session is active gen=%u",
                  in.currentGapCount, gapPolicy_->Snapshot().expectedGapCount, in.generation);
+    }
+    // Every decision, once per generation: a bus of four nodes ran gap 63 for
+    // a whole session (three 828mkIIs, 2026-10-28) and nothing said why.
+    if (in.generation != gapPolicyLoggedGeneration_ || decision != gapPolicyLoggedDecision_) {
+        gapPolicyLoggedGeneration_ = in.generation;
+        gapPolicyLoggedDecision_ = decision;
+        const auto name = [](Bus::GapPolicyDecision d) -> const char* {
+            using D = Bus::GapPolicyDecision;
+            switch (d) {
+            case D::None: return "none";
+            case D::SuppressedByRoleMode: return "suppressed-role-mode";
+            case D::SuppressedByActivityLevel: return "suppressed-activity-level";
+            case D::SuppressedByTopology: return "suppressed-topology";
+            case D::SuppressedNotBMOrFallbackIRM: return "suppressed-not-bm-or-fallback-irm";
+            case D::SuppressedSingleNodeBus: return "suppressed-single-node";
+            case D::DeferMaxHopsUnavailable: return "defer-hops-unknown";
+            case D::DeferBetaRepeaterUnknown: return "defer-beta-repeaters-unknown";
+            case D::AlreadyOptimal: return "already-optimal";
+            case D::GapMismatchRequiresLongReset: return "mismatch-long-reset";
+            case D::GapOptimizationRequired: return "optimize";
+            case D::FailedRetryLimit: return "failed-retry-limit";
+            case D::FailedExecutorUnavailable: return "failed-no-executor";
+            case D::FailedGenerationStale: return "failed-stale-generation";
+            case D::DeferIsochSessionActive: return "defer-isoch-active";
+            }
+            return "?";
+        };
+        ASFW_LOG(Controller,
+                 "[GapPolicy] gen=%u decision=%{public}s gap=%u optimal=%u hops=%u nodes=%u "
+                 "bm=%u irm=%u root=%u fallbackGate=%u noBM=%u activity=%u",
+                 in.generation, name(decision), in.currentGapCount,
+                 gapPolicy_->Snapshot().expectedGapCount, in.maxHopsFromRoot,
+                 in.topology ? in.topology->nodeCount : 0U, in.localIsBM ? 1U : 0U,
+                 in.localIsIRM ? 1U : 0U, state.localIsRoot ? 1U : 0U,
+                 in.irmFallbackGateOpen ? 1U : 0U, in.irmFallbackNoBMDetected ? 1U : 0U,
+                 static_cast<unsigned>(in.activityLevel));
     }
 }
 

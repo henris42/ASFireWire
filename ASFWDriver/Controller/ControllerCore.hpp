@@ -389,6 +389,8 @@ class ControllerCore final : private Role::IPhyConfigReset,
     std::unique_ptr<Bus::CyclePolicyCoordinator> cyclePolicy_;
     std::unique_ptr<Bus::RootSelectionCoordinator> rootSelection_;
     std::unique_ptr<Bus::GapPolicyCoordinator> gapPolicy_;
+    uint32_t gapPolicyLoggedGeneration_{0};
+    Bus::GapPolicyDecision gapPolicyLoggedDecision_{Bus::GapPolicyDecision::None};
     std::unique_ptr<Bus::PowerLinkPolicyCoordinator> powerLinkPolicy_;
     std::shared_ptr<Bus::SpeedMapService> speedMapService_;
 
