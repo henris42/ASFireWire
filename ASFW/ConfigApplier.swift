@@ -28,6 +28,11 @@ final class ConfigApplier {
     /// marked checked without it.
     private var rateAttempts: [UInt64: Int] = [:]
     private static let maxRateAttempts = 4
+    /// A setting that did not apply (the unit re-describes after an optical
+    /// change and refuses the next write for a moment) is retried on later
+    /// polls this many times before the generation counts as checked.
+    private var settleAttempts: [UInt64: Int] = [:]
+    private static let maxSettleAttempts = 3
 
     /// A device's settings are checked once per bus generation, so a slow poll
     /// is enough; each pass is one driver-local call per controller.
@@ -119,6 +124,7 @@ final class ConfigApplier {
             Self.say("\(name): no remembered settings; taking those of \(sibling.displayLabel).")
         }
         var changed = 0
+        var unsettled = 0
         for (setting, value) in wanted.sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
             guard current.supports(setting) else { continue }
             let now: UInt32
@@ -134,11 +140,22 @@ final class ConfigApplier {
                 changed += 1
                 Self.say("\(name): \(setting.title) \(now) -> \(value).")
             case .failed(let kr):
+                unsettled += 1
                 Self.say("\(name): \(setting.title) not applied: \(connector.interpretIOReturn(kr)).")
             case .pending:
-                break
+                unsettled += 1
             }
         }
+        if unsettled > 0 {
+            let attempts = (settleAttempts[device.guid] ?? 0) + 1
+            settleAttempts[device.guid] = attempts
+            if attempts < Self.maxSettleAttempts {
+                Self.say("\(name): \(unsettled) setting(s) not applied yet; will retry.")
+                return
+            }
+            Self.say("\(name): \(unsettled) setting(s) left unapplied after \(attempts) attempts.")
+        }
+        settleAttempts.removeValue(forKey: device.guid)
         if let sibling, !matchSampleRate(of: device, to: sibling, name: name) {
             // Core Audio has not published the unit yet: leave the generation
             // unchecked so the next poll tries the rate again, a few times.
