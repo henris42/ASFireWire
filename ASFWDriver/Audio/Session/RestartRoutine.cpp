@@ -260,7 +260,7 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
     if (request.binding == nullptr) {
         return refused(kIOReturnNotReady, "BindingSource");
     }
-    ASFW_LOG(Audio, "[Session] using isoch channels d2h=%u h2d=%u GUID=%llx",
+    ASFW_LOG(Audio, "[Session] provisional isoch channels d2h=%u h2d=%u GUID=%llx (the IRM assigns the live ones)",
              channels.deviceToHostIsoChannel, channels.hostToDeviceIsoChannel, guid);
 
     if (TeardownRequested()) {
