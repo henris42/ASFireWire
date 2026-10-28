@@ -661,6 +661,14 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
                     &inputFormats[currentFormatIndex]))) {
             return error;
         }
+        // Core Audio numbers device channels from 1; a stream whose starting
+        // channel is left at 0 maps its elements nowhere in the device's
+        // channel space. Capture never reached a client while playback did
+        // (b104-b134); this is the one input/output asymmetry left.
+        if (!requireAdkSuccess("inputStream.SetStartingChannel",
+                               ivars.inputStream->SetStartingChannel(1))) {
+            return error;
+        }
     }
 
     if (hasOutputStream) {
@@ -707,6 +715,10 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
                 "outputStream.SetCurrentStreamFormat",
                 ivars.outputStream->SetCurrentStreamFormat(
                     &outputFormats[currentFormatIndex]))) {
+            return error;
+        }
+        if (!requireAdkSuccess("outputStream.SetStartingChannel",
+                               ivars.outputStream->SetStartingChannel(1))) {
             return error;
         }
     }
