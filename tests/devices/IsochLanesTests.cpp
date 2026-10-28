@@ -13,17 +13,17 @@ using ASFW::Driver::HardwareInterface;
 using ASFW::Driver::IsochLanes;
 using ASFW::Driver::IsochService;
 
-// The host stub reports four isoch contexts per direction: two lanes of two.
+// The host stub reports four isoch contexts per direction: four lanes of one.
 TEST(IsochLanesTests, LaneCountComesFromTheControllerContextProbe) {
     IsochService isoch;
     IsochLanes lanes{isoch};
     HardwareInterface hardware{};
     EXPECT_EQ(lanes.LaneCountIfKnown(), 1U);
-    EXPECT_EQ(lanes.LaneCount(hardware), 2U);
-    EXPECT_EQ(lanes.LaneCountIfKnown(), 2U);
+    EXPECT_EQ(lanes.LaneCount(hardware), 4U);
+    EXPECT_EQ(lanes.LaneCountIfKnown(), 4U);
     EXPECT_EQ(lanes.Lane(0), &isoch);
     EXPECT_EQ(lanes.Lane(1), nullptr);
-    EXPECT_EQ(lanes.EnsureLane(2, hardware), nullptr);
+    EXPECT_EQ(lanes.EnsureLane(4, hardware), nullptr);
     EXPECT_EQ(lanes.EnsureLane(IsochLanes::kMaxLanes, hardware), nullptr);
 }
 

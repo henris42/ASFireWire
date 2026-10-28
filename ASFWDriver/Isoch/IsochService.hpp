@@ -40,7 +40,12 @@ class IsochService {
     ~IsochService() = default;
     // Streams per direction a device may use on a shared controller: its
     // master and one secondary. Devices with more streams need the whole card.
-    static constexpr uint32_t kLaneWidth = 2;
+    // Contexts per lane in each direction. One: a streaming device uses one
+    // stream per direction (every MOTU, most AV/C and DICE devices), and a
+    // four-context controller then carries four devices. Lane 0 keeps the
+    // full width while it is alone, so a multi-stream DICE device streams
+    // with its secondaries until another device claims a lane.
+    static constexpr uint32_t kLaneWidth = 1;
     [[nodiscard]] uint8_t ContextBase() const noexcept { return contextBase_; }
     [[nodiscard]] uint32_t StreamLimit() const noexcept { return streamLimit_; }
     // Narrow the service to the first `limit` streams per direction (lane 0

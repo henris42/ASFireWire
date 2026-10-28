@@ -3,10 +3,10 @@
 //
 // IsochLanes.hpp - one isoch service per streaming device on a controller.
 //
-// An OHCI controller has several IT and IR contexts (eight on the TI XIO2213,
-// four at minimum). Lane L owns contexts [L * kLaneWidth, (L+1) * kLaneWidth):
-// its IsochService runs a device's master stream on the first and a secondary
-// on the second. Lane 0 is the controller's original service (ServiceContext::
+// An OHCI controller has several IT and IR contexts (four confirmed on the TI
+// XIO2213, four at minimum). Lane L owns context L in each direction (the
+// lane width): its IsochService runs a device's master stream on it. Lane 0
+// is the controller's original service (ServiceContext::
 // isoch, also used by DV capture and the channel snoop); the others are made
 // on demand. Interrupts are routed by hardware context index to the lane that
 // owns it. Two 828mkIIs on one card (2026-10-28) could stream only one at a
