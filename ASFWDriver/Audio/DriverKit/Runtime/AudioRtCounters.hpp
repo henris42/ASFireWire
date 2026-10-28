@@ -49,6 +49,16 @@ struct AudioRtCounters final {
     std::atomic<uint64_t> rxPackets{0};
     std::atomic<uint64_t> rxDecodedFrames{0};
     std::atomic<uint64_t> rxDiscontinuities{0};
+    // Packets the processor could not write: no input binding, or a frame the
+    // ring could not address. Both leave the capture ring untouched (b125:
+    // every input read exact zero while the packets arrived and were timed).
+    std::atomic<uint64_t> rxInvalidBinding{0};
+    std::atomic<uint64_t> rxInvalidRange{0};
+    // Largest |sample| decoded since the last [RxContent] line (24-bit), the
+    // first wire sample word of the last decoded packet, its processor status.
+    std::atomic<uint32_t> rxPeakQ24{0};
+    std::atomic<uint32_t> rxLastSampleWord{0};
+    std::atomic<uint32_t> rxLastStatus{0};
 
     std::atomic<uint64_t> ztsPublished{0};
     std::atomic<uint64_t> ztsRxPublished{0};
@@ -97,6 +107,11 @@ struct AudioRtCounters final {
         rxPackets.store(0, std::memory_order_relaxed);
         rxDecodedFrames.store(0, std::memory_order_relaxed);
         rxDiscontinuities.store(0, std::memory_order_relaxed);
+        rxInvalidBinding.store(0, std::memory_order_relaxed);
+        rxInvalidRange.store(0, std::memory_order_relaxed);
+        rxPeakQ24.store(0, std::memory_order_relaxed);
+        rxLastSampleWord.store(0, std::memory_order_relaxed);
+        rxLastStatus.store(0, std::memory_order_relaxed);
 
         ztsPublished.store(0, std::memory_order_relaxed);
         ztsRxPublished.store(0, std::memory_order_relaxed);

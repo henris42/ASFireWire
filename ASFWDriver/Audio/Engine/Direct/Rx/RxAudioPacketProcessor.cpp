@@ -117,6 +117,16 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(
         }
     }
 
+    {
+        const size_t sampleOffset = codec.SampleByteOffset();
+        if (sampleOffset + 4U <= strideBytes) {
+            uint32_t wordBE = 0;
+            std::memcpy(&wordBE, data + sampleOffset, sizeof(wordBE));
+            result.firstSampleWord = OSSwapBigToHostInt32(wordBE);
+        }
+    }
+
+    float peak = 0.0f;
     for (size_t i = 0; i < eventCount; ++i) {
         float* frameOut = writer_.Frame(absoluteFrame + i);
         if (!frameOut) {
@@ -136,7 +146,13 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(
             std::span<const uint8_t>(data + i * strideBytes, strideBytes),
             channels, channelOffset, effectiveMap,
             frameOut + channelOffset, delayedOut);
+        for (uint32_t ch = 0; ch < channels; ++ch) {
+            const float sample = frameOut[channelOffset + ch];
+            const float magnitude = sample < 0.0f ? -sample : sample;
+            if (magnitude > peak) peak = magnitude;
+        }
     }
+    result.peakQ24 = peak >= 1.0f ? 0x7FFFFFU : static_cast<uint32_t>(peak * 8388607.0f);
 
     if (publishTimeline) {
         const uint64_t producedEnd = absoluteFrame + eventCount;

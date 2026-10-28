@@ -166,6 +166,25 @@ kern_return_t ReleaseWireTransport(ASFWAudioDriver_IVars& ivars,
                  control->counters.txPackets.load(std::memory_order_relaxed),
                  control->counters.txSilenceSubstitutions.load(std::memory_order_relaxed),
                  control->counters.txUnderruns.load(std::memory_order_relaxed));
+        // The capture side of the same stream: packets seen, frames the
+        // decoder wrote into the input ring, and why it did not write.
+        ASFW_LOG(DirectAudio,
+                 "ADK DBG STOPIO RX guid=0x%016llx seen=%llu data=%llu noData=%llu decoded=%llu noBind=%llu "
+                 "range=%llu geom=%llu badCip=%llu short=%llu lastStatus=%u word=0x%08x ringWrite=%llu ringRead=%llu",
+                 ivars.device.guid,
+                 control->rxPacketsSeen.load(std::memory_order_relaxed),
+                 control->rxDataPackets.load(std::memory_order_relaxed),
+                 control->rxNoDataPackets.load(std::memory_order_relaxed),
+                 control->counters.rxDecodedFrames.load(std::memory_order_relaxed),
+                 control->counters.rxInvalidBinding.load(std::memory_order_relaxed),
+                 control->counters.rxInvalidRange.load(std::memory_order_relaxed),
+                 control->rxGeometryMismatch.load(std::memory_order_relaxed),
+                 control->rxInvalidCipHeaders.load(std::memory_order_relaxed),
+                 control->rxShortPackets.load(std::memory_order_relaxed),
+                 control->counters.rxLastStatus.load(std::memory_order_relaxed),
+                 control->counters.rxLastSampleWord.load(std::memory_order_relaxed),
+                 control->captureRingWriteFrame.load(std::memory_order_relaxed),
+                 control->captureRingReadFrame.load(std::memory_order_relaxed));
         // Whole-stream cadence, for streams too short for a [TxCadence] heartbeat.
         const uint64_t data = control->counters.txDataPackets.load(std::memory_order_relaxed);
         const uint64_t noData = control->counters.txNoDataPackets.load(std::memory_order_relaxed);

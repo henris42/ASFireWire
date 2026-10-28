@@ -269,9 +269,41 @@ void DirectAudioReceiveConsumer::ConsumePacket(
             case DirectRxWriteStatus::kGeometryMismatch:
                 counters->rxGeometryMismatch.fetch_add(1, std::memory_order_relaxed);
                 break;
+            case DirectRxWriteStatus::kInvalidBinding:
+                counters->counters.rxInvalidBinding.fetch_add(1, std::memory_order_relaxed);
+                break;
+            case DirectRxWriteStatus::kInvalidRange:
+                counters->counters.rxInvalidRange.fetch_add(1, std::memory_order_relaxed);
+                break;
             default:
                 break;
         }
+        // Content telemetry (b125: every input read exact zero while the
+        // packets arrived and were timed): what the decoder wrote, if anything.
+        counters->counters.rxLastStatus.store(static_cast<uint32_t>(result.status),
+                                              std::memory_order_relaxed);
+        if (result.framesDecoded != 0 && result.status == DirectRxWriteStatus::kAvailable) {
+            counters->counters.rxLastSampleWord.store(result.firstSampleWord, std::memory_order_relaxed);
+            if (result.peakQ24 > counters->counters.rxPeakQ24.load(std::memory_order_relaxed)) {
+                counters->counters.rxPeakQ24.store(result.peakQ24, std::memory_order_relaxed);
+            }
+        }
+        ASFW_LOG_RL(DirectAudio, "rx/content", 5000, OS_LOG_TYPE_DEFAULT,
+                    "[RxContent] bound=%u status=%u seen=%llu data=%llu decoded=%llu noBind=%llu range=%llu "
+                    "geom=%llu badCip=%llu peakQ24=%u word=0x%08x ring write=%llu read=%llu cap=%u ch=%u",
+                    inputWriter_.IsBound() ? 1U : 0U, static_cast<uint32_t>(result.status),
+                    counters->rxPacketsSeen.load(std::memory_order_relaxed),
+                    counters->rxDataPackets.load(std::memory_order_relaxed),
+                    counters->counters.rxDecodedFrames.load(std::memory_order_relaxed),
+                    counters->counters.rxInvalidBinding.load(std::memory_order_relaxed),
+                    counters->counters.rxInvalidRange.load(std::memory_order_relaxed),
+                    counters->rxGeometryMismatch.load(std::memory_order_relaxed),
+                    counters->rxInvalidCipHeaders.load(std::memory_order_relaxed),
+                    counters->counters.rxPeakQ24.exchange(0, std::memory_order_relaxed),
+                    counters->counters.rxLastSampleWord.load(std::memory_order_relaxed),
+                    counters->captureRingWriteFrame.load(std::memory_order_relaxed),
+                    counters->captureRingReadFrame.load(std::memory_order_relaxed),
+                    inputView_.memory.inputFrameCapacity, inputView_.memory.inputChannels);
         if (result.hasValidCip) {
             if (result.syt == 0xffff) {
                 counters->rxNoDataPackets.fetch_add(1, std::memory_order_relaxed);

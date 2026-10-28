@@ -28,6 +28,10 @@ struct RxAudioPacketProcessorResult final {
     /// The block stride the decode actually used, in quadlets. Equals `dbs` unless a
     /// wrong-DBS quirk or a non-quadlet block layout overrode it.
     uint32_t strideQuadlets{0};
+    // Content telemetry: the largest |sample| written by this packet (24-bit)
+    // and the raw first sample word of its first block, big-endian.
+    uint32_t peakQ24{0};
+    uint32_t firstSampleWord{0};
     uint8_t dbc{0};
     bool mapRejected{false};
 };

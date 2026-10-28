@@ -28,6 +28,10 @@ public:
     /// Compute stride in quadlets for one data block given the wire CIP DBS.
     [[nodiscard]] virtual uint32_t StrideQuadlets(uint8_t cipDbs) const noexcept = 0;
 
+    /// Byte offset of the first sample inside a data block (telemetry reads the
+    /// raw sample word there): 0 for quadlet-per-sample formats.
+    [[nodiscard]] virtual uint32_t SampleByteOffset() const noexcept { return 0; }
+
     /// Validate whether this data block geometry can be decoded for the requested channels.
     [[nodiscard]] virtual bool ValidateGeometry(
         uint32_t channels,

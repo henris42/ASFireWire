@@ -43,6 +43,8 @@ public:
             : static_cast<uint32_t>(cipDbs);
     }
 
+    [[nodiscard]] uint32_t SampleByteOffset() const noexcept override { return pcmByteOffset_; }
+
     [[nodiscard]] bool ValidateGeometry(
         uint32_t channels,
         uint32_t channelOffset,
