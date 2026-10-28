@@ -90,7 +90,7 @@ final class ConfigApplier {
             guard checkedGeneration[device.guid] != device.generation, !applying.contains(device.guid) else { continue }
             var wanted = store.remembered(for: device.guid)
             var sibling: ASFWDriverConnector.FWDeviceInfo?
-            if wanted.isEmpty {
+            if wanted.isEmpty && store.inheritsSiblingSettings {
                 // A unit the app has never configured (a third 828mkII plugged
                 // into a rack of two, 2026-10-28) takes the settings of a unit
                 // of the same model that is on the bus now, sample rate

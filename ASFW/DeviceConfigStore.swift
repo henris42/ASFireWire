@@ -92,6 +92,21 @@ struct DeviceConfigStore {
         defaults.set(all, forKey: Self.defaultsKey)
     }
 
+    /// Whether a MOTU unit the app never configured takes a same-model
+    /// sibling's settings and sample rate (the agent's seeding, off unless the
+    /// user turns it on: `defaults write net.asfw.app inheritSiblingSettings -bool YES`).
+    static let inheritSiblingSettingsKey = "inheritSiblingSettings"
+    var inheritsSiblingSettings: Bool {
+        if let fileURL {
+            guard let data = try? Data(contentsOf: fileURL),
+                  let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
+                return false
+            }
+            return plist[Self.inheritSiblingSettingsKey] as? Bool ?? false
+        }
+        return defaults.bool(forKey: Self.inheritSiblingSettingsKey)
+    }
+
     /// Every device with remembered settings.
     func rememberedGUIDs() -> [UInt64] {
         table().keys.compactMap { UInt64($0, radix: 16) }.sorted()
