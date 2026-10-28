@@ -817,3 +817,103 @@ TEST(IsochRxTimingTests, MotuReceiveCycleGapReanchorsWithoutDisturbingTheTxServo
     EXPECT_EQ(after.phaseErrorTicks, 0);
     EXPECT_EQ(after.measuredStepQ32, MotuSphClockServo::NominalStepQ32(kRate));
 }
+
+//==============================================================================
+// 828mkII (protocol v2) capture through the whole consumer: a 22-chunk packet
+// with a tone on the mix return and analog 1 must land in the input ring on
+// the catalog's host channels, and the content telemetry must see it (b128
+// on the target: decoded frames advanced, the wire word was non-zero, the
+// peak stayed 0 and every input read exact zero).
+//==============================================================================
+
+namespace {
+
+constexpr size_t kMk2Channels = 22;
+constexpr size_t kMk2Dbs = 19;  // DataBlockQuadlets(22 PCM + 2 message chunks)
+
+struct Mk2ReceiveRig {
+    alignas(4) std::array<uint8_t, 8 + 8 + kMotuFramesPerPacket * kMk2Dbs * 4> packet{};
+    std::array<float, 4 * kMotuFramesPerPacket * kMk2Channels> input{};
+    ASFW::Audio::Runtime::AudioTransportControlBlock control{};
+    FixedDirectAudioBindingSource source;
+    ASFW::AudioEngine::Direct::Rx::DirectAudioReceiveConsumer consumer;
+    ASFW::Audio::Wire::MotuRxPayloadCodec codec{kMk2Channels, ASFW::Encoding::Motu::k828mk2Capture,
+                                                /*v3=*/false, 2, 10};
+    ASFW::Audio::Wire::MotuRxTimingObserver observer;
+    uint32_t descriptor{0};
+
+    Mk2ReceiveRig()
+        : source({
+              .generation = 1,
+              .inputBase = input.data(),
+              .inputBytes = sizeof(input),
+              .inputFrames = 4 * kMotuFramesPerPacket,
+              .inputChannels = kMk2Channels,
+              .control = &control,
+              .sampleRateHz = 48000,
+              .valid = true,
+          }),
+          consumer(&source,
+                   {
+                       .wireFormat = ASFW::Encoding::AudioWireFormat::kMotuPacked,
+                       .am824Slots = kMk2Dbs,
+                       .streamChannels = 0,  // the binding's width, as the session passes it
+                   }),
+          observer(&source) {
+        // CIP: SID 2, DBS 19, SPH set, DBC 0 / FMT 0x02 FDF 0x22 SYT 0xffff.
+        WriteBE32(packet.data() + 8, 0x02130400u);
+        WriteBE32(packet.data() + 12, 0x8222ffffu);
+        for (size_t block = 0; block < kMotuFramesPerPacket; ++block) {
+            uint8_t* data = packet.data() + 16 + block * kMk2Dbs * 4;
+            data[10] = 0xf9; data[11] = 0x51; data[12] = 0x1a;  // chunk 0: mix return L
+            data[13] = 0xf9; data[14] = 0x51; data[15] = 0x1a;  // chunk 1: mix return R
+            data[16] = 0x40; data[17] = 0x00; data[18] = 0x00;  // chunk 2: analog 1 = +0.5
+        }
+        consumer.SetPayloadCodec(&codec);
+        consumer.SetTimingObserver(&observer);
+        control.ResetForStart();
+    }
+
+    void Consume(uint32_t cycle, int64_t motuTicks) {
+        for (size_t block = 0; block < kMotuFramesPerPacket; ++block) {
+            WriteBE32(packet.data() + 16 + block * kMk2Dbs * 4,
+                      ASFW::Encoding::Motu::SphFromTick(
+                          ASFW::Encoding::Motu::WrapTick(motuTicks + static_cast<int64_t>(block) * 512)));
+        }
+        const uint16_t rawTimestamp = static_cast<uint16_t>((5u << 13) | cycle);
+        packet[0] = static_cast<uint8_t>(rawTimestamp & 0xffu);
+        packet[1] = static_cast<uint8_t>(rawTimestamp >> 8);
+        const ASFW::Isoch::IsochReceiveBatch batch{
+            .drainCycleTimer = EncodeCycleTimer(13, cycle, 64),
+            .drainHostTicks = 1'000'000 + descriptor * 166'667ULL,
+        };
+        const ASFW::Isoch::IsochReceivePacket isochPacket{
+            .descriptorIndex = descriptor++,
+            .payload = packet,
+        };
+        consumer.BeginReceiveBatch(batch);
+        consumer.ConsumePacket(batch, isochPacket);
+    }
+};
+
+} // namespace
+
+TEST(IsochRxTimingTests, Motu828mk2CaptureLandsInTheInputRingWithContentTelemetry) {
+    Mk2ReceiveRig rig;
+    rig.consumer.OnReceiveActivated();
+    rig.Consume(300, 0);
+    rig.Consume(301, 4096);
+
+    EXPECT_EQ(rig.control.counters.rxDecodedFrames.load(), 2 * kMotuFramesPerPacket);
+    EXPECT_EQ(rig.control.counters.rxInvalidBinding.load(), 0u);
+    EXPECT_EQ(rig.control.rxGeometryMismatch.load(), 0u);
+    EXPECT_EQ(rig.control.counters.rxLastStatus.load(),
+              static_cast<uint32_t>(ASFW::AudioEngine::Direct::Rx::DirectRxWriteStatus::kAvailable));
+    EXPECT_EQ(rig.control.counters.rxLastSampleWord.load(), 0xf9511af9u);
+    EXPECT_GT(rig.control.counters.rxPeakQ24.load(), 4000000u);
+    // Frame 0: host channel 0 is analog 1 (chunk 2), host channel 12 is mix return L (chunk 0).
+    EXPECT_NEAR(rig.input[0], 0.5f, 1e-5f);
+    EXPECT_NEAR(rig.input[12], static_cast<float>(static_cast<int32_t>(0xfff9511a)) / 8388607.0f, 1e-5f);
+    // Frame 9 (second packet) too.
+    EXPECT_NEAR(rig.input[9 * kMk2Channels + 0], 0.5f, 1e-5f);
+}

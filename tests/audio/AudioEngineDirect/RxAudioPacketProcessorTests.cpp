@@ -493,3 +493,54 @@ TEST(RxAudioPacketProcessorTests, HeaderlessRejectsPartialChannelFrame) {
 
 
 } // namespace ASFW::Tests::AudioEngineDirect
+
+namespace ASFW::Tests::AudioEngineDirect {
+namespace {
+
+// An 828mkII at 48 kHz with ADAT: 22 chunks, the catalog's capture port map,
+// PCM from byte 10 of each block. The mix return (chunks 0/1) carries a tone;
+// the decoded frame must carry it on the mapped host channels and the peak
+// must see it (b128/b131 on the target: [RxContent] peakQ24=0 with a
+// non-zero sample word on the wire).
+TEST(RxAudioPacketProcessorTests, Motu22ChunkPacketDecodesIntoTheMappedChannels) {
+    constexpr uint32_t kChannels = 22;
+    constexpr uint32_t kDbs = MotuDbs(kChannels);  // 19 quadlets
+    AudioTransportControlBlock control{};
+    std::vector<float> ring(static_cast<size_t>(kChannels) * 512, 0.0f);
+    AudioGraphBinding binding{
+        .guid = 1,
+        .sampleRateHz = 48000,
+        .memory = AudioStreamMemory{.inputBase = ring.data(), .inputFrameCapacity = 512,
+                                    .inputChannels = kChannels},
+        .control = &control,
+        .deviceToHostAm824Slots = kChannels,
+    };
+    DirectInputWriter writer{};
+    writer.Bind(&binding);
+    RxAudioPacketProcessor processor{writer};
+
+    const uint32_t q0 = MakeQuadlet0(static_cast<uint8_t>(kDbs)) | (1U << 10);  // SPH
+    std::vector<uint8_t> packet = MakePacket(q0, MakeMotuQuadlet1(), kDbs, 8);
+    for (uint32_t block = 0; block < 8; ++block) {
+        uint8_t* data = packet.data() + kIsochHeaderBytes + 8 + block * kDbs * 4;
+        // chunk 0 (mix return L) = 0xf9511a, chunk 1 = 0xf9511a, chunk 2 (analog 1) = 0x400000
+        data[10] = 0xf9; data[11] = 0x51; data[12] = 0x1a;
+        data[13] = 0xf9; data[14] = 0x51; data[15] = 0x1a;
+        data[16] = 0x40; data[17] = 0x00; data[18] = 0x00;
+    }
+    ASFW::Audio::Wire::MotuRxPayloadCodec codec(kChannels, ASFW::Encoding::Motu::k828mk2Capture,
+                                                 false, 2, 10);
+    const auto result = processor.ProcessPacket(packet.data(), packet.size(), 0, kChannels, codec,
+                                                0, true);
+    EXPECT_EQ(result.status, DirectRxWriteStatus::kAvailable);
+    EXPECT_EQ(result.framesDecoded, 8U);
+    EXPECT_EQ(result.firstSampleWord, 0xf9511af9U);
+    EXPECT_GT(result.peakQ24, 4000000U);  // 0.5 on analog 1
+    // Host channel 0 is analog 1 (chunk 2); host channel 12 is mix return L (chunk 0).
+    EXPECT_NEAR(ring[0], 0.5f, 1e-5f);
+    EXPECT_NEAR(ring[12], static_cast<float>(static_cast<int32_t>(0xfff9511a)) / 8388607.0f, 1e-5f);
+    EXPECT_EQ(control.counters.rxDecodedFrames.load(), 8U);
+}
+
+} // namespace
+} // namespace ASFW::Tests::AudioEngineDirect

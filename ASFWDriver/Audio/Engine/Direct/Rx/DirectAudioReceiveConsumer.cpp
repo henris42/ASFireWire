@@ -288,22 +288,44 @@ void DirectAudioReceiveConsumer::ConsumePacket(
                 counters->counters.rxPeakQ24.store(result.peakQ24, std::memory_order_relaxed);
             }
         }
-        ASFW_LOG_RL(DirectAudio, "rx/content", 5000, OS_LOG_TYPE_DEFAULT,
-                    "[RxContent] bound=%u status=%u seen=%llu data=%llu decoded=%llu noBind=%llu range=%llu "
-                    "geom=%llu badCip=%llu peakQ24=%u word=0x%08x ring write=%llu read=%llu cap=%u ch=%u",
-                    inputWriter_.IsBound() ? 1U : 0U, static_cast<uint32_t>(result.status),
-                    counters->rxPacketsSeen.load(std::memory_order_relaxed),
-                    counters->rxDataPackets.load(std::memory_order_relaxed),
-                    counters->counters.rxDecodedFrames.load(std::memory_order_relaxed),
-                    counters->counters.rxInvalidBinding.load(std::memory_order_relaxed),
-                    counters->counters.rxInvalidRange.load(std::memory_order_relaxed),
-                    counters->rxGeometryMismatch.load(std::memory_order_relaxed),
-                    counters->rxInvalidCipHeaders.load(std::memory_order_relaxed),
-                    counters->counters.rxPeakQ24.exchange(0, std::memory_order_relaxed),
-                    counters->counters.rxLastSampleWord.load(std::memory_order_relaxed),
-                    counters->captureRingWriteFrame.load(std::memory_order_relaxed),
-                    counters->captureRingReadFrame.load(std::memory_order_relaxed),
-                    inputView_.memory.inputFrameCapacity, inputView_.memory.inputChannels);
+        // Every 40000 packets (5 s of blocking cadence). Not ASFW_LOG_RL: that
+        // macro expands its arguments twice (ring log and os_log mirror), so
+        // the peak taken inside it reached the kernel log as 0 while the ring
+        // held the tone (b128/b131). The peak is taken once, here.
+        constexpr uint64_t kRxContentPeriodPackets = 40000;
+        const uint64_t seen = counters->rxPacketsSeen.load(std::memory_order_relaxed);
+        if (seen % kRxContentPeriodPackets == 1) {
+            const uint64_t ringWrite = counters->captureRingWriteFrame.load(std::memory_order_relaxed);
+            const uint32_t peakQ24 = counters->counters.rxPeakQ24.exchange(0, std::memory_order_relaxed);
+            // What the input ring holds at the newest frame: proof, independent
+            // of the decoder's own accounting, that samples reached the memory
+            // Core Audio reads.
+            int32_t ringCh0Q24 = 0;
+            int32_t ringCh12Q24 = 0;
+            if (ringWrite != 0) {
+                if (const float* frame = inputView_.memory.InputFrame(ringWrite - 1)) {
+                    ringCh0Q24 = static_cast<int32_t>(frame[0] * 8388607.0f);
+                    if (inputView_.memory.inputChannels > 12) {
+                        ringCh12Q24 = static_cast<int32_t>(frame[12] * 8388607.0f);
+                    }
+                }
+            }
+            ASFW_LOG(DirectAudio,
+                     "[RxContent] bound=%u status=%u seen=%llu data=%llu decoded=%llu noBind=%llu range=%llu "
+                     "geom=%llu badCip=%llu peakQ24=%u word=0x%08x ring write=%llu read=%llu cap=%u ch=%u "
+                     "ringNow ch0=%d ch12=%d",
+                     inputWriter_.IsBound() ? 1U : 0U, static_cast<uint32_t>(result.status), seen,
+                     counters->rxDataPackets.load(std::memory_order_relaxed),
+                     counters->counters.rxDecodedFrames.load(std::memory_order_relaxed),
+                     counters->counters.rxInvalidBinding.load(std::memory_order_relaxed),
+                     counters->counters.rxInvalidRange.load(std::memory_order_relaxed),
+                     counters->rxGeometryMismatch.load(std::memory_order_relaxed),
+                     counters->rxInvalidCipHeaders.load(std::memory_order_relaxed), peakQ24,
+                     counters->counters.rxLastSampleWord.load(std::memory_order_relaxed), ringWrite,
+                     counters->captureRingReadFrame.load(std::memory_order_relaxed),
+                     inputView_.memory.inputFrameCapacity, inputView_.memory.inputChannels,
+                     ringCh0Q24, ringCh12Q24);
+        }
         if (result.hasValidCip) {
             if (result.syt == 0xffff) {
                 counters->rxNoDataPackets.fetch_add(1, std::memory_order_relaxed);
