@@ -67,6 +67,36 @@ static ASFW::Audio::AudioCoordinator* GetAudioCoordinator(const ASFWAudioNub_IVa
     return ctx->audioCoordinator.get();
 }
 
+// The controller's isoch service has one transmit-preparation callback and one
+// zero-timestamp-anchor callback for every nub on the card. Both forward to the
+// nub whose session owns the transport right now, so a card with several
+// devices wakes the producer that is streaming, whichever nub registered last.
+static void ForwardToActiveNub(ServiceContext* ctx, uint64_t generation, bool ztsAnchor) noexcept {
+    if (!ctx || !ctx->audioCoordinator) {
+        return;
+    }
+    const uint64_t guid = ctx->audioCoordinator->ActiveGuid();
+    if (guid == 0) {
+        return;
+    }
+    ASFWAudioNub* nub = ctx->audioCoordinator->GetNub(guid);
+    if (!nub || !nub->ivars) {
+        return;
+    }
+    if (ztsAnchor) {
+        if (nub->ivars->ztsAnchorAction) nub->ZtsAnchorReady(nub->ivars->ztsAnchorAction, generation);
+    } else {
+        if (nub->ivars->txPreparationAction) nub->TxPreparationReady(nub->ivars->txPreparationAction, generation);
+    }
+}
+
+static void InstallSharedIsochCallbacks(ServiceContext* ctx) noexcept {
+    ctx->isoch.SetTxPreparationCallback(
+        [ctx](uint64_t generation) { ForwardToActiveNub(ctx, generation, /*ztsAnchor=*/false); });
+    ctx->isoch.SetZtsAnchorReadyCallback(
+        [ctx](uint64_t generation) { ForwardToActiveNub(ctx, generation, /*ztsAnchor=*/true); });
+}
+
 [[nodiscard]] static ASFW::Audio::AudioRuntimeRegistry* GetAudioRuntimeRegistry(
     const ASFWAudioNub_IVars* iv) noexcept {
     const ASFWDriver* parent = GetParentASFWDriver(iv);
@@ -331,10 +361,11 @@ kern_return_t IMPL(ASFWAudioNub, Stop)
             parent
                 ? static_cast<ServiceContext*>(parent->GetServiceContext())
                 : nullptr;
-        if (ctx) {
-            ctx->isoch.SetTxPreparationCallback({});
-            ctx->isoch.SetZtsAnchorReadyCallback({});
-        }
+        // The shared callbacks stay installed: they route to whichever nub's
+        // session owns the transport, and a nub that is gone is no longer
+        // published, so they find nothing for it. Clearing them here took the
+        // other nubs' wakes away (two 828mkIIs, 2026-10-28).
+        (void)ctx;
         if (ivars->txPreparationAction) {
             ivars->txPreparationAction->release();
             ivars->txPreparationAction = nullptr;
@@ -399,16 +430,15 @@ kern_return_t IMPL(ASFWAudioNub, RegisterTxPreparationAction)
     OSAction* oldAction = ivars->txPreparationAction;
     ivars->txPreparationAction = action;
 
+    // The isoch service is the controller's, shared by every nub on the card,
+    // and holds one callback. Installing this nub's own action there let the
+    // last nub to register take every wake for the whole card: with two
+    // 828mkIIs the first unit's producer was never woken (b113, 2026-10-28:
+    // prepReq=1 prepHandled=0, every start timing out), and the breakage
+    // outlived the second unit. The callback now resolves, at call time, the
+    // nub whose session owns the transport.
     if (action) {
-        ctx->isoch.SetTxPreparationCallback(
-            [this](uint64_t generation) {
-                if (ivars && ivars->txPreparationAction) {
-                    TxPreparationReady(
-                        ivars->txPreparationAction, generation);
-                }
-            });
-    } else {
-        ctx->isoch.SetTxPreparationCallback({});
+        InstallSharedIsochCallbacks(ctx);
     }
 
     if (oldAction) {
@@ -457,16 +487,9 @@ kern_return_t IMPL(ASFWAudioNub, RegisterZtsAnchorAction)
     OSAction* oldAction = ivars->ztsAnchorAction;
     ivars->ztsAnchorAction = action;
 
+    // Shared with every nub on the card; see RegisterTxPreparationAction.
     if (action) {
-        ctx->isoch.SetZtsAnchorReadyCallback(
-            [this](uint64_t generation) {
-                if (ivars && ivars->ztsAnchorAction) {
-                    ZtsAnchorReady(
-                        ivars->ztsAnchorAction, generation);
-                }
-            });
-    } else {
-        ctx->isoch.SetZtsAnchorReadyCallback({});
+        InstallSharedIsochCallbacks(ctx);
     }
 
     if (oldAction) {

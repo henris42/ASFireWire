@@ -72,6 +72,8 @@ public:
     // A session owns the isoch transport: starting, running, or waiting out a
     // bus reset. Read by the controller's gap policy.
     [[nodiscard]] bool HasActiveSession() const noexcept;
+    // The GUID whose session owns the isoch transport, 0 when none does.
+    [[nodiscard]] uint64_t ActiveGuid() const noexcept;
     // After async generation work has been aborted, before ROM discovery.
     void HandleBusReset() noexcept;
 
@@ -84,7 +86,10 @@ public:
     void BeginTeardown() noexcept;
     // The timer that keeps device-event quiet periods; installed by
     // composition before device callbacks begin.
-    void SetSessionTimer(Scheduling::ITimerScheduler* timer) noexcept { sessions_.SetTimerScheduler(timer); }
+    void SetSessionTimer(Scheduling::ITimerScheduler* timer) noexcept {
+        sessions_.SetTimerScheduler(timer);
+        host_.SetTimerScheduler(timer);
+    }
     void HandleHostTimingLoss(uint64_t guid) noexcept;
     [[nodiscard]] IOReturn MotuCaptureCommand(uint64_t guid, uint32_t stream,
                                             uint32_t command, std::string& output) noexcept;
