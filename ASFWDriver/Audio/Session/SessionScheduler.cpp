@@ -64,8 +64,12 @@ namespace {
 }
 
 [[nodiscard]] bool IsRetryableStatus(IOReturn status) noexcept {
+    // Offline: the device vanished under the stop (a bus reset while it was
+    // being stopped); after rebind it is there again and may be restarted
+    // (a unit sat silent for the rest of a 5-minute run, 2026-10-28).
     return status == kIOReturnTimeout || status == kIOReturnAborted ||
-           status == kIOReturnNotReady || status == kIOReturnNoDevice;
+           status == kIOReturnNotReady || status == kIOReturnNoDevice ||
+           status == kIOReturnOffline;
 }
 
 [[nodiscard]] bool IsRuntimeFault(DuplexRestartReason reason) noexcept {

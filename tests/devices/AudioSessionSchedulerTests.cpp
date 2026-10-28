@@ -496,6 +496,25 @@ TEST_F(SchedulerTest, ResetDuringTheFirstStartIsNotCountedAsShortLived) {
     EXPECT_EQ(rig.Stop(), kIOReturnSuccess);
 }
 
+// A stop that failed because the device went offline under it (a bus reset
+// mid-stop) leaves the session Failed; the rebind after rediscovery must still
+// restart it (a unit delivered 3072 frames in 300 s, 2026-10-28).
+TEST_F(SchedulerTest, OfflineStopFailureIsRecoveredByTheRebind) {
+    ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
+    rig.failures["device.stop"] = kIOReturnOffline;
+    EXPECT_EQ(rig.sessions.RequestRestart(rig.guid, DuplexRestartReason::kBusResetRebind),
+              kIOReturnOffline);
+    EXPECT_EQ(Snapshot().state, SessionState::Failed);
+    // The failed rebind followed a fresh start, so the next one waits out the
+    // short-lived-start back-off before it runs.
+    EXPECT_EQ(rig.sessions.RequestRestart(rig.guid, DuplexRestartReason::kBusResetRebind),
+              kIOReturnSuccess);
+    rig.Wait(1500);
+    EXPECT_EQ(Snapshot().state, SessionState::Running);
+    EXPECT_TRUE(rig.sessions.IsStreaming(rig.guid));
+    EXPECT_EQ(rig.Stop(), kIOReturnSuccess);
+}
+
 TEST_F(SchedulerTest, RepeatedFailedFaultRecoveriesStopUntilTheNextAttach) {
     ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
     for (uint32_t i = 0; i < ASFW::Audio::Session::SessionScheduler::kMaxFaultRestartFailures; ++i) {
