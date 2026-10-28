@@ -77,6 +77,13 @@ public:
     // After async generation work has been aborted, before ROM discovery.
     void HandleBusReset() noexcept;
 
+    // One device streams per controller (the transmit slot and the host
+    // transport are the controller's). A start claims the transport before it
+    // allocates anything, so a second device is refused with nothing touched
+    // and the running one is left alone (two 828mkIIs, 2026-10-28: the second
+    // StartIO re-allocated the shared TX slot under the first and both died).
+    [[nodiscard]] IOReturn ClaimTransport(uint64_t guid) noexcept;
+    void ReleaseTransportClaim(uint64_t guid) noexcept;
     [[nodiscard]] IOReturn StartStreaming(uint64_t guid, AudioClockConfig clock = {}) noexcept;
     [[nodiscard]] IOReturn StopStreaming(uint64_t guid) noexcept;
     [[nodiscard]] IOReturn RequestClockConfig(

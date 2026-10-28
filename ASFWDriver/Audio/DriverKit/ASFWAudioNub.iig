@@ -122,6 +122,12 @@ public:
     ASFWDriver* GetParentDriver() const LOCALONLY;
     void RecordRemoteDeviceStopResult(kern_return_t status) LOCALONLY;
     kern_return_t StopAudioStreamingOrRemoteResult() LOCALONLY;
+    // Claim the controller's isoch transport for this nub's device before any
+    // TX resource is touched: one streaming device per controller, and the
+    // transmit slot is shared. kIOReturnBusy while another device owns it.
+    kern_return_t ClaimAudioTransport() LOCALONLY;
+    // Give the claim back when the start fails before the session attached.
+    void ReleaseAudioTransportClaim() LOCALONLY;
 
     // Fire the registered DeviceClockChanged action (called by the DICE
     // backend when a health probe sees a healthy device at a foreign rate).

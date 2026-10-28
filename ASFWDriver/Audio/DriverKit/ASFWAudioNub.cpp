@@ -685,6 +685,17 @@ void ASFWAudioNub::RecordRemoteDeviceStopResult(kern_return_t status) {
     if (ivars) ASFW::Audio::Runtime::RemoteDeviceStopResult::Publish(ivars->remoteStopResult, status);
 }
 
+kern_return_t ASFWAudioNub::ClaimAudioTransport() {
+    if (!ivars || ivars->guid == 0) return kIOReturnNotReady;
+    auto* coordinator = GetAudioCoordinator(ivars);
+    return coordinator ? coordinator->ClaimTransport(ivars->guid) : kIOReturnNotReady;
+}
+
+void ASFWAudioNub::ReleaseAudioTransportClaim() {
+    if (!ivars || ivars->guid == 0) return;
+    if (auto* coordinator = GetAudioCoordinator(ivars)) coordinator->ReleaseTransportClaim(ivars->guid);
+}
+
 kern_return_t ASFWAudioNub::StopAudioStreamingOrRemoteResult() {
     // After Terminate, RPC dispatch itself may return kIOReturnIPCError before
     // StopAudioStreaming's handler executes. Consult the nub-owned proof first.

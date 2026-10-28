@@ -281,6 +281,31 @@ uint64_t RestartLikeOutcomes(ASFW::Audio::Host::AudioDeviceHost& host) {
 // Observer registration
 // ---------------------------------------------------------------------------
 
+// One streaming device per controller: a second device is refused at the
+// claim, before any transmit resource is touched, and its stop is not a
+// failure (two 828mkIIs, 2026-10-28: the refused unit's unwind was refused
+// too and it could never start again until the driver restarted).
+TEST(AudioCoordinatorRoutingTests, TransportClaimIsExclusiveAndARefusedDeviceCanStillStop) {
+    CoordinatorHarness h;
+    constexpr uint64_t kA = 0x0001f2000001f717ULL;
+    constexpr uint64_t kB = 0x0001f2000000f944ULL;
+    EXPECT_EQ(h.coordinator.ActiveGuid(), 0ULL);
+    EXPECT_EQ(h.coordinator.ClaimTransport(kA), kIOReturnSuccess);
+    EXPECT_EQ(h.coordinator.ActiveGuid(), kA);
+    EXPECT_EQ(h.coordinator.ClaimTransport(kA), kIOReturnSuccess);  // idempotent for the owner
+    EXPECT_EQ(h.coordinator.ClaimTransport(kB), kIOReturnBusy);
+    EXPECT_EQ(h.coordinator.ActiveGuid(), kA);
+    // The refused device owns nothing: stopping it succeeds and leaves A alone.
+    EXPECT_EQ(h.coordinator.StopStreaming(kB), kIOReturnSuccess);
+    EXPECT_EQ(h.coordinator.ActiveGuid(), kA);
+    // A claim nothing came of is given back; then B may take the transport.
+    h.coordinator.ReleaseTransportClaim(kA);
+    EXPECT_EQ(h.coordinator.ActiveGuid(), 0ULL);
+    EXPECT_EQ(h.coordinator.ClaimTransport(kB), kIOReturnSuccess);
+    EXPECT_EQ(h.coordinator.ActiveGuid(), kB);
+    h.coordinator.ReleaseTransportClaim(kB);
+}
+
 TEST(AudioCoordinatorRoutingTests, ConstructionRegistersObserverAndDestructionUnregistersIt) {
     FakeDeviceManager deviceManager;
     DeviceRegistry registry;

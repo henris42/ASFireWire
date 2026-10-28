@@ -305,6 +305,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
         using ASFW::Audio::Runtime::WireStopPlan;
         bool streamingStarted = false;
         bool txResourcesAllocated = false;
+        bool transportClaimed = false;
 
         const auto releaseTxResources = [&]() noexcept {
             ivars.txPayloadMap = nullptr;
@@ -366,6 +367,10 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                 }
             }
             releaseTxResources();
+            if (transportClaimed && !streamingStarted && ivars.device.audioNub) {
+                ivars.device.audioNub->ReleaseAudioTransportClaim();
+            }
+            transportClaimed = false;
             ASFW_LOG(Audio,
                      "ASFWAudioDevice: StartIO failed at %{public}s: 0x%x (%{public}s)",
                      stage,
@@ -576,6 +581,19 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             IOMemoryDescriptor* rawPayload = nullptr;
             IOMemoryDescriptor* rawMetadata = nullptr;
             IOMemoryDescriptor* rawControl = nullptr;
+
+            // The transmit slot is the controller's: a second device must be
+            // refused here, with nothing allocated, not after it has replaced
+            // the running device's ring (two 828mkIIs, 2026-10-28).
+            const kern_return_t claimKr = ivars.device.audioNub->ClaimAudioTransport();
+            if (claimKr != kIOReturnSuccess) {
+                ASFW_LOG(Audio, "ASFWAudioDevice: StartIO refused before touching TX resources: another device "
+                                "streams on this controller (0x%x %{public}s)",
+                         claimKr, ASFW::Logging::IOReturnName(claimKr));
+                kr = failStart(claimKr, "ClaimAudioTransport");
+                return;
+            }
+            transportClaimed = true;
 
             kern_return_t allocKr = ivars.device.audioNub->AllocateTxIsochResources(
                 0, numSlots, maxPacketBytes, interruptInterval,

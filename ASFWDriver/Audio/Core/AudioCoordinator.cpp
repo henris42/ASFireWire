@@ -258,6 +258,38 @@ bool AudioCoordinator::ServedByHost(uint64_t guid) const noexcept {
     return kind.has_value();
 }
 
+IOReturn AudioCoordinator::ClaimTransport(uint64_t guid) noexcept {
+    if (guid == 0) return kIOReturnBadArgument;
+    if (!lock_) return kIOReturnNotReady;
+    IOLockLock(lock_);
+    if (remoteLostStopResults_.contains(guid)) {
+        IOLockUnlock(lock_);
+        return kIOReturnNoDevice;
+    }
+    if (activeGuid_ != 0 && activeGuid_ != guid) {
+        const uint64_t active = activeGuid_;
+        IOLockUnlock(lock_);
+        ASFW_LOG_WARNING(Audio,
+                         "AudioCoordinator: transport claim refused GUID=0x%016llx; 0x%016llx streams on this controller "
+                         "(one streaming device per controller)",
+                         guid, active);
+        return kIOReturnBusy;
+    }
+    activeGuid_ = guid;
+    IOLockUnlock(lock_);
+    return kIOReturnSuccess;
+}
+
+void AudioCoordinator::ReleaseTransportClaim(uint64_t guid) noexcept {
+    if (guid == 0 || !lock_) return;
+    // Only a claim nothing came of: a session that attached owns the transport
+    // until StopStreaming.
+    const bool owned = sessions_.IsStreaming(guid) || sessions_.IsReconciling(guid);
+    IOLockLock(lock_);
+    if (activeGuid_ == guid && !owned) activeGuid_ = 0;
+    IOLockUnlock(lock_);
+}
+
 IOReturn AudioCoordinator::StartStreaming(uint64_t guid, AudioClockConfig clock) noexcept {
     if (publisher_.IsGeometryChangeBlocked(guid)) return kIOReturnNotReady;
     if (guid == 0) return kIOReturnBadArgument;
@@ -299,11 +331,14 @@ IOReturn AudioCoordinator::StartStreaming(uint64_t guid, AudioClockConfig clock)
                        "AudioCoordinator: StartStreaming failed GUID=0x%016llx kr=0x%x (%{public}s)",
                        guid,
                        kr, ASFW::Logging::IOReturnName(kr));
-        if (setActive && lock_) {
+        // Whether this call or an earlier ClaimTransport set it: nothing
+        // attached, so nothing owns the transport.
+        if (lock_) {
             IOLockLock(lock_);
             if (activeGuid_ == guid) activeGuid_ = 0;
             IOLockUnlock(lock_);
         }
+        (void)setActive;
         return kr;
     }
 
@@ -335,6 +370,16 @@ IOReturn AudioCoordinator::StopStreaming(uint64_t guid) noexcept {
         if (activeGuid_ != 0 && activeGuid_ != guid) {
             const uint64_t active = activeGuid_;
             IOLockUnlock(lock_);
+            // A device that never got the transport has nothing to stop: its
+            // start was refused and its unwind must succeed, or the refusal
+            // leaves it unable to start for the rest of the driver's life
+            // (two 828mkIIs, 2026-10-28). Busy only if it somehow streams.
+            if (!sessions_.IsStreaming(guid) && !sessions_.IsReconciling(guid)) {
+                ASFW_LOG(Audio,
+                         "AudioCoordinator: StopStreaming GUID=0x%016llx owns nothing (0x%016llx streams); nothing to stop",
+                         guid, active);
+                return kIOReturnSuccess;
+            }
             ASFW_LOG_WARNING(Audio,
                              "AudioCoordinator: StopStreaming busy requested=0x%016llx active=0x%016llx",
                              guid,
