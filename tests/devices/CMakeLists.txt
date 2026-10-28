@@ -538,6 +538,7 @@ add_device_test(AudioCoordinatorRoutingTests
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AVC/MAudioSpecialProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/DiceProfile.cpp"
     "${ASFW_DRIVER_DIR}/Isoch/IsochService.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/IsochLanes.cpp"
     "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTransmitContext.cpp"
     "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxDmaRing.cpp"
     "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxDescriptorSlab.cpp"
@@ -553,6 +554,28 @@ add_device_test(AudioCoordinatorRoutingTests
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Rx/DirectAudioReceiveConsumer.cpp"
     "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
 )
+# Isoch lanes: lane creation over the probed context count, lane 0 narrowing,
+# interrupt routing by hardware context index.
+add_device_test(IsochLanesTests
+    IsochLanesTests.cpp
+    "${ASFW_DRIVER_DIR}/Isoch/IsochService.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/IsochLanes.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTransmitContext.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxDmaRing.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxDescriptorSlab.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Receive/IsochReceiveContext.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Receive/IsochRxDmaRing.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Memory/IsochDMAMemoryManager.cpp"
+    "${ASFW_DRIVER_DIR}/Shared/Memory/DMAMemoryManager.cpp"
+    "${ASFW_DRIVER_DIR}/Shared/Rings/DescriptorRing.cpp"
+    "${ASFW_DRIVER_DIR}/Shared/Rings/BufferRing.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/AudioClockPublisher.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/DirectInputWriter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Rx/RxAudioPacketProcessor.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Rx/DirectAudioReceiveConsumer.cpp"
+    "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
+)
+
 
 # DICE family adapter on the audio device host: Describe refusals, runtime-fault
 # judgement, and device-event mapping (AUDIO_DEVICE_HOST.md §6 E5).

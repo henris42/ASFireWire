@@ -3,7 +3,7 @@
 #include "../Async/Interfaces/IAsyncSubsystemPort.hpp"
 #include "../Controller/ControllerCore.hpp"
 #include "../Diagnostics/StatusPublisher.hpp"
-#include "../Isoch/IsochService.hpp"
+#include "../Isoch/IsochLanes.hpp"
 #include "../Logging/Logging.hpp"
 #include "HardwareInterface.hpp"
 #include "OHCIConstants.hpp"
@@ -13,7 +13,7 @@ namespace ASFW::Driver {
 
 void InterruptDispatcher::HandleSnapshot(const InterruptSnapshot& snap, ControllerCore& controller,
                                          HardwareInterface& hardware, IODispatchQueue& workQueue,
-                                         IsochService& isoch, StatusPublisher& statusPublisher,
+                                         IsochLanes& lanes, StatusPublisher& statusPublisher,
                                          ASFW::Async::IAsyncSubsystemPort* asyncSubsystem) {
     controller.HandleInterrupt(snap);
     // After the global acknowledgement: which contexts completed, read and
@@ -34,11 +34,11 @@ void InterruptDispatcher::HandleSnapshot(const InterruptSnapshot& snap, Controll
         // secondary slices anchor to it.
         const uint32_t recvEvent = isochEvents.receive;
         workQueue.DispatchAsync(^{
-          for (uint32_t ctxIdx = 0; ctxIdx < IsochService::kMaxStreamsPerDirection; ++ctxIdx) {
+          for (uint32_t ctxIdx = 0; ctxIdx < IsochLanes::kMaxHardwareContexts; ++ctxIdx) {
               if ((recvEvent & (1u << ctxIdx)) == 0) {
                   continue;
               }
-              if (auto* rx = isoch.ReceiveContext(ctxIdx)) {
+              if (auto* rx = lanes.ReceiveContext(ctxIdx)) {
                   rx->Poll();
               }
           }
@@ -60,11 +60,11 @@ void InterruptDispatcher::HandleSnapshot(const InterruptSnapshot& snap, Controll
         // master (context 0) plus secondary contexts (event bit 1 << contextIndex).
         // Process every signalled context directly in ISR for lowest latency
         // (IT RefillRing is fast; DispatchAsync would add underrun-prone latency).
-        for (uint32_t ctxIdx = 0; ctxIdx < IsochService::kMaxStreamsPerDirection; ++ctxIdx) {
+        for (uint32_t ctxIdx = 0; ctxIdx < IsochLanes::kMaxHardwareContexts; ++ctxIdx) {
             if ((isochEvents.transmit & (1u << ctxIdx)) == 0) {
                 continue;
             }
-            if (auto* tx = isoch.TransmitContext(ctxIdx)) {
+            if (auto* tx = lanes.TransmitContext(ctxIdx)) {
                 tx->HandleInterrupt();
             }
         }

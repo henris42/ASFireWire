@@ -20,7 +20,7 @@ namespace ASFW::Driver {
 
 class ControllerCore;
 class HardwareInterface;
-class IsochService;
+class IsochLanes;
 class StatusPublisher;
 
 class InterruptDispatcher {
@@ -30,7 +30,7 @@ class InterruptDispatcher {
 
     void HandleSnapshot(const InterruptSnapshot& snap, ControllerCore& controller,
                         HardwareInterface& hardware, IODispatchQueue& workQueue,
-                        IsochService& isoch, StatusPublisher& statusPublisher,
+                        IsochLanes& lanes, StatusPublisher& statusPublisher,
                         ASFW::Async::IAsyncSubsystemPort* asyncSubsystem);
 };
 

@@ -234,7 +234,7 @@ void ExecuteRuntimeTeardown(ServiceContext& ctx, const QuiescePlan& plan) {
     // AudioCoordinator owns the neutral isoch session when it exists. Startup
     // failures before audio composition still need this direct fallback.
     if (!ctx.audioCoordinator) {
-        (void)ctx.isoch.StopAll();
+        (void)ctx.isochLanes.StopAll();
     }
 
     ctx.statusPublisher.BindListener(nullptr);
@@ -1125,7 +1125,7 @@ void ASFWDriver::InterruptOccurred_Impl(ASFWDriver_InterruptOccurred_Args) {
             ASFW_LOG_V2(Controller, "InterruptOccurred: captured snapshot intEvent=0x%08x",
                         snap.intEvent);
             ctx.interruptDispatcher.HandleSnapshot(snap, *ctx.controller, hardware,
-                                                   *ctx.workQueue, ctx.isoch,
+                                                   *ctx.workQueue, ctx.isochLanes,
                                                    ctx.statusPublisher,
                                                    ctx.deps.asyncController.get());
         });
