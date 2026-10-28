@@ -3,6 +3,8 @@
 
 #include "DirectAudioReceiveConsumer.hpp"
 
+#include <cstring>
+
 #include <span>
 
 #include "../../../../Common/TimingUtils.hpp"
@@ -443,18 +445,39 @@ void DirectAudioReceiveConsumer::ConsumePacket(
                 ++headerlessContinuousCycles_;
             }
         } else {
-        ResetReplayEpochForDiscontinuity(
-            ReplayResetReason::kReceiveCycleGap,
-            {
-                .descriptorIndex = packet.descriptorIndex,
-                .payloadBytes = static_cast<uint32_t>(packet.payload.size()),
-                .drainCycleTimer = batch.drainCycleTimer,
-                .receiveCycleTimestamp = result.receiveCycleTimestamp,
-                .syt = result.syt,
-                .expectedCycleOrdinal = (lastReplayCycleOrdinal_ + 1) % kCycleDomain,
-                .observedCycleOrdinal = cycleOrdinal,
-                .sampleFrame = absoluteFrameCursor_,
-            });
+            // A few missing cycles in an established CIP stream are a dropout:
+            // the replay re-anchors through the discontinuity path, but the
+            // stream is not restarted for it. Restarting turned one skipped
+            // cycle per ring lap into a restart loop (the unit on lane 1 of
+            // three 828mkIIs, 2026-10-28: 657 restarts in 70 s). Longer gaps
+            // still report the loss.
+            constexpr uint32_t kTolerableCycleGap = 8;
+            const bool dropout = cycleDelta <= kTolerableCycleGap && !headerless;
+            if (dropout && inputView_.control) {
+                const uint64_t gaps = inputView_.control->counters.rxDiscontinuities.fetch_add(
+                                          1, std::memory_order_relaxed) + 1;
+                if (gaps == 1 || gaps % 100 == 0) {
+                    ASFW_LOG(DirectAudio,
+                             "[RxCycleGap] count=%llu cycles=%u desc=%u bytes=%zu expected=%u observed=%u "
+                             "frame=%llu; re-anchored, not restarted",
+                             gaps, cycleDelta - 1U, packet.descriptorIndex, packet.payload.size(),
+                             (lastReplayCycleOrdinal_ + 1) % kCycleDomain, cycleOrdinal,
+                             absoluteFrameCursor_);
+                }
+            }
+            ResetReplayEpochForDiscontinuity(
+                ReplayResetReason::kReceiveCycleGap,
+                {
+                    .descriptorIndex = packet.descriptorIndex,
+                    .payloadBytes = static_cast<uint32_t>(packet.payload.size()),
+                    .drainCycleTimer = batch.drainCycleTimer,
+                    .receiveCycleTimestamp = result.receiveCycleTimestamp,
+                    .syt = result.syt,
+                    .expectedCycleOrdinal = (lastReplayCycleOrdinal_ + 1) % kCycleDomain,
+                    .observedCycleOrdinal = cycleOrdinal,
+                    .sampleFrame = absoluteFrameCursor_,
+                },
+                /*reportTimingLoss=*/!dropout);
             headerlessContinuousCycles_ = 0;
         }
     } else if (headerless && headerlessContinuousCycles_ != UINT32_MAX) {
