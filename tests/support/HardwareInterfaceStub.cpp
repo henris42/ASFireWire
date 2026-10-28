@@ -418,6 +418,10 @@ void HardwareInterface::ClearHCControlBits(uint32_t bits) noexcept {
     WriteScoped(Register32::kHCControlClear, ReadScoped(Register32::kHCControl) & ~bits);
 }
 
+// The host stub models a four-context controller (the OHCI minimum), so the
+// lane logic sees two lanes under test.
+uint32_t HardwareInterface::ProbeIsochContextCount() noexcept { return 4; }
+
 uint32_t HardwareInterface::ReadNodeID() const noexcept { return ReadScoped(Register32::kNodeID); }
 
 uint32_t HardwareInterface::ReadIntEvent() const noexcept { return ReadScoped(Register32::kIntEvent); }

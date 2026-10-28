@@ -99,6 +99,11 @@ class HardwareInterface {
     // direction `intEvent` signals. Call after the global events are
     // acknowledged; the caller then services every returned context.
     [[nodiscard]] IsochContextEvents TakeIsochContextEvents(uint32_t intEvent) noexcept;
+    // How many isochronous contexts the controller implements per direction
+    // (the smaller of IT and IR), found the OHCI way: set every mask bit and
+    // read back which exist; the previous mask is restored. Zero when the
+    // registers cannot be reached. Safe before any context runs.
+    [[nodiscard]] uint32_t ProbeIsochContextCount() noexcept;
 
     bool SendPhyConfig(std::optional<uint8_t> gapCount, std::optional<uint8_t> forceRootPhyId,
                        std::string_view caller);

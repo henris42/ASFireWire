@@ -1098,6 +1098,30 @@ void HardwareInterface::ClearHCControlBits(uint32_t bits) noexcept {
     if (auto access = TryBeginAccess()) access.WriteAndFlush(Register32::kHCControlClear, bits);
 }
 
+uint32_t HardwareInterface::ProbeIsochContextCount() noexcept {
+    auto access = TryBeginAccess();
+    if (!access) {
+        return 0;
+    }
+    // OHCI 1.1 §6.3.2 / §6.4.2: reading IsoXmitIntMaskSet/IsoRecvIntMaskSet
+    // returns the mask; writing all ones to Set then reading back shows the
+    // implemented contexts (unimplemented bits read as zero).
+    const auto probe = [&](Register32 set, Register32 clear) -> uint32_t {
+        const uint32_t before = access.Read(set);
+        access.WriteAndFlush(set, 0xFFFFFFFFu);
+        const uint32_t implemented = access.Read(set);
+        const uint32_t added = implemented & ~before;
+        if (added != 0) {
+            access.WriteAndFlush(clear, added);
+        }
+        return static_cast<uint32_t>(__builtin_popcount(implemented));
+    };
+    const uint32_t transmit = probe(Register32::kIsoXmitIntMaskSet, Register32::kIsoXmitIntMaskClear);
+    const uint32_t receive = probe(Register32::kIsoRecvIntMaskSet, Register32::kIsoRecvIntMaskClear);
+    ASFW_LOG(Hardware, "Isoch contexts implemented: IT=%u IR=%u", transmit, receive);
+    return transmit < receive ? transmit : receive;
+}
+
 uint32_t HardwareInterface::ReadNodeID() const noexcept {
     auto access = const_cast<HardwareInterface*>(this)->TryBeginAccess();
     return access ? access.Read(Register32::kNodeID) : 0;
