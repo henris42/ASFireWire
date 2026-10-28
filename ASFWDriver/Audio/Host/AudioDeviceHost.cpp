@@ -393,20 +393,36 @@ void AudioDeviceHost::RefreshPublication(uint64_t guid) noexcept {
             // moves after publication (§4.7 E7b); without one, against the
             // first publication as before.
             if (publisher_.GetNub(guid) != nullptr) {
+                bool unchanged = false;
                 if (committed.has_value()) {
-                    const bool unchanged = Model::ClassifyAgainstCommitted(*committed, value) ==
-                                           Model::GeometryRefreshDecision::kMayRefresh;
-                    if (!unchanged) publisher_.BlockGeometryChange(guid, family);
-                    Record(guid, family, HostEvent::Publish,
-                           unchanged ? HostOutcome::Refreshed : HostOutcome::RefusedGeometryChanged,
-                           unchanged ? kIOReturnSuccess : kIOReturnNotPermitted, 0, detailText);
+                    unchanged = Model::ClassifyAgainstCommitted(*committed, value) ==
+                                Model::GeometryRefreshDecision::kMayRefresh;
+                } else {
+                    unchanged = publisher_.RefreshNubProperties(guid, value, family);
+                }
+                if (unchanged) {
+                    Record(guid, family, HostEvent::Publish, HostOutcome::Refreshed, kIOReturnSuccess, 0,
+                           detailText);
                     return;
                 }
-                const bool unchanged = publisher_.RefreshNubProperties(guid, value, family);
-                Record(guid, family, HostEvent::Publish,
-                       unchanged ? HostOutcome::Refreshed : HostOutcome::RefusedGeometryChanged,
-                       unchanged ? kIOReturnSuccess : kIOReturnNotPermitted, 0, detailText);
-                return;
+                // The device's stream geometry changed under a live endpoint
+                // (an optical mode switched on an idle 828mkII, 2026-10-28).
+                // The Core Audio device cannot change its channel count in
+                // place. Idle: retire the endpoint and publish the new
+                // geometry, so the unit comes back with its new inputs instead
+                // of refusing every start until a power cycle. Streaming: the
+                // session's own restart carries the change; only latch here.
+                if (sessions_.IsStreaming(guid) || sessions_.IsReconciling(guid)) {
+                    publisher_.BlockGeometryChange(guid, family);
+                    Record(guid, family, HostEvent::Publish, HostOutcome::RefusedGeometryChanged,
+                           kIOReturnNotPermitted, 0, detailText);
+                    return;
+                }
+                publisher_.TerminateNub(guid, "geometry-changed");
+                ASFW_LOG(Audio,
+                         "[AudioHost] guid=%016llx family=%{public}s geometry changed while idle; "
+                         "endpoint recreated",
+                         guid, family);
             }
             if (const auto endpoint = runtime_.EnsureEndpointRuntime(guid)) {
                 endpoint->UpdateConfig(value);
