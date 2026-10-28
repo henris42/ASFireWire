@@ -75,9 +75,14 @@ void IsochDuplexHostTransport::SetTimingLossCallback(
 }
 
 kern_return_t IsochDuplexHostTransport::BeginSplitDuplex(uint64_t guid) noexcept {
+    // Claim the service first: a refused claim must not touch reservations
+    // that belong to the session already running on it (b122, 2026-10-28: a
+    // refused second unit released the running unit's channels and bandwidth).
+    const kern_return_t status = isoch_.BeginSplitDuplex(guid);
+    if (status != kIOReturnSuccess) return status;
     reservations_.ReleaseAll();
     diagnosticGuid_ = guid;
-    return isoch_.BeginSplitDuplex(guid);
+    return kIOReturnSuccess;
 }
 
 kern_return_t IsochDuplexHostTransport::ReservePlaybackResources(
