@@ -311,7 +311,7 @@ void DirectAudioReceiveConsumer::ConsumePacket(
                 }
             }
             ASFW_LOG(DirectAudio,
-                     "[RxContent] bound=%u status=%u seen=%llu data=%llu decoded=%llu noBind=%llu range=%llu "
+                     "[RxContent] bound=%u status=%u seen=%llu sytData=%llu decoded=%llu noBind=%llu range=%llu "
                      "geom=%llu badCip=%llu peakQ24=%u word=0x%08x ring write=%llu read=%llu cap=%u ch=%u "
                      "ringNow ch0=%d ch12=%d",
                      inputWriter_.IsBound() ? 1U : 0U, static_cast<uint32_t>(result.status), seen,
@@ -335,6 +335,30 @@ void DirectAudioReceiveConsumer::ConsumePacket(
         }
     }
 
+    if (result.status == DirectRxWriteStatus::kShortPacket) {
+        // Nothing to decode and nothing to realign: a packet too short for a
+        // CIP header carries no frames, so the cursor stands and the stream
+        // goes on. Treating it as a discontinuity restarted the stream once
+        // per packet (a 4-byte entry at one receive descriptor, 904 times in
+        // a minute, three 828mkIIs on one card, 2026-10-28).
+        if (!configuration_.isSecondary && inputView_.control) {
+            const uint64_t shortPackets =
+                inputView_.control->rxShortPackets.load(std::memory_order_relaxed);
+            if (shortPackets == 1 || shortPackets % 1000 == 0) {
+                const auto& bytes = packet.payload;
+                ASFW_LOG(DirectAudio,
+                         "[RxShort] count=%llu desc=%u bytes=%zu first=%02x%02x%02x%02x%02x%02x%02x%02x "
+                         "frame=%llu",
+                         shortPackets, packet.descriptorIndex, bytes.size(),
+                         bytes.size() > 0 ? bytes[0] : 0, bytes.size() > 1 ? bytes[1] : 0,
+                         bytes.size() > 2 ? bytes[2] : 0, bytes.size() > 3 ? bytes[3] : 0,
+                         bytes.size() > 4 ? bytes[4] : 0, bytes.size() > 5 ? bytes[5] : 0,
+                         bytes.size() > 6 ? bytes[6] : 0, bytes.size() > 7 ? bytes[7] : 0,
+                         absoluteFrameCursor_);
+            }
+        }
+        return;
+    }
     if (result.status == DirectRxWriteStatus::kAvailable ||
         result.status == DirectRxWriteStatus::kInvalidBinding) {
         absoluteFrameCursor_ += result.framesDecoded;

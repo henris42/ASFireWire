@@ -169,7 +169,7 @@ kern_return_t ReleaseWireTransport(ASFWAudioDriver_IVars& ivars,
         // The capture side of the same stream: packets seen, frames the
         // decoder wrote into the input ring, and why it did not write.
         ASFW_LOG(DirectAudio,
-                 "ADK DBG STOPIO RX guid=0x%016llx seen=%llu data=%llu noData=%llu decoded=%llu noBind=%llu "
+                 "ADK DBG STOPIO RX guid=0x%016llx seen=%llu sytData=%llu sytNoInfo=%llu decoded=%llu noBind=%llu "
                  "range=%llu geom=%llu badCip=%llu short=%llu lastStatus=%u word=0x%08x ringWrite=%llu ringRead=%llu",
                  ivars.device.guid,
                  control->rxPacketsSeen.load(std::memory_order_relaxed),
