@@ -274,7 +274,16 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
     if (TeardownRequested()) {
         return aborted("Configure");
     }
-    const auto prepared = family.Configure(channels, clock);
+    auto prepared = family.Configure(channels, clock);
+    if (!prepared && prepared.error() == kIOReturnTimeout && family.RetriesConfigureOnTimeout() &&
+        stillWanted() && !TeardownRequested()) {
+        // A register access to the device timed out while other units' streams
+        // were coming up on the bus (three 828mkIIs, 2026-10-28: the third
+        // start lost one read 120-200 ms after the other two). One more try
+        // before the start fails.
+        ASFW_LOG(Audio, "[Session] Configure timed out; retrying once GUID=%llx", guid);
+        prepared = family.Configure(channels, clock);
+    }
     if (!prepared) {
         return rollback(prepared.error(), "Configure");
     }

@@ -118,6 +118,7 @@ public:
     // (FamilyStageWait.hpp), so the chains and their wire traffic are unchanged.
     void SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept override;
     [[nodiscard]] StartReadinessPolicy GetStartReadinessPolicy() const noexcept override;
+    [[nodiscard]] bool RetriesConfigureOnTimeout() const noexcept override { return true; }
     [[nodiscard]] IOReturn LoadGeometry() override;
     [[nodiscard]] std::optional<AudioStreamRuntimeCaps> RuntimeCaps() const override;
     [[nodiscard]] std::expected<DuplexPrepareResult, IOReturn> Configure(
