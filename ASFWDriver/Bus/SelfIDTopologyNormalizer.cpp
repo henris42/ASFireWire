@@ -122,19 +122,30 @@ SelfIDTopologyNormalizer::BuildPhysicalGraph(const std::vector<SelfIDNodeRecord>
 
     graph.busDiameterHops = ComputeBusDiameter(graph);
 
-    // IEEE 1394b-2002: detect beta repeaters.
+    // IEEE 1394b-2002: detect beta repeaters, which keep the gap count at 63.
+    // A beta-capable PHY repeats in beta mode only between ports that run in
+    // beta mode, and a port connected to a 1394a node runs in legacy (DS)
+    // mode. A 1394b card with two 1394a units on its ports is a legacy
+    // repeater and the 1394a gap table applies to it (TI XIO2213 with three
+    // 828mkIIs, 2026-10-28: gap 63 on a three-hop bus starved async traffic
+    // while the streams started). Counting beta-capable ports regardless of
+    // the neighbour, as Linux does, kept 63 there.
     for (const auto& node : graph.nodes) {
-        if (node.speedCode == 3) { // SCODE_BETA
-            uint32_t activePorts = 0;
-            for (const auto& state : node.reportedPorts) {
-                if (state == PortState::Parent || state == PortState::Child) {
-                    activePorts++;
-                }
+        if (node.speedCode != 3) { // SCODE_BETA
+            continue;
+        }
+        uint32_t betaPorts = 0;
+        for (const TopologyPortLink& link : node.links) {
+            if (!link.connected || link.remoteNodeId >= graph.nodes.size()) {
+                continue;
             }
-            if (activePorts > 1) {
-                graph.betaRepeatersPresent = true;
-                break;
+            if (graph.nodes[link.remoteNodeId].speedCode == 3) {
+                betaPorts++;
             }
+        }
+        if (betaPorts > 1) {
+            graph.betaRepeatersPresent = true;
+            break;
         }
     }
 

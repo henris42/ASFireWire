@@ -165,3 +165,38 @@ TEST(SelfIDTopologyNormalizerDiameter, RootInMiddle_DiameterExceedsDepthFromRoot
     EXPECT_EQ(DiameterOf(records), 4);
     EXPECT_EQ(GapCountOptimizer::CalculateFromHops(DiameterOf(records)), 10);
 }
+
+// IEEE 1394b beta repeaters keep the gap count at 63. A beta-capable PHY whose
+// connected ports lead to 1394a nodes repeats in legacy mode (a TI XIO2213
+// with three 828mkIIs, 2026-10-28), so the 1394a gap table applies; only a
+// beta PHY between two beta neighbours is a beta repeater.
+TEST(SelfIDTopologyNormalizerBeta, BetaCardBetweenLegacyUnitsIsNotABetaRepeater) {
+    // Root 3 (beta PHY, two children) - 0 on one port, 1-2 chain on the other.
+    std::vector<SelfIDNodeRecord> records = {
+        MakeRecord(0, {PortState::Parent}),
+        MakeRecord(1, {PortState::Parent, PortState::Child}),
+        MakeRecord(2, {PortState::Parent}),
+        MakeRecord(3, {PortState::Child, PortState::Child}),
+    };
+    records[0].speedCode = 2;
+    records[1].speedCode = 2;
+    records[2].speedCode = 2;
+    records[3].speedCode = 3;
+    auto graph = SelfIDTopologyNormalizer::BuildPhysicalGraph(records, /*localPhysicalId=*/3);
+    ASSERT_TRUE(graph.has_value());
+    EXPECT_FALSE(graph->betaRepeatersPresent);
+}
+
+TEST(SelfIDTopologyNormalizerBeta, BetaPhyBetweenTwoBetaNeighboursIsABetaRepeater) {
+    std::vector<SelfIDNodeRecord> records = {
+        MakeRecord(0, {PortState::Parent}),
+        MakeRecord(1, {PortState::Parent}),
+        MakeRecord(2, {PortState::Child, PortState::Child}),
+    };
+    records[0].speedCode = 3;
+    records[1].speedCode = 3;
+    records[2].speedCode = 3;
+    auto graph = SelfIDTopologyNormalizer::BuildPhysicalGraph(records, /*localPhysicalId=*/2);
+    ASSERT_TRUE(graph.has_value());
+    EXPECT_TRUE(graph->betaRepeatersPresent);
+}
