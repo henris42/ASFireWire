@@ -340,6 +340,36 @@ TEST(AudioCoordinatorRoutingTests, DevicesClaimTheirOwnLanesAndARefusedDeviceCan
     EXPECT_FALSE(h.coordinator.HasActiveSession());
 }
 
+// A session is built when its device appears, before any lane is claimed, so
+// the transport it holds must follow the GUID to the lane it claims later
+// (b122, 2026-10-28: both units' sessions ran on lane 0 and the second was
+// refused with "GUID conflict" by lane 0's service).
+TEST(AudioCoordinatorRoutingTests, SessionTransportFollowsTheGuidToItsClaimedLane) {
+    CoordinatorHarness h;
+    constexpr uint64_t kA = 0x0001f2000001f717ULL;
+    constexpr uint64_t kB = 0x0001f2000000f944ULL;
+    // Taken before any claim, as AudioSessions does when the device appears.
+    auto& transportA = h.coordinator.SessionTransportForGuid(kA);
+    auto& transportB = h.coordinator.SessionTransportForGuid(kB);
+    EXPECT_EQ(&h.coordinator.SessionTransportForGuid(kA), &transportA);
+
+    EXPECT_EQ(h.coordinator.ClaimTransport(kB), kIOReturnSuccess);
+    EXPECT_EQ(h.coordinator.ClaimTransport(kA), kIOReturnSuccess);
+    EXPECT_EQ(h.coordinator.GuidForLane(0), kB);
+    EXPECT_EQ(h.coordinator.GuidForLane(1), kA);
+
+    // Each session claims its own lane's service: no conflict between them.
+    EXPECT_EQ(transportB.BeginSplitDuplex(kB), kIOReturnSuccess);
+    EXPECT_EQ(transportA.BeginSplitDuplex(kA), kIOReturnSuccess);
+    // The same claim on lane 0's service directly is the conflict the lanes avoid.
+    EXPECT_EQ(h.isoch.BeginSplitDuplex(kA), kIOReturnBusy);
+
+    EXPECT_EQ(transportA.StopAll(), kIOReturnSuccess);
+    EXPECT_EQ(transportB.StopAll(), kIOReturnSuccess);
+    h.coordinator.ReleaseTransportClaim(kA);
+    h.coordinator.ReleaseTransportClaim(kB);
+}
+
 TEST(AudioCoordinatorRoutingTests, ConstructionRegistersObserverAndDestructionUnregistersIt) {
     FakeDeviceManager deviceManager;
     DeviceRegistry registry;

@@ -82,6 +82,9 @@ public:
     // The isoch service of the lane `guid` has claimed; null before a claim.
     // The nub allocates its transmit resources on it.
     [[nodiscard]] Driver::IsochService* IsochServiceForGuid(uint64_t guid) noexcept;
+    // A stable per-GUID transport that forwards each call to the lane the
+    // GUID holds at that moment; what sessions and the host are given.
+    [[nodiscard]] IIsochDuplexHostTransport& SessionTransportForGuid(uint64_t guid) noexcept;
     // After async generation work has been aborted, before ROM discovery.
     void HandleBusReset() noexcept;
 
@@ -132,8 +135,12 @@ private:
                                                    bool generationInvalidated = false,
                                                    uint32_t lane = kAllLanes) noexcept;
     // The transport a GUID's session streams through: its claimed lane, else
-    // its last lane, else lane 0.
+    // its last lane, else lane 0. Resolved on every call: a session is built
+    // when the device appears, long before any lane is claimed (b122,
+    // 2026-10-28: every session ran on lane 0 because the lookup happened once
+    // at session creation).
     [[nodiscard]] IIsochDuplexHostTransport& TransportForGuid(uint64_t guid) noexcept;
+    class LaneTransport;
     [[nodiscard]] IsochDuplexHostTransport* TransportForLane(uint32_t lane) noexcept;
     // Lock held. Give `guid` a lane: its current one, its sticky one if free,
     // else the first free lane. Returns the lane or kAllLanes when none.
@@ -158,6 +165,7 @@ private:
     // sticky lane a GUID last used.
     std::array<uint64_t, Driver::IsochLanes::kMaxLanes> laneOwner_{};
     std::unordered_map<uint64_t, uint32_t> laneByGuid_{};
+    std::unordered_map<uint64_t, std::unique_ptr<LaneTransport>> sessionTransports_{};
     std::atomic_flag captureCommandBusy_ = ATOMIC_FLAG_INIT;
     std::atomic<bool> teardownRequested_{false};
     Session::AudioSessions sessions_;

@@ -15,6 +15,63 @@
 
 namespace ASFW::Audio {
 
+// Forwards to the lane the GUID holds when the call is made.
+class AudioCoordinator::LaneTransport final : public IIsochDuplexHostTransport {
+  public:
+    LaneTransport(AudioCoordinator& owner, uint64_t guid) noexcept : owner_(owner), guid_(guid) {}
+
+    [[nodiscard]] kern_return_t BeginSplitDuplex(uint64_t guid) noexcept override {
+        return Lane().BeginSplitDuplex(guid);
+    }
+    [[nodiscard]] kern_return_t
+    ReservePlaybackResources(uint64_t guid, ::ASFW::IRM::IRMClient& irmClient, uint64_t allowedChannels,
+                             uint32_t packetBandwidthUnits,
+                             Backends::IRMReservationResult& outResult) noexcept override {
+        return Lane().ReservePlaybackResources(guid, irmClient, allowedChannels, packetBandwidthUnits, outResult);
+    }
+    [[nodiscard]] kern_return_t
+    ReserveCaptureResources(uint64_t guid, ::ASFW::IRM::IRMClient& irmClient, uint64_t allowedChannels,
+                            uint32_t packetBandwidthUnits,
+                            Backends::IRMReservationResult& outResult) noexcept override {
+        return Lane().ReserveCaptureResources(guid, irmClient, allowedChannels, packetBandwidthUnits, outResult);
+    }
+    [[nodiscard]] kern_return_t PrepareReceive(uint8_t channel, Driver::HardwareInterface& hardware,
+                                               Runtime::IDirectAudioBindingSource* bindingSource,
+                                               const DirectRxFormatDescriptor& format) noexcept override {
+        return Lane().PrepareReceive(channel, hardware, bindingSource, format);
+    }
+    [[nodiscard]] kern_return_t PrepareTransmit(uint8_t channel, Driver::HardwareInterface& hardware,
+                                                uint8_t sourceId, FW::FwSpeed speed) noexcept override {
+        return Lane().PrepareTransmit(channel, hardware, sourceId, speed);
+    }
+    [[nodiscard]] kern_return_t PrepareReceiveStream(uint32_t streamIndex, uint8_t channel,
+                                                     Driver::HardwareInterface& hardware,
+                                                     Runtime::IDirectAudioBindingSource* bindingSource,
+                                                     uint32_t channelOffset,
+                                                     const DirectRxFormatDescriptor& format) noexcept override {
+        return Lane().PrepareReceiveStream(streamIndex, channel, hardware, bindingSource, channelOffset, format);
+    }
+    [[nodiscard]] kern_return_t PrepareTransmitStream(uint32_t streamIndex, uint8_t channel,
+                                                      Driver::HardwareInterface& hardware, uint8_t sourceId,
+                                                      FW::FwSpeed speed) noexcept override {
+        return Lane().PrepareTransmitStream(streamIndex, channel, hardware, sourceId, speed);
+    }
+    [[nodiscard]] kern_return_t StartPreparedReceive() noexcept override { return Lane().StartPreparedReceive(); }
+    [[nodiscard]] kern_return_t StartPreparedTransmit() noexcept override { return Lane().StartPreparedTransmit(); }
+    [[nodiscard]] kern_return_t StopPreparedReceive() noexcept override { return Lane().StopPreparedReceive(); }
+    [[nodiscard]] kern_return_t StopPreparedTransmit() noexcept override { return Lane().StopPreparedTransmit(); }
+    [[nodiscard]] kern_return_t StopAll() noexcept override { return Lane().StopAll(); }
+    [[nodiscard]] kern_return_t StopAllAfterBusReset() noexcept override { return Lane().StopAllAfterBusReset(); }
+    [[nodiscard]] bool IsReceiveReplayEstablished() const noexcept override {
+        return owner_.TransportForGuid(guid_).IsReceiveReplayEstablished();
+    }
+
+  private:
+    [[nodiscard]] IIsochDuplexHostTransport& Lane() noexcept { return owner_.TransportForGuid(guid_); }
+    AudioCoordinator& owner_;
+    uint64_t guid_;
+};
+
 AudioCoordinator::AudioCoordinator(IOService* driver,
                                    Discovery::IDeviceManager& deviceManager,
                                    Discovery::DeviceRegistry& registry,
@@ -29,7 +86,7 @@ AudioCoordinator::AudioCoordinator(IOService* driver,
     , lanes_(lanes)
     , hardware_(hardware)
     , sessions_(registry_, runtime_,
-                [this](uint64_t guid) -> IIsochDuplexHostTransport& { return TransportForGuid(guid); },
+                [this](uint64_t guid) -> IIsochDuplexHostTransport& { return SessionTransportForGuid(guid); },
                 hardware, &teardownRequested_,
                 [this](uint64_t guid) -> Runtime::IDirectAudioBindingSource* {
                     auto endpoint = runtime_.FindEndpointRuntime(guid);
@@ -37,7 +94,7 @@ AudioCoordinator::AudioCoordinator(IOService* driver,
                 })
     , diceAdapter_(diceNotifications)
     , host_(publisher_, registry_, runtime_, sessions_,
-            [this](uint64_t guid) -> IIsochDuplexHostTransport& { return TransportForGuid(guid); }) {
+            [this](uint64_t guid) -> IIsochDuplexHostTransport& { return SessionTransportForGuid(guid); }) {
     lock_ = IOLockAlloc();
     if (!lock_) {
         ASFW_LOG_ERROR(Audio, "AudioCoordinator: Failed to allocate lock");
@@ -205,6 +262,16 @@ IIsochDuplexHostTransport& AudioCoordinator::TransportForGuid(uint64_t guid) noe
     }
     if (auto* transport = TransportForLane(lane)) return *transport;
     return *transports_[0];
+}
+
+IIsochDuplexHostTransport& AudioCoordinator::SessionTransportForGuid(uint64_t guid) noexcept {
+    if (!lock_) return *transports_[0];
+    IOLockLock(lock_);
+    auto& slot = sessionTransports_[guid];
+    if (!slot) slot = std::make_unique<LaneTransport>(*this, guid);
+    LaneTransport& transport = *slot;
+    IOLockUnlock(lock_);
+    return transport;
 }
 
 void AudioCoordinator::InstallLaneCallbacks(uint32_t lane) noexcept {
