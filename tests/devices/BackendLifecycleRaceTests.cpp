@@ -120,7 +120,8 @@ struct TestFixture {
     FakeHostTransport hostTransport{};
     std::atomic<bool> cancel{false};
     ASFW::Audio::Session::AudioSessions sessions{
-        registry, runtime, hostTransport, hardware, &cancel,
+        registry, runtime, [this](uint64_t) -> ASFW::Audio::IIsochDuplexHostTransport& { return hostTransport; },
+        hardware, &cancel,
         [](uint64_t) -> ASFW::Audio::Runtime::IDirectAudioBindingSource* {
             return nullptr;
         }};
@@ -129,7 +130,8 @@ struct TestFixture {
     // DICE runs on the audio device host (AUDIO_DEVICE_HOST.md §6 E5). The
     // adapter is declared first so it outlives the host's teardown.
     DiceFamilyAdapter diceAdapter{diceNotifications};
-    AudioDeviceHost dice{publisher, registry, runtime, sessions, hostTransport};
+    AudioDeviceHost dice{publisher, registry, runtime, sessions,
+                         [this](uint64_t) -> ASFW::Audio::IIsochDuplexHostTransport& { return hostTransport; }};
 
     TestFixture() { dice.Install(ASFW::Audio::AudioBackendKind::Dice, diceAdapter); }
 

@@ -10,6 +10,7 @@
 #include "IAVCAudioConfigListener.hpp"
 #include "AudioNubPublisher.hpp"
 #include "../Protocols/Backends/IsochDuplexHostTransport.hpp"
+#include "../../Isoch/IsochLanes.hpp"
 #include "../Session/AudioSessions.hpp"
 #include "../Host/AudioDeviceHost.hpp"
 #include "../Host/AvcFamilyAdapter.hpp"
@@ -22,8 +23,10 @@
 #include "../../Discovery/IDeviceManager.hpp"
 
 #include <DriverKit/IOLib.h>
+#include <array>
 #include <atomic>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <unordered_map>
 
@@ -44,7 +47,7 @@ public:
                      Discovery::IDeviceManager& deviceManager,
                      Discovery::DeviceRegistry& registry,
                      AudioRuntimeRegistry& runtime,
-                     Driver::IsochService& isoch,
+                     Driver::IsochLanes& lanes,
                      Driver::HardwareInterface& hardware,
                      DICE::DiceNotificationRouter& diceNotifications) noexcept;
     ~AudioCoordinator() noexcept override;
@@ -69,19 +72,25 @@ public:
         return sessions_.IsStreaming(guid) || sessions_.IsReconciling(guid);
     }
     void HandleCycleInconsistent() noexcept;
-    // A session owns the isoch transport: starting, running, or waiting out a
+    // Some session owns an isoch lane: starting, running, or waiting out a
     // bus reset. Read by the controller's gap policy.
     [[nodiscard]] bool HasActiveSession() const noexcept;
-    // The GUID whose session owns the isoch transport, 0 when none does.
+    // The GUID owning the lowest claimed lane, 0 when none is claimed.
     [[nodiscard]] uint64_t ActiveGuid() const noexcept;
+    // The GUID whose device streams on `lane`, 0 when the lane is free.
+    [[nodiscard]] uint64_t GuidForLane(uint32_t lane) const noexcept;
+    // The isoch service of the lane `guid` has claimed; null before a claim.
+    // The nub allocates its transmit resources on it.
+    [[nodiscard]] Driver::IsochService* IsochServiceForGuid(uint64_t guid) noexcept;
     // After async generation work has been aborted, before ROM discovery.
     void HandleBusReset() noexcept;
 
-    // One device streams per controller (the transmit slot and the host
-    // transport are the controller's). A start claims the transport before it
-    // allocates anything, so a second device is refused with nothing touched
-    // and the running one is left alone (two 828mkIIs, 2026-10-28: the second
+    // Each streaming device claims an isoch lane (a pair of IT/IR contexts
+    // with its own transport) before it allocates anything; a device is
+    // refused only when every lane the controller offers is taken, and the
+    // running ones are left alone (two 828mkIIs, 2026-10-28: the second
     // StartIO re-allocated the shared TX slot under the first and both died).
+    // A GUID keeps its lane across stops while the lane stays free.
     [[nodiscard]] IOReturn ClaimTransport(uint64_t guid) noexcept;
     void ReleaseTransportClaim(uint64_t guid) noexcept;
     [[nodiscard]] IOReturn StartStreaming(uint64_t guid, AudioClockConfig clock = {}) noexcept;
@@ -117,17 +126,38 @@ public:
 private:
     // True when `guid`'s current policy names a family the host serves.
     [[nodiscard]] bool ServedByHost(uint64_t guid) const noexcept;
+    // Stop one lane's transport, or every lane's when `lane` is kAllLanes.
+    static constexpr uint32_t kAllLanes = ~0U;
     [[nodiscard]] kern_return_t StopHostTransport(const char* reason,
-                                                   bool generationInvalidated = false) noexcept;
+                                                   bool generationInvalidated = false,
+                                                   uint32_t lane = kAllLanes) noexcept;
+    // The transport a GUID's session streams through: its claimed lane, else
+    // its last lane, else lane 0.
+    [[nodiscard]] IIsochDuplexHostTransport& TransportForGuid(uint64_t guid) noexcept;
+    [[nodiscard]] IsochDuplexHostTransport* TransportForLane(uint32_t lane) noexcept;
+    // Lock held. Give `guid` a lane: its current one, its sticky one if free,
+    // else the first free lane. Returns the lane or kAllLanes when none.
+    [[nodiscard]] uint32_t ClaimLaneLocked(uint64_t guid) noexcept;
+    [[nodiscard]] uint32_t LaneOfLocked(uint64_t guid) const noexcept;
+    void ReleaseLaneLocked(uint64_t guid) noexcept;
+    // Wire a lane's service callbacks (wakes, timing loss) to the coordinator.
+    void InstallLaneCallbacks(uint32_t lane) noexcept;
+    void WakeLaneOwner(uint32_t lane, uint64_t generation, bool ztsAnchor) noexcept;
 
 
     AudioNubPublisher publisher_;
     Discovery::IDeviceManager& deviceManager_;
     Discovery::DeviceRegistry& registry_;
     AudioRuntimeRegistry& runtime_;
-    // The one controller-global isoch transport session. Backends borrow this
-    // neutral interface; none owns a second wrapper around IsochService.
-    IsochDuplexHostTransport hostTransport_;
+    Driver::IsochLanes& lanes_;
+    Driver::HardwareInterface& hardware_;
+    // One transport per lane. Backends borrow the neutral interface of their
+    // device's lane; none owns a second wrapper around an IsochService.
+    std::array<std::unique_ptr<IsochDuplexHostTransport>, Driver::IsochLanes::kMaxLanes> transports_{};
+    // laneOwner_[lane] is the GUID claiming it (0 = free); laneByGuid_ is the
+    // sticky lane a GUID last used.
+    std::array<uint64_t, Driver::IsochLanes::kMaxLanes> laneOwner_{};
+    std::unordered_map<uint64_t, uint32_t> laneByGuid_{};
     std::atomic_flag captureCommandBusy_ = ATOMIC_FLAG_INIT;
     std::atomic<bool> teardownRequested_{false};
     Session::AudioSessions sessions_;
@@ -140,7 +170,6 @@ private:
     Host::AudioDeviceHost host_;
 
     IOLock* lock_{nullptr};
-    uint64_t activeGuid_{0};
     // A CoreAudio StopIO can arrive after discovery has retired the GUID. Keep
     // that callback from re-entering a backend that now has no remote device.
     std::unordered_map<uint64_t, IOReturn> remoteLostStopResults_{};

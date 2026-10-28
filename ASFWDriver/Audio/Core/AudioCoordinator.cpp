@@ -19,24 +19,33 @@ AudioCoordinator::AudioCoordinator(IOService* driver,
                                    Discovery::IDeviceManager& deviceManager,
                                    Discovery::DeviceRegistry& registry,
                                    AudioRuntimeRegistry& runtime,
-                                    Driver::IsochService& isoch,
+                                    Driver::IsochLanes& lanes,
                                     Driver::HardwareInterface& hardware,
                                     DICE::DiceNotificationRouter& diceNotifications) noexcept
     : publisher_(driver)
     , deviceManager_(deviceManager)
     , registry_(registry)
     , runtime_(runtime)
-    , hostTransport_(isoch)
-    , sessions_(registry_, runtime_, hostTransport_, hardware, &teardownRequested_,
+    , lanes_(lanes)
+    , hardware_(hardware)
+    , sessions_(registry_, runtime_,
+                [this](uint64_t guid) -> IIsochDuplexHostTransport& { return TransportForGuid(guid); },
+                hardware, &teardownRequested_,
                 [this](uint64_t guid) -> Runtime::IDirectAudioBindingSource* {
                     auto endpoint = runtime_.FindEndpointRuntime(guid);
                     return endpoint ? endpoint.get() : nullptr;
                 })
     , diceAdapter_(diceNotifications)
-    , host_(publisher_, registry_, runtime_, sessions_, hostTransport_) {
+    , host_(publisher_, registry_, runtime_, sessions_,
+            [this](uint64_t guid) -> IIsochDuplexHostTransport& { return TransportForGuid(guid); }) {
     lock_ = IOLockAlloc();
     if (!lock_) {
         ASFW_LOG_ERROR(Audio, "AudioCoordinator: Failed to allocate lock");
+    }
+    // Lane 0 is the controller's original service; it exists from the start.
+    if (auto* lane0 = lanes_.Lane(0)) {
+        transports_[0] = std::make_unique<IsochDuplexHostTransport>(*lane0);
+        InstallLaneCallbacks(0);
     }
 
     host_.Install(AudioBackendKind::Dice, diceAdapter_);
@@ -57,14 +66,19 @@ AudioCoordinator::AudioCoordinator(IOService* driver,
         if (ServedByHost(guid)) host_.RefreshPublication(guid);
     });
     deviceManager_.RegisterDeviceObserver(this);
-    hostTransport_.SetTimingLossCallback([this](uint64_t guid) { HandleHostTimingLoss(guid); });
-    hostTransport_.SetCancelToken(&teardownRequested_);
     ASFW_LOG(Audio, "AudioCoordinator: Registered device observer");
 }
 
 AudioCoordinator::~AudioCoordinator() noexcept {
     deviceManager_.UnregisterDeviceObserver(this);
-    hostTransport_.SetTimingLossCallback({});
+    for (uint32_t lane = 0; lane < transports_.size(); ++lane) {
+        if (!transports_[lane]) continue;
+        transports_[lane]->SetTimingLossCallback({});
+        if (auto* service = lanes_.Lane(lane)) {
+            service->SetTxPreparationCallback({});
+            service->SetZtsAnchorReadyCallback({});
+        }
+    }
 
     if (lock_) {
         IOLockFree(lock_);
@@ -111,36 +125,142 @@ void AudioCoordinator::OnDeviceResumed(std::shared_ptr<Discovery::FWDevice> devi
 uint64_t AudioCoordinator::ActiveGuid() const noexcept {
     if (!lock_) return 0;
     IOLockLock(lock_);
-    const uint64_t guid = activeGuid_;
+    uint64_t guid = 0;
+    for (const uint64_t owner : laneOwner_) {
+        if (owner != 0) { guid = owner; break; }
+    }
     IOLockUnlock(lock_);
     return guid;
 }
 
-bool AudioCoordinator::HasActiveSession() const noexcept {
-    if (!lock_) return false;
+uint64_t AudioCoordinator::GuidForLane(uint32_t lane) const noexcept {
+    if (!lock_ || lane >= laneOwner_.size()) return 0;
     IOLockLock(lock_);
-    const bool active = activeGuid_ != 0;
+    const uint64_t guid = laneOwner_[lane];
     IOLockUnlock(lock_);
-    return active;
+    return guid;
+}
+
+Driver::IsochService* AudioCoordinator::IsochServiceForGuid(uint64_t guid) noexcept {
+    if (!lock_ || guid == 0) return nullptr;
+    IOLockLock(lock_);
+    const uint32_t lane = LaneOfLocked(guid);
+    IOLockUnlock(lock_);
+    return lane == kAllLanes ? nullptr : lanes_.Lane(lane);
+}
+
+uint32_t AudioCoordinator::LaneOfLocked(uint64_t guid) const noexcept {
+    for (uint32_t lane = 0; lane < laneOwner_.size(); ++lane) {
+        if (laneOwner_[lane] == guid) return lane;
+    }
+    return kAllLanes;
+}
+
+uint32_t AudioCoordinator::ClaimLaneLocked(uint64_t guid) noexcept {
+    const uint32_t current = LaneOfLocked(guid);
+    if (current != kAllLanes) return current;
+    const uint32_t count = lanes_.LaneCount(hardware_);
+    uint32_t lane = kAllLanes;
+    // A device keeps its lane across stops so its contexts, channel and
+    // transport state stay where its last session left them.
+    if (auto it = laneByGuid_.find(guid); it != laneByGuid_.end() && it->second < count &&
+        laneOwner_[it->second] == 0) {
+        lane = it->second;
+    }
+    for (uint32_t candidate = 0; lane == kAllLanes && candidate < count && candidate < laneOwner_.size();
+         ++candidate) {
+        if (laneOwner_[candidate] == 0) lane = candidate;
+    }
+    if (lane == kAllLanes) return kAllLanes;
+    Driver::IsochService* service = lanes_.EnsureLane(lane, hardware_);
+    if (service == nullptr) return kAllLanes;
+    if (!transports_[lane]) {
+        transports_[lane] = std::make_unique<IsochDuplexHostTransport>(*service);
+        InstallLaneCallbacks(lane);
+    }
+    laneOwner_[lane] = guid;
+    laneByGuid_[guid] = lane;
+    return lane;
+}
+
+void AudioCoordinator::ReleaseLaneLocked(uint64_t guid) noexcept {
+    for (auto& owner : laneOwner_) {
+        if (owner == guid) owner = 0;
+    }
+}
+
+IsochDuplexHostTransport* AudioCoordinator::TransportForLane(uint32_t lane) noexcept {
+    return lane < transports_.size() ? transports_[lane].get() : nullptr;
+}
+
+IIsochDuplexHostTransport& AudioCoordinator::TransportForGuid(uint64_t guid) noexcept {
+    uint32_t lane = kAllLanes;
+    if (lock_ && guid != 0) {
+        IOLockLock(lock_);
+        lane = LaneOfLocked(guid);
+        if (lane == kAllLanes) {
+            if (auto it = laneByGuid_.find(guid); it != laneByGuid_.end()) lane = it->second;
+        }
+        IOLockUnlock(lock_);
+    }
+    if (auto* transport = TransportForLane(lane)) return *transport;
+    return *transports_[0];
+}
+
+void AudioCoordinator::InstallLaneCallbacks(uint32_t lane) noexcept {
+    auto* transport = TransportForLane(lane);
+    auto* service = lanes_.Lane(lane);
+    if (!transport || !service) return;
+    transport->SetTimingLossCallback([this](uint64_t guid) { HandleHostTimingLoss(guid); });
+    transport->SetCancelToken(&teardownRequested_);
+    // The service wakes the producer of the device streaming on this lane;
+    // resolved at call time so a nub that registered later never takes
+    // another lane's wakes (two 828mkIIs, b113).
+    service->SetTxPreparationCallback(
+        [this, lane](uint64_t generation) { WakeLaneOwner(lane, generation, /*ztsAnchor=*/false); });
+    service->SetZtsAnchorReadyCallback(
+        [this, lane](uint64_t generation) { WakeLaneOwner(lane, generation, /*ztsAnchor=*/true); });
+}
+
+void AudioCoordinator::WakeLaneOwner(uint32_t lane, uint64_t generation, bool ztsAnchor) noexcept {
+    const uint64_t guid = GuidForLane(lane);
+    if (guid == 0) return;
+    ASFWAudioNub* nub = publisher_.GetNub(guid);
+    if (!nub) return;
+    if (ztsAnchor) {
+        nub->WakeZtsAnchor(generation);
+    } else {
+        nub->WakeTxPreparation(generation);
+    }
+}
+
+bool AudioCoordinator::HasActiveSession() const noexcept {
+    return ActiveGuid() != 0;
 }
 
 void AudioCoordinator::HandleBusReset() noexcept {
-    uint64_t guid = 0;
+    std::array<uint64_t, Driver::IsochLanes::kMaxLanes> owners{};
     if (lock_) {
         IOLockLock(lock_);
-        guid = activeGuid_;
+        owners = laneOwner_;
         IOLockUnlock(lock_);
     }
-    if (!guid || teardownRequested_.load(std::memory_order_acquire)) return;
-    sessions_.CancelPendingRestart(guid);
+    if (teardownRequested_.load(std::memory_order_acquire)) return;
+    for (uint32_t lane = 0; lane < owners.size(); ++lane) {
+        const uint64_t guid = owners[lane];
+        if (guid == 0) continue;
+        sessions_.CancelPendingRestart(guid);
     // Linux dice-stream.c:587-605 stops the domain on reset because firmware
     // loses stream synchronization. Never spend the ROM-scan interval running
     // the old finite IT mapping. The generation invalidated its IRM leases;
     // local cleanup must not issue remote release/device-stop transactions.
     // Do not destroy consumers or mutate the session's reservation ledger on
     // this interrupt queue while reconciliation may still own them.
-    const auto status = hostTransport_.QuiesceForBusReset();
-    ASFW_LOG(Audio, "[StopTrace] owner=reset guid=%016llx local=0x%x (%{public}s) action=await-rebind", guid, status, ASFW::Logging::IOReturnName(status));
+        auto* transport = TransportForLane(lane);
+        const auto status = transport ? transport->QuiesceForBusReset() : kIOReturnNotReady;
+        ASFW_LOG(Audio, "[StopTrace] owner=reset guid=%016llx lane=%u local=0x%x (%{public}s) action=await-rebind",
+                 guid, lane, status, ASFW::Logging::IOReturnName(status));
+    }
 }
 
 void AudioCoordinator::OnDeviceSuspended(std::shared_ptr<Discovery::FWDevice> device) {
@@ -170,14 +290,14 @@ void AudioCoordinator::OnDeviceRemoved(Discovery::Guid64 guid) {
     }
 
     bool wasActive = false;
+    uint32_t lane = kAllLanes;
     bool firstRemoval = true;
     if (lock_) {
         IOLockLock(lock_);
         firstRemoval = remoteLostStopResults_.try_emplace(guid, kIOReturnNotReady).second;
-        wasActive = (activeGuid_ == guid);
-        if (wasActive) {
-            activeGuid_ = 0;
-        }
+        lane = LaneOfLocked(guid);
+        wasActive = lane != kAllLanes;
+        if (wasActive) ReleaseLaneLocked(guid);
         IOLockUnlock(lock_);
     }
     if (!firstRemoval) {
@@ -197,7 +317,7 @@ void AudioCoordinator::OnDeviceRemoved(Discovery::Guid64 guid) {
     if (wasActive) {
         // Do not release IRM resources after the reset that proved the remote
         // device absent: that allocation is already invalid in this generation.
-        hostStatus = StopHostTransport("remote-device-lost", true);
+        hostStatus = StopHostTransport("remote-device-lost", true, lane);
         if (hostStatus != kIOReturnSuccess) {
             ASFW_LOG_ERROR(Audio,
                            "AudioCoordinator: remote-device host teardown incomplete "
@@ -233,24 +353,25 @@ void AudioCoordinator::OnAVCAudioConfigurationReady(uint64_t guid,
 }
 
 void AudioCoordinator::HandleCycleInconsistent() noexcept {
-    uint64_t guid = 0;
+    std::array<uint64_t, Driver::IsochLanes::kMaxLanes> owners{};
     if (lock_) {
         IOLockLock(lock_);
-        guid = activeGuid_;
+        owners = laneOwner_;
         IOLockUnlock(lock_);
     }
 
-    if (guid == 0) {
-        if (::ASFW::LogConfig::Shared().GetIsochVerbosity() >= 3) {
-            ASFW_LOG(Audio, "AudioCoordinator: Ignoring cycleInconsistent with no active audio GUID");
-        }
-        return;
+    bool any = false;
+    for (const uint64_t guid : owners) {
+        if (guid == 0) continue;
+        any = true;
+        // The host asks the family whether it acts on it (FamilyAdapter::ActsOn):
+        // only DICE does; RME, AV/C and MOTU decline it, as their backends did
+        // (AUDIO_DEVICE_HOST.md §6 E5).
+        if (ServedByHost(guid)) host_.OnRuntimeFault(guid, DuplexRestartReason::kRecoverAfterCycleInconsistent);
     }
-
-    // The host asks the family whether it acts on it (FamilyAdapter::ActsOn):
-    // only DICE does; RME, AV/C and MOTU decline it, as their backends did
-    // (AUDIO_DEVICE_HOST.md §6 E5).
-    if (ServedByHost(guid)) host_.OnRuntimeFault(guid, DuplexRestartReason::kRecoverAfterCycleInconsistent);
+    if (!any && ::ASFW::LogConfig::Shared().GetIsochVerbosity() >= 3) {
+        ASFW_LOG(Audio, "AudioCoordinator: Ignoring cycleInconsistent with no active audio GUID");
+    }
 }
 
 bool AudioCoordinator::ServedByHost(uint64_t guid) const noexcept {
@@ -266,27 +387,27 @@ IOReturn AudioCoordinator::ClaimTransport(uint64_t guid) noexcept {
         IOLockUnlock(lock_);
         return kIOReturnNoDevice;
     }
-    if (activeGuid_ != 0 && activeGuid_ != guid) {
-        const uint64_t active = activeGuid_;
-        IOLockUnlock(lock_);
+    const uint32_t lane = ClaimLaneLocked(guid);
+    const uint32_t count = lanes_.LaneCountIfKnown();
+    IOLockUnlock(lock_);
+    if (lane == kAllLanes) {
         ASFW_LOG_WARNING(Audio,
-                         "AudioCoordinator: transport claim refused GUID=0x%016llx; 0x%016llx streams on this controller "
-                         "(one streaming device per controller)",
-                         guid, active);
+                         "AudioCoordinator: transport claim refused GUID=0x%016llx; all %u isoch lanes on this "
+                         "controller are streaming",
+                         guid, count);
         return kIOReturnBusy;
     }
-    activeGuid_ = guid;
-    IOLockUnlock(lock_);
+    ASFW_LOG(Audio, "AudioCoordinator: GUID=0x%016llx claims isoch lane %u of %u", guid, lane, count);
     return kIOReturnSuccess;
 }
 
 void AudioCoordinator::ReleaseTransportClaim(uint64_t guid) noexcept {
     if (guid == 0 || !lock_) return;
-    // Only a claim nothing came of: a session that attached owns the transport
+    // Only a claim nothing came of: a session that attached owns the lane
     // until StopStreaming.
     const bool owned = sessions_.IsStreaming(guid) || sessions_.IsReconciling(guid);
     IOLockLock(lock_);
-    if (activeGuid_ == guid && !owned) activeGuid_ = 0;
+    if (!owned) ReleaseLaneLocked(guid);
     IOLockUnlock(lock_);
 }
 
@@ -294,32 +415,22 @@ IOReturn AudioCoordinator::StartStreaming(uint64_t guid, AudioClockConfig clock)
     if (publisher_.IsGeometryChangeBlocked(guid)) return kIOReturnNotReady;
     if (guid == 0) return kIOReturnBadArgument;
 
-    bool setActive = false;
     if (lock_) {
         IOLockLock(lock_);
         if (remoteLostStopResults_.contains(guid)) {
             IOLockUnlock(lock_);
             return kIOReturnNoDevice;
         }
-        if (activeGuid_ == 0) {
-            activeGuid_ = guid;
-            setActive = true;
-        } else if (activeGuid_ != guid) {
-            const uint64_t active = activeGuid_;
-            IOLockUnlock(lock_);
-
+        // Usually already claimed by StartIO before the TX resources were
+        // allocated; a start without that claim takes a lane here.
+        const uint32_t lane = ClaimLaneLocked(guid);
+        IOLockUnlock(lock_);
+        if (lane == kAllLanes) {
             ASFW_LOG_WARNING(Audio,
-                             "AudioCoordinator: StartStreaming busy requested=0x%016llx active=0x%016llx",
-                             guid,
-                             active);
-            // TODO(ASFW-MULTIDEVICE): Multi-device streaming is not implemented.
-            // This is the explicit v1 multi-device boundary: multiple GUIDs may
-            // publish nubs/runtimes, but only one GUID may own isoch transport.
-            // Simultaneous streaming starts here and requires per-GUID IR/IT
-            // contexts, timing bridge, IRM/channel allocation, and backend sessions.
+                             "AudioCoordinator: StartStreaming busy requested=0x%016llx; every isoch lane is taken",
+                             guid);
             return kIOReturnBusy;
         }
-        IOLockUnlock(lock_);
     }
 
     // Ownership can survive a failed stop after host transport has quiesced.
@@ -331,14 +442,13 @@ IOReturn AudioCoordinator::StartStreaming(uint64_t guid, AudioClockConfig clock)
                        "AudioCoordinator: StartStreaming failed GUID=0x%016llx kr=0x%x (%{public}s)",
                        guid,
                        kr, ASFW::Logging::IOReturnName(kr));
-        // Whether this call or an earlier ClaimTransport set it: nothing
-        // attached, so nothing owns the transport.
+        // Whether this call or an earlier ClaimTransport took the lane:
+        // nothing attached, so nothing owns it.
         if (lock_) {
             IOLockLock(lock_);
-            if (activeGuid_ == guid) activeGuid_ = 0;
+            ReleaseLaneLocked(guid);
             IOLockUnlock(lock_);
         }
-        (void)setActive;
         return kr;
     }
 
@@ -367,26 +477,16 @@ IOReturn AudioCoordinator::StopStreaming(uint64_t guid) noexcept {
             IOLockUnlock(lock_);
             return status;
         }
-        if (activeGuid_ != 0 && activeGuid_ != guid) {
-            const uint64_t active = activeGuid_;
-            IOLockUnlock(lock_);
-            // A device that never got the transport has nothing to stop: its
-            // start was refused and its unwind must succeed, or the refusal
-            // leaves it unable to start for the rest of the driver's life
-            // (two 828mkIIs, 2026-10-28). Busy only if it somehow streams.
-            if (!sessions_.IsStreaming(guid) && !sessions_.IsReconciling(guid)) {
-                ASFW_LOG(Audio,
-                         "AudioCoordinator: StopStreaming GUID=0x%016llx owns nothing (0x%016llx streams); nothing to stop",
-                         guid, active);
-                return kIOReturnSuccess;
-            }
-            ASFW_LOG_WARNING(Audio,
-                             "AudioCoordinator: StopStreaming busy requested=0x%016llx active=0x%016llx",
-                             guid,
-                             active);
-            return kIOReturnBusy;
-        }
+        const uint32_t lane = LaneOfLocked(guid);
         IOLockUnlock(lock_);
+        if (lane == kAllLanes && !sessions_.IsStreaming(guid) && !sessions_.IsReconciling(guid)) {
+            // A device that never got a lane has nothing to stop: its start
+            // was refused and its unwind must succeed, or the refusal leaves
+            // it unable to start for the rest of the driver's life (two
+            // 828mkIIs, 2026-10-28).
+            ASFW_LOG(Audio, "AudioCoordinator: StopStreaming GUID=0x%016llx owns no lane; nothing to stop", guid);
+            return kIOReturnSuccess;
+        }
     }
 
     const IOReturn kr = sessions_.Detach(guid);
@@ -400,7 +500,7 @@ IOReturn AudioCoordinator::StopStreaming(uint64_t guid) noexcept {
 
     if (lock_) {
         IOLockLock(lock_);
-        if (activeGuid_ == guid) activeGuid_ = 0;
+        ReleaseLaneLocked(guid);
         IOLockUnlock(lock_);
     }
 
@@ -416,20 +516,6 @@ IOReturn AudioCoordinator::RequestClockConfig(
     DuplexRestartReason reason) noexcept {
     if (guid == 0) {
         return kIOReturnBadArgument;
-    }
-
-    if (lock_) {
-        IOLockLock(lock_);
-        if (activeGuid_ != 0 && activeGuid_ != guid) {
-            const uint64_t active = activeGuid_;
-            IOLockUnlock(lock_);
-            ASFW_LOG_WARNING(Audio,
-                             "AudioCoordinator: RequestClockConfig busy requested=0x%016llx active=0x%016llx",
-                             guid,
-                             active);
-            return kIOReturnBusy;
-        }
-        IOLockUnlock(lock_);
     }
 
     const auto record = registry_.SnapshotByGuid(guid);
@@ -485,7 +571,9 @@ void AudioCoordinator::BeginTeardown() noexcept {
     sessions_.BeginTeardown();
     // Block new recovery callbacks before draining the host
     // queue. The coordinator owns this one subscription for every family.
-    hostTransport_.SetTimingLossCallback({});
+    for (auto& transport : transports_) {
+        if (transport) transport->SetTimingLossCallback({});
+    }
     host_.BeginTeardown();
     const kern_return_t hostStatus = StopHostTransport("service-teardown");
     if (hostStatus != kIOReturnSuccess) {
@@ -496,20 +584,28 @@ void AudioCoordinator::BeginTeardown() noexcept {
 
     if (lock_) {
         IOLockLock(lock_);
-        activeGuid_ = 0;
+        laneOwner_.fill(0);
         IOLockUnlock(lock_);
     }
 }
 
 kern_return_t AudioCoordinator::StopHostTransport(const char* reason,
-                                                   bool generationInvalidated) noexcept {
-    const kern_return_t status = generationInvalidated
-                                     ? hostTransport_.StopAllAfterBusReset()
-                                     : hostTransport_.StopAll();
+                                                   bool generationInvalidated,
+                                                   uint32_t lane) noexcept {
+    kern_return_t status = kIOReturnSuccess;
+    for (uint32_t index = 0; index < transports_.size(); ++index) {
+        if (lane != kAllLanes && index != lane) continue;
+        auto* transport = transports_[index].get();
+        if (!transport) continue;
+        const kern_return_t kr = generationInvalidated ? transport->StopAllAfterBusReset()
+                                                       : transport->StopAll();
+        if (kr != kIOReturnSuccess && status == kIOReturnSuccess) status = kr;
+    }
     ASFW_LOG(Audio,
-             "[Lifecycle] AudioCoordinator host-isoch teardown owner reason=%{public}s "
+             "[Lifecycle] AudioCoordinator host-isoch teardown owner reason=%{public}s lane=%d "
              "generation-invalidated=%u kr=0x%08x (%{public}s)",
-             reason, generationInvalidated ? 1U : 0U, status, ASFW::Logging::IOReturnName(status));
+             reason, lane == kAllLanes ? -1 : static_cast<int>(lane), generationInvalidated ? 1U : 0U,
+             status, ASFW::Logging::IOReturnName(status));
     return status;
 }
 
@@ -520,8 +616,9 @@ IOReturn AudioCoordinator::MotuCaptureCommand(uint64_t guid, uint32_t stream,
         std::atomic_flag& gate;
         ~Release() { gate.clear(std::memory_order_release); }
     } release{captureCommandBusy_};
-    auto* capture = hostTransport_.DiagnosticCapture(stream);
-    if (!capture || guid == 0 || command > 2) return kIOReturnBadArgument;
+    if (guid == 0 || command > 2) return kIOReturnBadArgument;
+    auto* capture = static_cast<IsochDuplexHostTransport&>(TransportForGuid(guid)).DiagnosticCapture(stream);
+    if (!capture) return kIOReturnBadArgument;
     if (teardownRequested_.load(std::memory_order_acquire)) return kIOReturnNotReady;
     if (command == 0) {
         // Only arm a known MOTU endpoint; never label another family's packets as MOTU.

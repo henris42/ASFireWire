@@ -38,7 +38,8 @@ const SessionShape kMotuDevice{"motu-828mk2", Ids::kMotuVendorId, 0U, Ids::kMotu
 struct MotuHostRig {
     SessionRig rig{kMotuDevice};
     MotuFamilyAdapter adapter{};
-    AudioDeviceHost host{rig.publisher, rig.registry, rig.runtime, rig.sessions, rig.host};
+    AudioDeviceHost host{rig.publisher, rig.registry, rig.runtime, rig.sessions,
+                         [this](uint64_t) -> ASFW::Audio::IIsochDuplexHostTransport& { return rig.host; }};
 
     MotuHostRig() {
         host.Install(AudioBackendKind::MotuRegister, adapter);

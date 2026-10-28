@@ -182,11 +182,13 @@ struct HostFixture {
     FakeHostTransport hostTransport{};
     std::atomic<bool> cancel{false};
     ASFW::Audio::Session::AudioSessions sessions{
-        registry, runtime, hostTransport, hardware, &cancel,
+        registry, runtime, [this](uint64_t) -> ASFW::Audio::IIsochDuplexHostTransport& { return hostTransport; },
+        hardware, &cancel,
         [](uint64_t) -> ASFW::Audio::Runtime::IDirectAudioBindingSource* { return nullptr; }};
     AudioNubPublisher publisher{nullptr};
     FakeAdapter adapter{};
-    AudioDeviceHost host{publisher, registry, runtime, sessions, hostTransport};
+    AudioDeviceHost host{publisher, registry, runtime, sessions,
+                         [this](uint64_t) -> ASFW::Audio::IIsochDuplexHostTransport& { return hostTransport; }};
 
     HostFixture() { host.Install(AudioBackendKind::Dice, adapter); }
 
@@ -299,7 +301,8 @@ TEST(AudioDeviceHostTests, DeviceWithoutInstalledAdapterIsRefusedForNoAdapter) {
     HostFixture f;
     f.SeedDiceDevice(kGuid);
     // A second host over the same registry and sessions, with nothing installed.
-    AudioDeviceHost bare{f.publisher, f.registry, f.runtime, f.sessions, f.hostTransport};
+    AudioDeviceHost bare{f.publisher, f.registry, f.runtime, f.sessions,
+                         [&f](uint64_t) -> ASFW::Audio::IIsochDuplexHostTransport& { return f.hostTransport; }};
     ASSERT_EQ(bare.KindForGuid(kGuid), AudioBackendKind::Dice);
     bare.RefreshPublication(kGuid);
     EXPECT_EQ(bare.OutcomeCount(HostEvent::Publish, HostOutcome::RefusedNoAdapter), 1U);
@@ -565,7 +568,8 @@ TEST(AudioDeviceHostTests, FaultAfterTeardownIsCancelledImmediately) {
 TEST(AudioDeviceHostTests, FaultWithoutAdapterIsDeclinedAndNotQueued) {
     HostFixture f;
     f.SeedDiceDevice(kGuid);
-    AudioDeviceHost bare{f.publisher, f.registry, f.runtime, f.sessions, f.hostTransport};
+    AudioDeviceHost bare{f.publisher, f.registry, f.runtime, f.sessions,
+                         [&f](uint64_t) -> ASFW::Audio::IIsochDuplexHostTransport& { return f.hostTransport; }};
     auto* queue = bare.WorkQueueForTesting();
     ASSERT_NE(queue, nullptr);
     queue->SetManualDispatchForTesting(true);

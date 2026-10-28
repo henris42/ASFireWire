@@ -67,36 +67,6 @@ static ASFW::Audio::AudioCoordinator* GetAudioCoordinator(const ASFWAudioNub_IVa
     return ctx->audioCoordinator.get();
 }
 
-// The controller's isoch service has one transmit-preparation callback and one
-// zero-timestamp-anchor callback for every nub on the card. Both forward to the
-// nub whose session owns the transport right now, so a card with several
-// devices wakes the producer that is streaming, whichever nub registered last.
-static void ForwardToActiveNub(ServiceContext* ctx, uint64_t generation, bool ztsAnchor) noexcept {
-    if (!ctx || !ctx->audioCoordinator) {
-        return;
-    }
-    const uint64_t guid = ctx->audioCoordinator->ActiveGuid();
-    if (guid == 0) {
-        return;
-    }
-    ASFWAudioNub* nub = ctx->audioCoordinator->GetNub(guid);
-    if (!nub || !nub->ivars) {
-        return;
-    }
-    if (ztsAnchor) {
-        if (nub->ivars->ztsAnchorAction) nub->ZtsAnchorReady(nub->ivars->ztsAnchorAction, generation);
-    } else {
-        if (nub->ivars->txPreparationAction) nub->TxPreparationReady(nub->ivars->txPreparationAction, generation);
-    }
-}
-
-static void InstallSharedIsochCallbacks(ServiceContext* ctx) noexcept {
-    ctx->isoch.SetTxPreparationCallback(
-        [ctx](uint64_t generation) { ForwardToActiveNub(ctx, generation, /*ztsAnchor=*/false); });
-    ctx->isoch.SetZtsAnchorReadyCallback(
-        [ctx](uint64_t generation) { ForwardToActiveNub(ctx, generation, /*ztsAnchor=*/true); });
-}
-
 [[nodiscard]] static ASFW::Audio::AudioRuntimeRegistry* GetAudioRuntimeRegistry(
     const ASFWAudioNub_IVars* iv) noexcept {
     const ASFWDriver* parent = GetParentASFWDriver(iv);
@@ -430,16 +400,11 @@ kern_return_t IMPL(ASFWAudioNub, RegisterTxPreparationAction)
     OSAction* oldAction = ivars->txPreparationAction;
     ivars->txPreparationAction = action;
 
-    // The isoch service is the controller's, shared by every nub on the card,
-    // and holds one callback. Installing this nub's own action there let the
-    // last nub to register take every wake for the whole card: with two
-    // 828mkIIs the first unit's producer was never woken (b113, 2026-10-28:
-    // prepReq=1 prepHandled=0, every start timing out), and the breakage
-    // outlived the second unit. The callback now resolves, at call time, the
-    // nub whose session owns the transport.
-    if (action) {
-        InstallSharedIsochCallbacks(ctx);
-    }
+    // The wake arrives through the coordinator (WakeTxPreparation): the lane's
+    // isoch service calls it for whichever device streams on that lane, so a
+    // nub registering later never takes another unit's wakes (b113, 2026-10-28:
+    // with two 828mkIIs the first unit's producer was never woken).
+    (void)ctx;
 
     if (oldAction) {
         oldAction->release();
@@ -467,6 +432,16 @@ void IMPL(ASFWAudioNub, TxPreparationReady)
     (void)generation;
 }
 
+void ASFWAudioNub::WakeTxPreparation(uint64_t generation)
+{
+    if (ivars && ivars->txPreparationAction) TxPreparationReady(ivars->txPreparationAction, generation);
+}
+
+void ASFWAudioNub::WakeZtsAnchor(uint64_t generation)
+{
+    if (ivars && ivars->ztsAnchorAction) ZtsAnchorReady(ivars->ztsAnchorAction, generation);
+}
+
 kern_return_t IMPL(ASFWAudioNub, RegisterZtsAnchorAction)
 {
     if (!ivars) {
@@ -487,10 +462,7 @@ kern_return_t IMPL(ASFWAudioNub, RegisterZtsAnchorAction)
     OSAction* oldAction = ivars->ztsAnchorAction;
     ivars->ztsAnchorAction = action;
 
-    // Shared with every nub on the card; see RegisterTxPreparationAction.
-    if (action) {
-        InstallSharedIsochCallbacks(ctx);
-    }
+    (void)ctx;
 
     if (oldAction) {
         oldAction->release();
@@ -787,8 +759,16 @@ kern_return_t IMPL(ASFWAudioNub, AllocateTxIsochResources)
         return kIOReturnNotReady;
     }
 
-    // Delegate allocation to the core IsochService
-    return ctx->isoch.AllocateTxIsochResources(
+    // The lane this device claimed (ClaimAudioTransport) owns its transmit
+    // resources; without a claim there is nothing to allocate on.
+    ASFW::Driver::IsochService* isoch =
+        ctx->audioCoordinator ? ctx->audioCoordinator->IsochServiceForGuid(ivars->guid) : nullptr;
+    if (!isoch) {
+        ASFW_LOG_WARNING(Audio, "ASFWAudioNub: AllocateTxIsochResources without a lane guid=0x%016llx",
+                         ivars->guid);
+        return kIOReturnNotReady;
+    }
+    return isoch->AllocateTxIsochResources(
         streamIndex, numSlots, maxPacketBytes, interruptInterval,
         outPayloadSlab, outMetadataRing, outControlBlock);
 }
@@ -805,7 +785,11 @@ kern_return_t IMPL(ASFWAudioNub, FreeTxIsochResources)
         return kIOReturnNotReady;
     }
 
-    return ctx->isoch.FreeTxIsochResources();
+    ASFW::Driver::IsochService* isoch =
+        ctx->audioCoordinator ? ctx->audioCoordinator->IsochServiceForGuid(ivars->guid) : nullptr;
+    // Freed after the stop released the lane: the slabs went with the lane's
+    // StopAll, nothing is left to free here.
+    return isoch ? isoch->FreeTxIsochResources() : kIOReturnSuccess;
 }
 
 // IIG dispatch across queues, not across processes (see ASFWAudioNub.iig:111

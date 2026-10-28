@@ -17,6 +17,7 @@
 
 #include <atomic>
 #include <memory>
+#include <functional>
 #include <optional>
 #include <unordered_map>
 #include <vector>
@@ -25,9 +26,13 @@ namespace ASFW::Audio::Session {
 
 class AudioSessions final {
 public:
+    // The transport a device's session streams through (its lane on the
+    // controller); resolved when the session is created.
+    using TransportProvider = std::function<IIsochDuplexHostTransport&(uint64_t guid)>;
+
     AudioSessions(Discovery::DeviceRegistry& registry,
                   AudioRuntimeRegistry& runtime,
-                  IIsochDuplexHostTransport& host,
+                  TransportProvider transport,
                   Driver::HardwareInterface& hardware,
                   const std::atomic<bool>* teardown,
                   SessionScheduler::BindingSourceProvider bindingSource) noexcept;
@@ -90,7 +95,7 @@ private:
 
     Discovery::DeviceRegistry& registry_;
     AudioRuntimeRegistry& runtime_;
-    IIsochDuplexHostTransport& host_;
+    TransportProvider transport_;
     Driver::HardwareInterface& hardware_;
     const std::atomic<bool>* teardown_;
     SessionScheduler::BindingSourceProvider bindingSource_;

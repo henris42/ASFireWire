@@ -265,7 +265,7 @@ void DriverWiring::EnsureDeps(ASFWDriver* driver, ::ServiceContext& ctx) {
     if (!ctx.audioCoordinator && d.deviceManager && d.deviceRegistry && d.hardware &&
         d.audioRuntimeRegistry && d.diceNotifications) {
         ctx.audioCoordinator = std::make_shared<ASFW::Audio::AudioCoordinator>(
-            driver, *d.deviceManager, *d.deviceRegistry, *d.audioRuntimeRegistry, ctx.isoch,
+            driver, *d.deviceManager, *d.deviceRegistry, *d.audioRuntimeRegistry, ctx.isochLanes,
             *d.hardware, *d.diceNotifications);
         ASFW_LOG(Controller, "[Controller] ✅ AudioCoordinator initialized");
     }

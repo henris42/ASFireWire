@@ -107,7 +107,7 @@ public:
                     Discovery::DeviceRegistry& registry,
                     AudioRuntimeRegistry& runtime,
                     Session::AudioSessions& sessions,
-                    IIsochDuplexHostTransport& hostTransport) noexcept;
+                    std::function<IIsochDuplexHostTransport&(uint64_t)> transport) noexcept;
     ~AudioDeviceHost() noexcept override;
 
     AudioDeviceHost(const AudioDeviceHost&) = delete;
@@ -203,7 +203,7 @@ private:
     Discovery::DeviceRegistry& registry_;
     AudioRuntimeRegistry& runtime_;
     Session::AudioSessions& sessions_;
-    IIsochDuplexHostTransport& hostTransport_;
+    std::function<IIsochDuplexHostTransport&(uint64_t)> transport_;
 
     std::array<FamilyAdapter*, 4> adapters_{};
 

@@ -124,7 +124,7 @@ public:
         return host_.sessions_.IsStreaming(guid_);
     }
     [[nodiscard]] bool ReceiveReplayEstablished() const noexcept override {
-        return host_.hostTransport_.IsReceiveReplayEstablished();
+        return host_.transport_(guid_).IsReceiveReplayEstablished();
     }
     [[nodiscard]] std::expected<DuplexHealthResult, IOReturn> ReadHealth(uint32_t timeoutMs) override {
         if (Cancelled()) return std::unexpected(kIOReturnAborted);
@@ -154,12 +154,12 @@ AudioDeviceHost::AudioDeviceHost(AudioNubPublisher& publisher,
                                  Discovery::DeviceRegistry& registry,
                                  AudioRuntimeRegistry& runtime,
                                  Session::AudioSessions& sessions,
-                                 IIsochDuplexHostTransport& hostTransport) noexcept
+                                 std::function<IIsochDuplexHostTransport&(uint64_t)> transport) noexcept
     : publisher_(publisher)
     , registry_(registry)
     , runtime_(runtime)
     , sessions_(sessions)
-    , hostTransport_(hostTransport) {
+    , transport_(std::move(transport)) {
     lock_ = IOLockAlloc();
     if (!lock_) {
         ASFW_LOG_ERROR(Audio, "[AudioHost] failed to allocate lock");

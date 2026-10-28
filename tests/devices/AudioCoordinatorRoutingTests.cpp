@@ -21,6 +21,7 @@
 #include "Discovery/IDeviceManager.hpp"
 #include "DeviceProfiles/Audio/AudioDeviceIds.hpp"
 #include "Hardware/HardwareInterface.hpp"
+#include "Isoch/IsochLanes.hpp"
 #include "Isoch/IsochService.hpp"
 
 #include <cstdint>
@@ -48,6 +49,7 @@ using ASFW::Discovery::RomEntry;
 using ASFW::FW::Generation;
 using ASFW::Audio::DICE::DiceNotificationRouter;
 using ASFW::Driver::HardwareInterface;
+using ASFW::Driver::IsochLanes;
 using ASFW::Driver::IsochService;
 
 // Records observer registration; everything the coordinator asks of the bus
@@ -215,9 +217,10 @@ struct CoordinatorHarness {
     DeviceRegistry registry{};
     AudioRuntimeRegistry runtime{};
     IsochService isoch{};
+    IsochLanes lanes{isoch};
     HardwareInterface hardware{};
     DiceNotificationRouter diceNotifications{registry};
-    AudioCoordinator coordinator{nullptr, deviceManager, registry, runtime, isoch, hardware,
+    AudioCoordinator coordinator{nullptr, deviceManager, registry, runtime, lanes, hardware,
                                  diceNotifications};
 
     // Put the device into the registry (so the catalog resolves its policy) and
@@ -281,29 +284,60 @@ uint64_t RestartLikeOutcomes(ASFW::Audio::Host::AudioDeviceHost& host) {
 // Observer registration
 // ---------------------------------------------------------------------------
 
-// One streaming device per controller: a second device is refused at the
-// claim, before any transmit resource is touched, and its stop is not a
-// failure (two 828mkIIs, 2026-10-28: the refused unit's unwind was refused
-// too and it could never start again until the driver restarted).
-TEST(AudioCoordinatorRoutingTests, TransportClaimIsExclusiveAndARefusedDeviceCanStillStop) {
+// Each streaming device claims its own isoch lane (the host stub models a
+// four-context controller: two lanes). A device beyond the last lane is refused
+// at the claim, before any transmit resource is touched, and its stop is not a
+// failure (two 828mkIIs, 2026-10-28: the refused unit's unwind was refused too
+// and it could never start again until the driver restarted).
+TEST(AudioCoordinatorRoutingTests, DevicesClaimTheirOwnLanesAndARefusedDeviceCanStillStop) {
     CoordinatorHarness h;
     constexpr uint64_t kA = 0x0001f2000001f717ULL;
     constexpr uint64_t kB = 0x0001f2000000f944ULL;
+    constexpr uint64_t kC = 0x0001f2000000aa55ULL;
     EXPECT_EQ(h.coordinator.ActiveGuid(), 0ULL);
+    EXPECT_FALSE(h.coordinator.HasActiveSession());
+    EXPECT_EQ(h.coordinator.IsochServiceForGuid(kA), nullptr);
+
     EXPECT_EQ(h.coordinator.ClaimTransport(kA), kIOReturnSuccess);
     EXPECT_EQ(h.coordinator.ActiveGuid(), kA);
+    EXPECT_EQ(h.coordinator.GuidForLane(0), kA);
+    EXPECT_EQ(h.coordinator.IsochServiceForGuid(kA), &h.isoch);
     EXPECT_EQ(h.coordinator.ClaimTransport(kA), kIOReturnSuccess);  // idempotent for the owner
-    EXPECT_EQ(h.coordinator.ClaimTransport(kB), kIOReturnBusy);
-    EXPECT_EQ(h.coordinator.ActiveGuid(), kA);
-    // The refused device owns nothing: stopping it succeeds and leaves A alone.
-    EXPECT_EQ(h.coordinator.StopStreaming(kB), kIOReturnSuccess);
-    EXPECT_EQ(h.coordinator.ActiveGuid(), kA);
-    // A claim nothing came of is given back; then B may take the transport.
-    h.coordinator.ReleaseTransportClaim(kA);
-    EXPECT_EQ(h.coordinator.ActiveGuid(), 0ULL);
+    EXPECT_EQ(h.coordinator.GuidForLane(0), kA);
+
+    // A second device streams at the same time, on the second lane.
     EXPECT_EQ(h.coordinator.ClaimTransport(kB), kIOReturnSuccess);
+    EXPECT_EQ(h.coordinator.GuidForLane(1), kB);
+    ASFW::Driver::IsochService* laneB = h.coordinator.IsochServiceForGuid(kB);
+    ASSERT_NE(laneB, nullptr);
+    EXPECT_NE(laneB, &h.isoch);
+    EXPECT_EQ(laneB->ContextBase(), 2U);
+    EXPECT_EQ(laneB, h.lanes.Lane(1));
+    EXPECT_EQ(h.isoch.StreamLimit(), IsochLanes::kLaneWidth);
+    EXPECT_TRUE(h.coordinator.HasActiveSession());
+
+    // No lane left for a third device; it owns nothing, so its stop succeeds
+    // and leaves A and B alone.
+    EXPECT_EQ(h.coordinator.ClaimTransport(kC), kIOReturnBusy);
+    EXPECT_EQ(h.coordinator.IsochServiceForGuid(kC), nullptr);
+    EXPECT_EQ(h.coordinator.StopStreaming(kC), kIOReturnSuccess);
+    EXPECT_EQ(h.coordinator.GuidForLane(0), kA);
+    EXPECT_EQ(h.coordinator.GuidForLane(1), kB);
+
+    // A claim nothing came of is given back; the freed lane goes to C, and A
+    // returns to its own lane once one is free again (sticky per GUID).
+    h.coordinator.ReleaseTransportClaim(kA);
+    EXPECT_EQ(h.coordinator.GuidForLane(0), 0ULL);
     EXPECT_EQ(h.coordinator.ActiveGuid(), kB);
+    EXPECT_EQ(h.coordinator.ClaimTransport(kC), kIOReturnSuccess);
+    EXPECT_EQ(h.coordinator.GuidForLane(0), kC);
+    EXPECT_EQ(h.coordinator.ClaimTransport(kA), kIOReturnBusy);
+    h.coordinator.ReleaseTransportClaim(kC);
     h.coordinator.ReleaseTransportClaim(kB);
+    EXPECT_EQ(h.coordinator.ClaimTransport(kA), kIOReturnSuccess);
+    EXPECT_EQ(h.coordinator.GuidForLane(0), kA);
+    h.coordinator.ReleaseTransportClaim(kA);
+    EXPECT_FALSE(h.coordinator.HasActiveSession());
 }
 
 TEST(AudioCoordinatorRoutingTests, ConstructionRegistersObserverAndDestructionUnregistersIt) {
@@ -311,10 +345,11 @@ TEST(AudioCoordinatorRoutingTests, ConstructionRegistersObserverAndDestructionUn
     DeviceRegistry registry;
     AudioRuntimeRegistry runtime;
     IsochService isoch;
+    IsochLanes lanes{isoch};
     HardwareInterface hardware;
     DiceNotificationRouter diceNotifications{registry};
     {
-        AudioCoordinator coordinator{nullptr, deviceManager, registry, runtime, isoch, hardware,
+        AudioCoordinator coordinator{nullptr, deviceManager, registry, runtime, lanes, hardware,
                                      diceNotifications};
         EXPECT_EQ(deviceManager.registerCalls, 1);
         EXPECT_EQ(deviceManager.observers.size(), 1U);

@@ -534,7 +534,7 @@ struct SessionRig {
           bus(s.diceImage != nullptr ? *s.diceImage : DiceDeviceImages::kSaffirePro24Dsp),
           irm(nullBus),
           host(bus.Trace(), hooks, failures),
-          sessions(registry, runtime, host, hardware, &cancel,
+          sessions(registry, runtime, [this](uint64_t) -> ::ASFW::Audio::IIsochDuplexHostTransport& { return host; }, hardware, &cancel,
                    [this](uint64_t) -> ASFW::Audio::Runtime::IDirectAudioBindingSource* {
                        return &binding;
                    }) {
@@ -563,7 +563,8 @@ struct SessionRig {
             // DICE golden also shows which notifications they turn into
             // restarts (AUDIO_DEVICE_HOST.md §6 E5).
             diceAdapter.emplace(notifications);
-            deviceHost.emplace(publisher, registry, runtime, sessions, host);
+            deviceHost.emplace(publisher, registry, runtime, sessions,
+                               [this](uint64_t) -> ::ASFW::Audio::IIsochDuplexHostTransport& { return host; });
             deviceHost->Install(ASFW::Audio::AudioBackendKind::Dice, *diceAdapter);
         }
         bus.Trace().Clear();

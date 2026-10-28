@@ -21,6 +21,8 @@ public:
     void NotifyDeviceClockChanged(uint32_t) noexcept {}
     // No audio driver in the host suite: restarts stay in place.
     bool NotifyIoRestartRequired(uint32_t) noexcept { return false; }
+    void WakeTxPreparation(uint64_t) noexcept {}
+    void WakeZtsAnchor(uint64_t) noexcept {}
     void TxPreparationReady(OSAction*, uint64_t generation) {
         ++txPreparationRequests;
         lastTxPreparationGeneration = generation;

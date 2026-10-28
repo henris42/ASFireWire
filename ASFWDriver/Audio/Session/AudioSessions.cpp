@@ -10,13 +10,13 @@ namespace ASFW::Audio::Session {
 
 AudioSessions::AudioSessions(Discovery::DeviceRegistry& registry,
                              AudioRuntimeRegistry& runtime,
-                             IIsochDuplexHostTransport& host,
+                             TransportProvider transport,
                              Driver::HardwareInterface& hardware,
                              const std::atomic<bool>* teardown,
                              SessionScheduler::BindingSourceProvider bindingSource) noexcept
     : registry_(registry),
       runtime_(runtime),
-      host_(host),
+      transport_(std::move(transport)),
       hardware_(hardware),
       teardown_(teardown),
       bindingSource_(std::move(bindingSource)) {
@@ -105,7 +105,7 @@ std::shared_ptr<SessionScheduler> AudioSessions::Ensure(uint64_t guid) noexcept 
             guid, SessionScheduler::Dependencies{
                       .registry = registry_,
                       .runtime = runtime_,
-                      .host = host_,
+                      .host = transport_(guid),
                       .hardware = hardware_,
                       .teardown = teardown_,
                       .stageCancel = StageCancelLocked(guid),
