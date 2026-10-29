@@ -186,6 +186,8 @@ private:
     [[nodiscard]] bool IsV3() const noexcept;
     [[nodiscard]] bool IsV1() const noexcept { return unitSwVersion_ == 1 || unitSwVersion_ == 2; }
     [[nodiscard]] bool IsV2() const noexcept { return !IsV1() && !IsV3(); }
+    // The name prefix for chunks past a model's port table, or nullptr.
+    [[nodiscard]] const char* OpticalExtraName() const noexcept;
     /// What the model's hardware offers (MotuModel.hpp); the app shows only these.
     [[nodiscard]] uint32_t V2ClockSourceOptions() const noexcept;
     [[nodiscard]] uint32_t V2OpticalModeOptions() const noexcept;

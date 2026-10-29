@@ -702,6 +702,19 @@ TEST(AudioCoordinatorRoutingTests, MotuAddedIsDescribedFromTheOpticalRegisterAnd
     EXPECT_EQ(committed.inputChannelCount, 22U);   // ADAT input: 14 + 8
     EXPECT_EQ(committed.outputChannelCount, 14U);  // S/PDIF output: fixed
     EXPECT_EQ(committed.sampleRates, (std::vector<uint32_t>{44100U, 48000U, 88200U, 96000U}));
+    // One name per channel, the ADAT channels included, and each rate names
+    // its own width (b146: ADAT units showed "Input N" names only).
+    ASSERT_EQ(committed.inputChannelNames.size(), 22U);
+    EXPECT_EQ(committed.inputChannelNames[14], "ADAT 1");
+    EXPECT_EQ(committed.inputChannelNames[21], "ADAT 8");
+    ASSERT_EQ(committed.outputChannelNames.size(), 14U);
+    EXPECT_EQ(committed.outputChannelNames[0], "Main L");
+    const auto at96k = std::ranges::find(committed.rateFormationCandidates, 96000U,
+                                         &ASFW::Audio::Runtime::RateFormation::sampleRateHz);
+    ASSERT_NE(at96k, committed.rateFormationCandidates.end());
+    ASSERT_EQ(at96k->captureNames.size(), 18U);
+    EXPECT_EQ(at96k->captureNames[17], "ADAT 4");
+    EXPECT_EQ(at96k->playbackNames.size(), 14U);
 }
 
 // StartIO unwinds a failed start with StopStreaming. By then the device owns

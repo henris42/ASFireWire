@@ -24,6 +24,8 @@
 
 #include <cstdint>
 #include <span>
+#include <string>
+#include <vector>
 
 namespace ASFW::Encoding::Motu {
 
@@ -57,6 +59,28 @@ struct MotuStreamLayout final {
 [[nodiscard]] constexpr uint32_t ChunkForHostChannel(MotuPortMap ports,
                                                      uint32_t hostChannel) noexcept {
     return hostChannel < ports.size() ? ports[hostChannel].chunk : hostChannel;
+}
+
+/// Host channel names for a stream of `pcmChunks` chunks: the table's names,
+/// then `extraPrefix` 1..N for the chunks past it, which on a v2 model are the
+/// optical ADAT channels (8 at 1x, 4 at 2x; S/PDIF on the optical port adds
+/// none). Empty when the table does not apply to this width (EffectivePortMap
+/// falls back to wire order), so the driver names the channels instead.
+[[nodiscard]] inline std::vector<std::string> ChannelNamesForStream(MotuPortMap ports,
+                                                                   uint32_t pcmChunks,
+                                                                   const char* extraPrefix) {
+    std::vector<std::string> names;
+    if (ports.empty() || ports.size() > pcmChunks || (pcmChunks > ports.size() && extraPrefix == nullptr)) {
+        return names;
+    }
+    names.reserve(pcmChunks);
+    for (const MotuPort& port : ports) {
+        names.emplace_back(port.name);
+    }
+    for (uint32_t extra = 1; names.size() < pcmChunks; ++extra) {
+        names.push_back(std::string(extraPrefix) + " " + std::to_string(extra));
+    }
+    return names;
 }
 
 /// True when `ports` names every chunk in [0, size) exactly once, which is what makes the

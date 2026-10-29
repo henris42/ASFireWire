@@ -470,6 +470,12 @@ std::shared_ptr<const std::vector<Runtime::RateFormation>> MotuProtocol::RateFor
         formation.packedPlaybackMessageChunks = Encoding::Motu::MessageChunks(unitSwVersion_, false);
         formation.capture.push_back({chunks.tx, Encoding::Motu::DataBlockQuadlets(chunks.tx, formation.packedCaptureMessageChunks)});
         formation.playback.push_back({chunks.rx, Encoding::Motu::DataBlockQuadlets(chunks.rx, formation.packedPlaybackMessageChunks)});
+        // Names per rate: the optical ADAT channels halve at 2x, so a rate
+        // change that changes the width must not keep the other rate's names.
+        formation.captureNames = Encoding::Motu::ChannelNamesForStream(
+            Isoch::Audio::MOTU::Profiles::CapturePortsForSwVersion(unitSwVersion_), chunks.tx, OpticalExtraName());
+        formation.playbackNames = Encoding::Motu::ChannelNamesForStream(
+            Isoch::Audio::MOTU::Profiles::PlaybackPortsForSwVersion(unitSwVersion_), chunks.rx, OpticalExtraName());
         formations->push_back(std::move(formation));
     }
     return formations;
@@ -491,6 +497,12 @@ void MotuProtocol::ReadRateObservation(std::function<void(IOReturn, RateHardware
     });
 }
 
+const char* MotuProtocol::OpticalExtraName() const noexcept {
+    // On v2 models every chunk past the fixed ports is an ADAT channel. Other
+    // generations name only an exact-width table (their optical banks differ).
+    return IsV2() ? "ADAT" : nullptr;
+}
+
 bool MotuProtocol::GetChannelLabels(std::vector<std::string>& inNames,
                                       std::vector<std::string>& outNames) const {
     const Encoding::Motu::MotuPortMap capture =
@@ -500,15 +512,25 @@ bool MotuProtocol::GetChannelLabels(std::vector<std::string>& inNames,
     if (capture.empty() && playback.empty()) {
         return false;
     }
-    inNames.clear();
-    outNames.clear();
-    for (const Encoding::Motu::MotuPort& port : capture) {
-        inNames.emplace_back(port.name);
+    // One name per channel at the current rate and optical setting: with ADAT
+    // on the optical port the stream is wider than the fixed ports, and its
+    // extra channels were left without names (b146: an ADAT unit showed
+    // "Input 1".."Input 22" in Audio MIDI Setup).
+    uint32_t captureChunks = static_cast<uint32_t>(capture.size());
+    uint32_t playbackChunks = static_cast<uint32_t>(playback.size());
+    const auto snapshot = opticalSnapshot_.load(std::memory_order_acquire);
+    const int32_t index = Encoding::Motu::RateToIndex(cachedSampleRateHz_.load(std::memory_order_acquire));
+    if ((snapshot >> 32) != 0 && index >= 0) {
+        const auto chunks = ResolvePcmChunks(static_cast<uint32_t>(snapshot),
+            Encoding::Motu::IndexToMode(static_cast<uint32_t>(index)), unitSwVersion_);
+        if (chunks.opticalDecoded && chunks.tx != 0 && chunks.rx != 0) {
+            captureChunks = chunks.tx;
+            playbackChunks = chunks.rx;
+        }
     }
-    for (const Encoding::Motu::MotuPort& port : playback) {
-        outNames.emplace_back(port.name);
-    }
-    return true;
+    inNames = Encoding::Motu::ChannelNamesForStream(capture, captureChunks, OpticalExtraName());
+    outNames = Encoding::Motu::ChannelNamesForStream(playback, playbackChunks, OpticalExtraName());
+    return !inNames.empty() || !outNames.empty();
 }
 
 AudioStreamRuntimeCaps MotuProtocol::MakeRuntimeCaps() const noexcept {

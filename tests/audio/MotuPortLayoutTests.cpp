@@ -19,6 +19,7 @@ namespace {
 using ASFW::DeviceProfiles::Audio::kMotu828mk2SwVersion;
 using ASFW::DeviceProfiles::Audio::kMotu896hdSwVersion;
 using ASFW::DeviceProfiles::Audio::kMotuUltraliteSwVersion;
+using ASFW::Encoding::Motu::ChannelNamesForStream;
 using ASFW::Encoding::Motu::ChunkForHostChannel;
 using ASFW::Encoding::Motu::EffectivePortMap;
 using ASFW::Encoding::Motu::IsChunkPermutation;
@@ -57,6 +58,45 @@ TEST(MotuPortLayoutTests, The828mk2MicsSitAfterItsEightAnalogInputs) {
     EXPECT_EQ(ChunkForHostChannel(capture, 0), 2U);  // Analog 1
     EXPECT_EQ(ChunkForHostChannel(capture, 8), 10U); // Mic 1
     EXPECT_EQ(std::string_view(capture[8].name), "Mic 1");
+}
+
+// One name per channel: the fixed ports, then the ADAT channels the optical
+// port adds past them, 8 at 1x and 4 at 2x (b146: an ADAT unit's inputs were
+// "Input 1".."Input 22", and 22 names stood for 18 channels at 96 kHz).
+TEST(MotuPortLayoutTests, The828mk2NamesItsAdatChannelsAfterTheFixedPorts) {
+    const MotuPortMap capture = CapturePortsForSwVersion(kMotu828mk2SwVersion);
+    const auto at1x = ChannelNamesForStream(capture, kFixedChunks + 8, "ADAT");
+    ASSERT_EQ(at1x.size(), kFixedChunks + 8);
+    EXPECT_EQ(at1x[0], "Analog 1");
+    EXPECT_EQ(at1x[11], "S/PDIF 2");
+    EXPECT_EQ(at1x[13], "Mix Return R");
+    EXPECT_EQ(at1x[14], "ADAT 1");
+    EXPECT_EQ(at1x[21], "ADAT 8");
+
+    const auto at2x = ChannelNamesForStream(capture, kFixedChunks + 4, "ADAT");
+    ASSERT_EQ(at2x.size(), kFixedChunks + 4);
+    EXPECT_EQ(at2x[17], "ADAT 4");
+
+    const auto fixedOnly = ChannelNamesForStream(capture, kFixedChunks, "ADAT");
+    ASSERT_EQ(fixedOnly.size(), kFixedChunks);
+    EXPECT_EQ(fixedOnly[13], "Mix Return R");
+
+    const MotuPortMap playback = PlaybackPortsForSwVersion(kMotu828mk2SwVersion);
+    const auto outputs = ChannelNamesForStream(playback, kFixedChunks + 8, "ADAT");
+    ASSERT_EQ(outputs.size(), kFixedChunks + 8);
+    EXPECT_EQ(outputs[0], "Main L");
+    EXPECT_EQ(outputs[13], "Phones R");
+    EXPECT_EQ(outputs[14], "ADAT 1");
+}
+
+// A table that does not fit the stream names nothing, and neither do extra
+// chunks a model has no name for: the driver synthesizes names instead.
+TEST(MotuPortLayoutTests, NamesFitTheStreamOrAreLeftToTheDriver) {
+    const MotuPortMap capture = CapturePortsForSwVersion(kMotu828mk2SwVersion);
+    EXPECT_TRUE(ChannelNamesForStream(capture, kFixedChunks - 2, "ADAT").empty());
+    EXPECT_TRUE(ChannelNamesForStream(capture, kFixedChunks + 4, nullptr).empty());
+    EXPECT_EQ(ChannelNamesForStream(capture, kFixedChunks, nullptr).size(), kFixedChunks);
+    EXPECT_TRUE(ChannelNamesForStream(MotuPortMap{}, 8, "ADAT").empty());
 }
 
 TEST(MotuPortLayoutTests, EveryModelTableIsAPermutationOfItsChunks) {
