@@ -90,9 +90,7 @@ public:
         kMethodTestCMPConnectIPCR      = 30,
         kMethodTestCMPDisconnectIPCR   = 31,
         
-        // Isocho Stream Control
-        kMethodStartIsochReceive       = 32,
-        kMethodStopIsochReceive        = 33,
+        // 32/33 retired (were the isoch receive snoop).
 
         // DV capture (raw DIF stream via shared ring, memory type 1)
         kMethodStartDVCapture          = 50,

@@ -1147,7 +1147,6 @@
 		809B7DE81941258F6F373E25 /* AVCInfoBlock.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AVCInfoBlock.hpp; sourceTree = "<group>"; };
 		81E906EEAAC7C96F0465C4E4 /* SBP2Handler.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = SBP2Handler.cpp; sourceTree = "<group>"; };
 		821A6DB6E00A5845BCF00DC0 /* DiscoveryValues.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DiscoveryValues.hpp; sourceTree = "<group>"; };
-		827E859140DA5F80C56CB858 /* IsochSnoopConsumer.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IsochSnoopConsumer.hpp; sourceTree = "<group>"; };
 		82FB7FBAF21E71523AF7F99D /* ASFWIOReturn.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ASFWIOReturn.hpp; sourceTree = "<group>"; };
 		8328694F1859478AB8AB311C /* ResolvedStreamConfig.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ResolvedStreamConfig.hpp; sourceTree = "<group>"; };
 		8366E67059E3DCD0BE5FE2E8 /* MotuSphServoPolicy.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuSphServoPolicy.hpp; sourceTree = "<group>"; };
@@ -2841,14 +2840,6 @@
 			path = UserClient;
 			sourceTree = "<group>";
 		};
-		817174BD228934D763999358 /* Diagnostics */ = {
-			isa = PBXGroup;
-			children = (
-				827E859140DA5F80C56CB858 /* IsochSnoopConsumer.hpp */,
-			);
-			path = Diagnostics;
-			sourceTree = "<group>";
-		};
 		81EDF7D91AB3AC9DCF258489 /* Modifiers */ = {
 			isa = PBXGroup;
 			children = (
@@ -3533,7 +3524,6 @@
 				C2160D5ABD13DF14A6FBA1E3 /* IsochService.cpp */,
 				E432DD27659BDA2D71F1CDC6 /* IsochService.hpp */,
 				3FA7EA9210CEC5F5A50D47FE /* Core */,
-				817174BD228934D763999358 /* Diagnostics */,
 				07ED11DF87A62E79AC30EB06 /* Memory */,
 				B708813F61F3A4086573341A /* Receive */,
 				5FE093C369F208B27A2B6170 /* Transmit */,

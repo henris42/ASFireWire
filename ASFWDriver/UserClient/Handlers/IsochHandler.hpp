@@ -37,8 +37,6 @@ public:
     kern_return_t MotuCapture(IOUserClientMethodArguments* args);
 
     // Isoch Streaming Control
-    kern_return_t StartIsochReceive(IOUserClientMethodArguments* args);
-    kern_return_t StopIsochReceive(IOUserClientMethodArguments* args);
 
     // DV Capture Control
     kern_return_t StartDVCapture(IOUserClientMethodArguments* args);

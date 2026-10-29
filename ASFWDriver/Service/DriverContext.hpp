@@ -20,7 +20,6 @@
 #include "../Isoch/IsochService.hpp"
 #include "../Isoch/IsochLanes.hpp"
 #include "../Protocols/DV/DVCaptureService.hpp"
-#include "../Isoch/Diagnostics/IsochSnoopConsumer.hpp"
 #include "../Scheduling/WatchdogCoordinator.hpp"
 #include "Lifecycle/RuntimeLifecycleCoordinator.hpp"
 
@@ -65,8 +64,6 @@ struct ServiceContext {
     // Lane 0 is `isoch`; further lanes host further streaming devices.
     ASFW::Driver::IsochLanes isochLanes{isoch};
     ASFW::Protocols::DV::DVCaptureService dvCapture;
-    // Raw channel snoop for the user client's StartIsochReceive (diagnostics).
-    ASFW::Isoch::IsochSnoopConsumer isochSnoop;
     ASFW::Driver::InterruptDispatcher interruptDispatcher;
     std::shared_ptr<ASFW::Audio::AudioCoordinator> audioCoordinator;
     std::shared_ptr<ASFW::Protocols::SBP2::SBP2NubPublisher> sbp2NubPublisher;

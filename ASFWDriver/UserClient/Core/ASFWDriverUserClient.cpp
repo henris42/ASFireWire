@@ -93,9 +93,7 @@ enum {
     kMethodTestCMPConnectIPCR = 30,
     kMethodTestCMPDisconnectIPCR = 31,
 
-    // Isoch Stream Control
-    kMethodStartIsochReceive = 32,
-    kMethodStopIsochReceive = 33,
+    // 32/33 retired (were the isoch receive snoop, IsochSnoopConsumer).
 
     // 34/35 (kMethodGetIsochRxMetrics / kMethodResetIsochRxMetrics) retired:
     // they returned a zeroed snapshot and a no-op; audio receive health is
@@ -376,10 +374,6 @@ MethodDispatchResult DispatchIsochMethods(ASFW::UserClient::UserClientRuntimeSta
         return runtimeState.Isoch().TestCMPConnectIPCR(arguments);
     case kMethodTestCMPDisconnectIPCR:
         return runtimeState.Isoch().TestCMPDisconnectIPCR(arguments);
-    case kMethodStartIsochReceive:
-        return runtimeState.Isoch().StartIsochReceive(arguments);
-    case kMethodStopIsochReceive:
-        return runtimeState.Isoch().StopIsochReceive(arguments);
     case kMethodStartIsochTransmit:
         return runtimeState.Isoch().StartIsochTransmit(arguments);
     case kMethodStopIsochTransmit:

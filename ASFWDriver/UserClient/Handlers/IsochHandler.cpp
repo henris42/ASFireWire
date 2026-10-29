@@ -167,7 +167,7 @@ kern_return_t IsochHandler::TestIRMRelease(IOUserClientMethodArguments* args) {
 }
 
 // ============================================================================
-// CMP Test Methods (with Auto-Start)
+// CMP Test Methods
 // ============================================================================
 
 kern_return_t IsochHandler::TestCMPConnectOPCR(IOUserClientMethodArguments* args) {
@@ -184,24 +184,11 @@ kern_return_t IsochHandler::TestCMPConnectOPCR(IOUserClientMethodArguments* args
     constexpr uint8_t kTestPlug = 0;
     ASFW_LOG(UserClient, "TestCMPConnectOPCR: Connecting oPCR[%u]", kTestPlug);
 
-    // Use weak ptr or capture 'this' carefully? 'this' is IsochHandler, owned by UserClient.
-    // UserClient keeps driver alive? No, UserClient holds OSSharedPtr<ASFWDriver> typically.
-    // The callback might outlive the UserClient request if async?
-    // CMPClient callbacks are generally executed on WorkLoop.
-    // We capture driver pointer.
-
-    auto* driver = driver_;
-
     constexpr uint8_t kTestChannel = 0;
     cmpClient->ConnectOPCR(ASFW::CMP::CMPDevice{}, kTestPlug, kTestChannel,
-                           [driver](ASFW::CMP::CMPStatus status) {
+                           [](ASFW::CMP::CMPStatus status) {
         if (status == ASFW::CMP::CMPStatus::Success) {
             ASFW_LOG(UserClient, "✅ CMP oPCR connect succeeded!");
-
-            // AUTO-START ISOCH RECEIVE
-            // Hardcode Channel 0 for now as per test requirement
-            ASFW_LOG(UserClient, "[Auto-Start] Triggering Isoch Receive on Channel 0...");
-            driver->StartIsochReceive(0, 0, 2);
 
         } else {
             ASFW_LOG(UserClient, "❌ CMP oPCR connect failed: %d", static_cast<int>(status));
@@ -225,17 +212,10 @@ kern_return_t IsochHandler::TestCMPDisconnectOPCR(IOUserClientMethodArguments* a
     constexpr uint8_t kTestPlug = 0;
     ASFW_LOG(UserClient, "TestCMPDisconnectOPCR: Disconnecting oPCR[%u]", kTestPlug);
 
-    auto* driver = driver_;
-
     cmpClient->DisconnectOPCR(ASFW::CMP::CMPDevice{}, kTestPlug,
-                              [driver](ASFW::CMP::CMPStatus status) {
+                              [](ASFW::CMP::CMPStatus status) {
         if (status == ASFW::CMP::CMPStatus::Success) {
             ASFW_LOG(UserClient, "✅ CMP oPCR disconnect succeeded!");
-
-            // AUTO-STOP ISOCH RECEIVE
-            ASFW_LOG(UserClient, "[Auto-Stop] Stopping Isoch Receive...");
-            driver->StopIsochReceive();
-
         } else {
             ASFW_LOG(UserClient, "❌ CMP oPCR disconnect failed: %d", static_cast<int>(status));
         }
@@ -298,32 +278,6 @@ kern_return_t IsochHandler::TestCMPDisconnectIPCR(IOUserClientMethodArguments* a
     });
 
     return kIOReturnSuccess;
-}
-
-// ============================================================================
-// Isoch Streaming Control
-// ============================================================================
-
-kern_return_t IsochHandler::StartIsochReceive(IOUserClientMethodArguments* args) {
-    // Arguments: [0] = channel, [1] = packets to log (0: default; was wireFormatRaw),
-    // [2] = unused (was am824Slots). Starts a raw channel snoop (IsochSnoopConsumer).
-    if (args->scalarInputCount < 1)
-        return kIOReturnBadArgument;
-    uint64_t channel = args->scalarInput[0];
-    uint64_t wireFormatRaw = args->scalarInputCount >= 2 ? args->scalarInput[1] : 0;
-    uint64_t am824Slots = args->scalarInputCount >= 3 ? args->scalarInput[2] : 0;
-    if (channel > 63) return kIOReturnBadArgument;
-
-    ASFW_LOG(UserClient, "StartIsochReceive (snoop) called for channel %llu packetsToLog=%llu",
-             channel, wireFormatRaw);
-    return driver_->StartIsochReceive(static_cast<uint8_t>(channel),
-                                      static_cast<uint32_t>(wireFormatRaw),
-                                      static_cast<uint32_t>(am824Slots));
-}
-
-kern_return_t IsochHandler::StopIsochReceive(IOUserClientMethodArguments* args) {
-    ASFW_LOG(UserClient, "StopIsochReceive called");
-    return driver_->StopIsochReceive();
 }
 
 // ============================================================================
