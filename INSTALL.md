@@ -43,26 +43,17 @@ Each build comes as `ASFW-<version>-<macos>-b<build>.zip` and contains:
      be edited from another OS if this one no longer boots.
 
 4. **Intel with more than 4 GiB of RAM.** FireWire OHCI controllers address 32 bits of
-   physical memory, whatever the OS. Without an IOMMU the kernel would route a DriverKit
-   driver's DMA through a copy buffer that the controller and the driver never share.
-   From build 173 the driver notices this at start and from then on takes only pages that
-   lie below 4 GiB: it checks every DMA page one by one (on a 16 GiB machine about
-   2.3 GiB of RAM is there, under the PCI hole). The log says
-   `DMA: … bounced; from now on every DMA page is allocated on its own and kept only below 4 GiB`.
-   This is new and not yet verified on hardware.
-   - Keep `Kernel > Quirks > DisableIoMapper = true` (no VT-d for macOS). With VT-d active
-     (AppleVTD) an armed boot froze on a Z390 machine (build 170); that is being
-     investigated, so do not enable VT-d for ASFW yet.
-   - If the driver logs that too few pages lie below 4 GiB, limit RAM with the boot-arg
-     `maxmem=2048` (2 GiB works; build 170 was tested that way).
-   - In a VM: keep the VM's memory at **≤ 3 GiB**, or give the guest a virtual IOMMU. With
-     PCI passthrough and no virtual IOMMU, any guest page that falls inside the host's
-     memory window for the FireWire card's bridge is unreachable for DMA (ESXi put it at
-     `0x9030_0000–0x903F_FFFF`; build 170 traced the clicks to it). Read the window from the
-     host (`lspci -v` on the bridge, "memory base/limit") and pass it to the driver:
-     `sudo ./asfw-opencore-arm.sh --exclude 0x90300000-0x903fffff` (or the controller
-     property `asfw-dma-exclude` = "0x90300000-0x903fffff", type String). The log then says
-     `[DmaGuard] DMA pages avoid 0x90300000-0x903fffff`.
+   physical memory, whatever the OS. Without an IOMMU the kernel routes a DriverKit driver's
+   DMA to memory above 4 GiB through a copy buffer that the controller and the driver never
+   share. The driver tests for this at start and then refuses to start with
+   `DMA to … is bounced: RAM above 4 GiB and no IOMMU …`; Apple's driver keeps the card.
+   - **Turn VT-d on:** enable VT-d in the BIOS and set `Kernel > Quirks > DisableIoMapper =
+     false` (`sudo ./asfw-opencore-arm.sh --vtd` sets the quirk). With AppleVTD active the
+     controller's DMA is remapped below 4 GiB. Tested with 16 GiB on a Z390 board (b175).
+   - The only alternative is to limit RAM with the boot-arg `maxmem=2048`.
+   - In a VM: keep the VM's memory at **≤ 3 GiB**, or give the guest a virtual IOMMU. With PCI
+     passthrough and no virtual IOMMU, DMA into the host's memory window for the card's bridge
+     fails (ESXi, build 170), so a VM is no place for audio work.
 
 ## Install or update
 
@@ -103,8 +94,9 @@ are deliberately not kept.
 
 ## Device settings and the login agent
 
-The app's **Device Settings** page sets a MOTU device's clock source and what its optical
-ports carry (ADAT or TOSLINK S/PDIF). Changing an optical mode changes the channel
+The app's **Device Settings** page sets a MOTU device's clock source, what its optical
+ports carry (ADAT or TOSLINK S/PDIF) and its analog input levels, and under **Diagnostics**
+the driver's log level (see "Log level and start steps"). Changing an optical mode changes the channel
 count, so the audio device is republished with the new layout. Every change is remembered
 per device GUID, in the app's preferences.
 
@@ -115,28 +107,8 @@ port it is on, whatever order the units were found in, and two units of one mode
 apart. The number after `#` is the unit-specific part of the GUID, shown in decimal for MOTU,
 which numbers its units there; compare it with the serial label on the bottom of the unit.
 
-The page's **Diagnostics: stream start** group exists for one investigation: the 828mkII resets
-the bus on the first packet from the host that carries audio. Its three switches change the next
-playback start only (write fetch-enable before the start, send no packets at all, or hold the
-audio back by 250 ms to 4 s after the start); press **Send to driver**, then stop and start
-playback. The driver logs what it did (`[MotuExperiment]`). Turn them all off when done; they
-are not remembered and a driver restart clears them.
+For scripted use over ssh (open the `ASFWDriver` user client, call a selector with scalars):
 
-Two more diagnostics live behind the user client, for scripted use over ssh (the `motuexp`
-pattern: open the `ASFWDriver` user client, call a selector with scalars):
-
-- **Raw channel snoop** on a controller that is not streaming, such as a second card
-  daisy-chained behind the device: selector 32 with `[channel, packetsToLog]` starts an
-  isochronous receive on that channel and logs the first packets as `[IsochSnoop] … q=…`
-  (8 bytes of OHCI prefix, then the packet's own quadlets: CIP header, data blocks). Selector 33
-  stops it and logs the totals. It shows what the first card put on the wire, byte for byte.
-- The snoop prints each packet's receive cycle and the isochronous header's length, tag and sy
-  decoded, then the packet's own quadlets big-endian as on the wire.
-- A MOTU stream primes its transmit ring with skip cycles, as Linux does, so nothing is on the
-  wire before the first data packet; the 828mkII accepted every stream started that way and
-  rejected every stream that began with 189 ms of empty CIP packets (b107). Two one-shot switches
-  (flags 16 and 32 on selector 71, or the app's toggles) restore the empty-packet lap for an A/B,
-  and count DBC the way the 828mkII's own stream does.
 - **Register reads**: selector 8 (`destinationID, addressHi, addressLo, length` → handle), then
   selector 12 with the handle for the data. MOTU registers sit at `0xFFFF F000 0000` plus the
   register offset, so `0x0b00` is `addressHi=0xFFFF addressLo=0xF0000B00`; the destination is
@@ -158,7 +130,8 @@ which runs `/usr/local/libexec/asfw-config-agent` (a small command-line tool fro
 signed like the app) as the logged-in user. It watches every controller ASFW drives and,
 whenever a device with remembered settings appears (login, re-plug, power cycle, bus reset
 with a new generation), reads the device and writes back the remembered values that differ.
-Its log is `/tmp/asfw-apply-config.log`. It is deliberately not the app itself: launching the
+It also sets the remembered driver log level on each new driver instance, and saves the
+driver's start steps to `~/Library/Logs/ASFW`. Its log is `/tmp/asfw-apply-config.log`. It is deliberately not the app itself: launching the
 app bundle makes sysextd re-check the embedded driver and, on macOS 12, restart it, and a
 launchd-started app also shows a second Dock icon. With several FireWire cards each card is a
 separate entry in the app's sidebar; settings belong to the device, whichever card it is
@@ -171,6 +144,40 @@ left every page except Core Audio "disconnected" in builds up to b68. If that ev
 the **Overview** page's Connection Log names the reason, as does
 `log show --last 10m --predicate 'subsystem == "net.asfw.app"'`.
 
+## Log level and start steps
+
+The driver logs at one level, **warn** by default: errors, refusals (for example a sample
+rate a device cannot run at) and the numbered start steps. Change it without reinstalling or
+rebooting:
+
+- in the app: **Device Settings → Diagnostics → Log level**;
+- from Terminal: `/usr/local/libexec/asfw-config-agent --log-level debug` (without a level it
+  shows the one in force; `default` goes back to warn), or
+  `defaults write net.asfw.app logLevel -string debug`, which the login agent sets within 30 s.
+
+The levels are `off`, `error`, `warn`, `info` (adds one line per stream start and stop),
+`debug` (heartbeats and step-by-step detail) and `trace` (every transaction, packet dumps).
+A subsystem can log at its own level: `info irm=debug isoch=trace` (the subsystems are the
+`[Tag]`s in the log: Controller, Hardware, Async, IRM, Isoch, Audio, DirectAudio, AVC, …). One
+level holds for every controller, and the login agent sets it again after each driver start,
+so it survives reboots. Each change logs one line, `[Log] level warn -> debug (from app)`.
+debug and trace cost CPU while audio streams: set the level back when done. A line below the
+level costs the driver one comparison.
+
+For a problem during start-up, set the level at boot: `sudo ./asfw-opencore-arm.sh --log-level
+debug` adds the controller property `asfw-log-level` (a String), which the driver reads before
+its first start step; `--no-log-level` removes it. The login agent leaves a level set that way
+alone until the app or the command line sets another.
+
+Every start logs numbered steps, `[StartStep] #01 start …` to `bring-up ends: bus up`, at every
+level from warn up. At login the agent saves the boot's steps to
+`~/Library/Logs/ASFW/start-<boot time>.log`, and appends any later driver start; the newest ten
+files are kept. To read them live:
+
+```sh
+/usr/bin/log show --last boot --style compact --predicate 'eventMessage CONTAINS "[StartStep]"'
+```
+
 ## Check
 
 ```sh
@@ -178,11 +185,14 @@ the **Overview** page's Connection Log names the reason, as does
 launchctl print gui/$(id -u)/net.asfw.apply-config | head -5   # device-settings agent loaded?
 systemextensionsctl list                          # net.asfw.driver … [activated enabled]
 ioreg -rc IOUserService | grep -i asfw            # driver attached to the controller?
-log show --last 10m --predicate 'process == "net.asfw.driver"' | tail -50
+/usr/bin/log show --last 10m --predicate 'process == "net.asfw.driver"' | tail -50   # dyld errors
+/usr/bin/log show --last 10m --style compact --predicate 'eventMessage CONTAINS "[StartStep]"'
 ```
 
-If the driver starts and dies immediately, look for `Symbol not found` in that log.
-It names exactly what the build is missing for this macOS.
+If the driver starts and dies immediately, look for `Symbol not found` in the first log.
+It names exactly what the build is missing for this macOS. The driver's own lines come from
+the kernel process, tagged `[Controller]`, `[Audio]` and so on; filter on the tag, not on
+the process.
 
 ## Uninstall
 
@@ -206,18 +216,11 @@ sudo launchctl asuser "$(id -u <user>)" /Applications/ASFW.app/Contents/MacOS/AS
 
 ## If the Mac hangs or will not boot
 
-A hang during boot takes the unified log with it. To see how far the driver got, capture
-the kernel console on a serial port: boot-args `serial=3 drain_uart_sync=1` plus **`dk=0x3`**
-(or `sudo ./asfw-opencore-arm.sh --trace`). With `dk` bit 0x2 the kernel prints every
-start-up step of the driver as it happens:
-
-```
-DK: ASFWDriver-0x100000xyz::SetDispatchQueue(ASFW #12 linkEnable + BIBimageValid (the link starts DMA))
-```
-
-The last such line before the freeze names the step. Keep bit 0x1 set (`dk=0x3`, never
-`dk=0x2`): it is what enables DriverKit at all. Remove it again afterwards
-(`--no-trace`); it slows every driver's start a little.
+A boot that hangs takes the unified log with it. If it does finish, even after minutes, the
+login agent saves that boot's start steps to `~/Library/Logs/ASFW` (see "Log level and start
+steps"): the last `[StartStep]` line and the gap after it show where the start waited. Arm with
+`--log-level debug` for more detail. Do not trace the driver on a serial console with `dk=0x3`
+and `drain_uart_sync=1`: on the test machine that alone stalled the boot for minutes (b175).
 
 Use the first of these that you can:
 
