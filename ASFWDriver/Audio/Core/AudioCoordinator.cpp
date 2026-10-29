@@ -547,8 +547,16 @@ IOReturn AudioCoordinator::StopStreaming(uint64_t guid) noexcept {
             // A device that never got a lane has nothing to stop: its start
             // was refused and its unwind must succeed, or the refusal leaves
             // it unable to start for the rest of the driver's life (two
-            // 828mkIIs, 2026-10-28).
-            ASFW_LOG(Audio, "AudioCoordinator: StopStreaming GUID=0x%016llx owns no lane; nothing to stop", guid);
+            // 828mkIIs, 2026-10-28). The HAL no longer wants it streaming,
+            // though, so detach its session: a failed start leaves the session
+            // attached, and a later clock change then ran a full start for a
+            // client that was gone (b146: the first start of every rate change
+            // after a failed start failed at GraphGeometry). A detach that
+            // fails must not fail the unwind.
+            const IOReturn detached = sessions_.Detach(guid);
+            ASFW_LOG(Audio,
+                     "AudioCoordinator: StopStreaming GUID=0x%016llx owns no lane; nothing to stop, session detached kr=0x%x",
+                     guid, detached);
             return kIOReturnSuccess;
         }
     }

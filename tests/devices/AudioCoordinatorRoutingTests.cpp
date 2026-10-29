@@ -704,6 +704,33 @@ TEST(AudioCoordinatorRoutingTests, MotuAddedIsDescribedFromTheOpticalRegisterAnd
     EXPECT_EQ(committed.sampleRates, (std::vector<uint32_t>{44100U, 48000U, 88200U, 96000U}));
 }
 
+// StartIO unwinds a failed start with StopStreaming. By then the device owns
+// no lane, but its session is still attached, and a later clock change ran a
+// full start for a HAL client that was gone (b146: the first start of every
+// rate change after a failed start failed at GraphGeometry). The stop must
+// detach it, so the next clock change is applied idle.
+TEST(AudioCoordinatorRoutingTests, StopAfterAFailedStartDetachesTheSession) {
+    CoordinatorHarness h;
+    auto device = h.Seed(MakeMotuRom());
+    ASSERT_NE(device, nullptr);
+    MotuRecordingBus bus;
+    h.AttachMotuProtocol(bus, OpticalWord(1U /*ADAT in*/, 2U /*S/PDIF out*/));
+    h.coordinator.OnDeviceAdded(device);
+
+    ASSERT_EQ(h.coordinator.ClaimTransport(kMotuGuid), kIOReturnSuccess);
+    // The harness has no IRM client: the start is refused after attaching.
+    EXPECT_NE(h.coordinator.StartStreaming(kMotuGuid), kIOReturnSuccess);
+    EXPECT_EQ(h.coordinator.GuidForLane(0), 0ULL);
+    auto snapshot = h.coordinator.SessionSnapshotForTesting(kMotuGuid);
+    ASSERT_TRUE(snapshot.has_value());
+    ASSERT_TRUE(snapshot->halAttached);
+
+    EXPECT_EQ(h.coordinator.StopStreaming(kMotuGuid), kIOReturnSuccess);
+    snapshot = h.coordinator.SessionSnapshotForTesting(kMotuGuid);
+    ASSERT_TRUE(snapshot.has_value());
+    EXPECT_FALSE(snapshot->halAttached);
+}
+
 TEST(AudioCoordinatorRoutingTests, MotuFailedRegisterReadRefusesPublication) {
     CoordinatorHarness h;
     auto device = h.Seed(MakeMotuRom());

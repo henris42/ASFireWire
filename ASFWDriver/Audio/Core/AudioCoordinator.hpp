@@ -121,6 +121,9 @@ public:
 
 #ifdef ASFW_HOST_TEST
     [[nodiscard]] Host::AudioDeviceHost& HostForTesting() noexcept { return host_; }
+    [[nodiscard]] std::optional<Session::SessionSnapshot> SessionSnapshotForTesting(uint64_t guid) const noexcept {
+        return sessions_.Snapshot(guid);
+    }
 #endif
 
     /// Debug helper: return the GUID if exactly one audio nub is published.
