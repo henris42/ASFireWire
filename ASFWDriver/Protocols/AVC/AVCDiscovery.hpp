@@ -111,7 +111,6 @@ private:
 
     std::atomic<bool> shuttingDown_{false};
 
-    os_log_t log_{OS_LOG_DEFAULT};
 };
 
 } // namespace ASFW::Protocols::AVC

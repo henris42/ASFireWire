@@ -49,7 +49,7 @@ AVCDiscovery::AVCDiscovery(IOService* driver,
     // Allocate lock
     lock_ = IOLockAlloc();
     if (!lock_) {
-        os_log_error(log_, "AVCDiscovery: Failed to allocate lock");
+        ASFW_LOG_ERROR(AVC, "AVCDiscovery: Failed to allocate lock");
     }
 
     // The injected timer is prepared on ctx.workQueue (DriverContext.cpp).
@@ -60,7 +60,7 @@ AVCDiscovery::AVCDiscovery(IOService* driver,
     deviceManager_.RegisterUnitObserver(this);
     deviceManager_.RegisterDeviceObserver(this);
 
-    os_log_info(log_, "AVCDiscovery: Initialized");
+    ASFW_LOG_INFO(AVC, "AVCDiscovery: Initialized");
 }
 
 AVCDiscovery::~AVCDiscovery() {
@@ -75,7 +75,7 @@ AVCDiscovery::~AVCDiscovery() {
         lock_ = nullptr;
     }
 
-    os_log_info(log_, "AVCDiscovery: Destroyed");
+    ASFW_LOG_INFO(AVC, "AVCDiscovery: Destroyed");
 }
 
 void AVCDiscovery::Shutdown() {
@@ -277,9 +277,7 @@ void AVCDiscovery::OnUnitSuspended(std::shared_ptr<Discovery::FWUnit> unit) {
     IOLockLock(lock_);
     auto it = units_.find(guid);
     if (it != units_.end()) {
-        os_log_info(log_,
-                    "AVCDiscovery: AV/C unit suspended: GUID=%llx",
-                    guid);
+        ASFW_LOG_INFO(AVC, "AVCDiscovery: AV/C unit suspended: GUID=%llx", guid);
         // Unit remains in map but operations will fail until resumed
     }
     IOLockUnlock(lock_);
@@ -299,9 +297,7 @@ void AVCDiscovery::OnUnitResumed(std::shared_ptr<Discovery::FWUnit> unit) {
     auto it = units_.find(guid);
     if (it != units_.end()) {
         avcUnit = it->second;
-        os_log_info(log_,
-                    "AVCDiscovery: AV/C unit resumed: GUID=%llx",
-                    guid);
+        ASFW_LOG_INFO(AVC, "AVCDiscovery: AV/C unit resumed: GUID=%llx", guid);
         // Unit is now available again
     }
     IOLockUnlock(lock_);
@@ -334,9 +330,7 @@ void AVCDiscovery::OnUnitTerminated(std::shared_ptr<Discovery::FWUnit> unit) {
     auto it = units_.find(guid);
     if (it != units_.end()) {
         avcUnit = it->second;
-        os_log_info(log_,
-                    "AVCDiscovery: AV/C unit terminated: GUID=%llx",
-                    guid);
+        ASFW_LOG_INFO(AVC, "AVCDiscovery: AV/C unit terminated: GUID=%llx", guid);
         units_.erase(it);
     }
     rescanAttempts_.erase(guid);
@@ -496,9 +490,7 @@ void AVCDiscovery::OnBusReset(uint32_t newGeneration) {
     if (shuttingDown_.load(std::memory_order_acquire)) {
         return;
     }
-    os_log_info(log_,
-                "AVCDiscovery: Bus reset (generation %u)",
-                newGeneration);
+    ASFW_LOG_INFO(AVC, "AVCDiscovery: Bus reset (generation %u)", newGeneration);
 
     // ControllerCore invalidates DeviceRegistry routes before this callback.
     std::vector<Scheduling::TimerToken> cancelledRescans;
@@ -605,9 +597,9 @@ void AVCDiscovery::RebuildNodeIDMap() {
         }
         fcpTransportsByNodeID_[nodeNumber] = std::move(transport);
 
-        os_log_debug(log_,
-                     "AVCDiscovery: Mapped fullNodeID=0x%04x (node=%u) → FCPTransport (GUID=%llx)",
-                     fullNodeID, nodeNumber, guid);
+        ASFW_LOG_DEBUG(AVC,
+                       "AVCDiscovery: Mapped fullNodeID=0x%04x (node=%u) → FCPTransport (GUID=%llx)",
+                       fullNodeID, nodeNumber, guid);
     }
 
     IOLockUnlock(lock_);
