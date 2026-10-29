@@ -266,6 +266,7 @@ targets:
       - path: ASFW/Models/ControllerCard.swift
       - path: ASFW/DeviceConfigStore.swift
       - path: ASFW/ConfigApplier.swift
+      - path: ASFW/StartTraceLog.swift
     settings:
       base:
         PRODUCT_NAME: asfw-config-agent

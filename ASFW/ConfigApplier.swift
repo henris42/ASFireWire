@@ -8,8 +8,9 @@
 //  remembered settings (DeviceConfigStore) appears or comes back with a new
 //  bus generation, reads the device's current settings and writes the ones
 //  that differ. It sets the remembered driver log level on each new driver
-//  instance. The app itself applies a change immediately; this makes it hold
-//  across reboots, re-plugs and power cycles of the device.
+//  instance, and saves the driver's start steps to ~/Library/Logs/ASFW
+//  (StartTraceLog). The app itself applies a change immediately; this makes
+//  it hold across reboots, re-plugs and power cycles of the device.
 //
 
 import Combine
@@ -38,6 +39,7 @@ final class ConfigApplier {
     /// The remembered log level last handled per controller (registry entry
     /// ID); "" when nothing is remembered.
     private var levelHandled: [UInt64: String] = [:]
+    private let startedAt = Date()
     /// IOKit notifications for driver instances coming and going, so a new
     /// one gets its log level at once rather than at the next poll.
     private let registry = CardRegistry()
@@ -62,6 +64,7 @@ final class ConfigApplier {
             ? "No remembered device settings yet; waiting for the app to save some."
             : "Remembered settings for \(remembered.count) device(s): \(remembered.map { String(format: "%016llX", $0) }.joined(separator: ", "))")
         say("Driver log level to set: \(applier.store.logLevel ?? "none remembered (the driver's default, warn)").")
+        StartTraceLog.saveBoot { say($0) }
         applier.registryWatch = applier.registry.$cards.dropFirst().sink { [weak applier] _ in
             applier?.reconcileControllers()
         }
@@ -100,8 +103,15 @@ final class ConfigApplier {
     }
 
     /// A driver instance the agent has not seen: its log level once the
-    /// connection is up.
+    /// connection is up, and, when it started after login, its start steps.
     private func newDriverInstance(_ id: UInt64, via connector: ASFWDriverConnector, attempt: Int = 0) {
+        let seen = Date()
+        if attempt == 0 && seen.timeIntervalSince(startedAt) > 30 {
+            // Bring-up ends with the first ROM scan, a few seconds after Start.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 20) {
+                StartTraceLog.appendStart(since: seen.addingTimeInterval(-60)) { Self.say($0) }
+            }
+        }
         guard connector.isConnected else {
             if attempt < 20 {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
