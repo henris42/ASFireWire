@@ -118,11 +118,52 @@ OSSharedPtr<OSString> LeakProneDeviceString(ASFWAudioDevice& device, const ASFWA
     }
 }
 
+// kAudioDevicePropertyAvailableNominalSampleRates. AudioDriverKit answers it
+// with one double per rate. The HAL in macOS 12 hands those bytes to clients
+// as AudioValueRange pairs, so the 828mkII's four rates read as two ranges,
+// 44100-48000 and 88200-96000, and a client could ask for a rate in between
+// (b161). Later HALs make each double a {rate, rate} range themselves (macOS
+// 26's HALS_IOUAClockDevice::GetPropertyData); 13-15 are unchecked and keep
+// AudioDriverKit's answer.
+constexpr uint32_t kSelectorAvailableSampleRates = static_cast<uint32_t>('nsr#');
+
+// The available rates as {rate, rate} ranges, for the macOS 12 HAL. Null
+// leaves the read to super: another selector, or a HAL that expands the rates.
+OSSharedPtr<OSData> AvailableRateRanges(ASFWAudioDevice& device,
+                                        const IOUserAudioObjectPropertyAddress* address) {
+    if (address == nullptr || address->mSelector != kSelectorAvailableSampleRates) {
+        return nullptr;
+    }
+    if (__builtin_available(driverkit 22.0, *)) {
+        return nullptr;
+    }
+    double rates[ASFW::Isoch::Audio::kMaxSampleRates]{};
+    const size_t count = device.GetAvailableSampleRates(rates, ASFW::Isoch::Audio::kMaxSampleRates);
+    auto ranges = OSSharedPtr(OSData::withCapacity(static_cast<uint32_t>(count * 2 * sizeof(double))), OSNoRetain);
+    if (!ranges) {
+        return nullptr;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        const double range[2] = {rates[i], rates[i]};
+        if (!ranges->appendBytes(range, sizeof(range))) {
+            return nullptr;
+        }
+    }
+    return ranges;
+}
+
 } // namespace
 
 kern_return_t ASFWAudioDevice::_GetPropertySize(const IOUserAudioObjectPropertyAddress* in_prop_addr,
                                                 OSData* in_qualifier_data,
                                                 size_t* out_size) {
+    if (const auto ranges = AvailableRateRanges(*this, in_prop_addr)) {
+        if (out_size == nullptr) {
+            return kIOReturnBadArgument;
+        }
+        *out_size = ranges->getLength();
+        return kIOReturnSuccess;
+    }
     if (const auto value = LeakProneDeviceString(*this, ivars, in_prop_addr)) {
         return ASFW::Audio::DriverKit::AnswerPropertySize(value.get(), out_size);
     }
@@ -132,6 +173,13 @@ kern_return_t ASFWAudioDevice::_GetPropertySize(const IOUserAudioObjectPropertyA
 kern_return_t ASFWAudioDevice::_GetPropertyData(const IOUserAudioObjectPropertyAddress* in_prop_addr,
                                                 OSData* in_qualifier_data,
                                                 OSData** out_data) {
+    if (auto ranges = AvailableRateRanges(*this, in_prop_addr)) {
+        if (out_data == nullptr) {
+            return kIOReturnBadArgument;
+        }
+        *out_data = ranges.detach();
+        return kIOReturnSuccess;
+    }
     if (const auto value = LeakProneDeviceString(*this, ivars, in_prop_addr)) {
         return ASFW::Audio::DriverKit::AnswerPropertyData(value.get(), out_data);
     }

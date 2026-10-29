@@ -32,7 +32,9 @@ public:
     virtual kern_return_t StopIO(IOUserAudioStartStopFlags in_flags) override LOCALONLY;
 
     // The name and UID reads AudioDriverKit 21 leaks a page on, answered from
-    // a cache instead (AdkPropertySerialization.hpp); the rest go to super.
+    // a cache instead (AdkPropertySerialization.hpp), and under the macOS 12
+    // HAL the available sample rates, as one range per rate; the rest go to
+    // super.
     // No 'override': IIG keeps AudioDriverKit's private class extension apart
     // from the class (IOUserAudioStream.iig redeclares these the same way).
     virtual kern_return_t _GetPropertySize(const IOUserAudioObjectPropertyAddress* in_prop_addr,
