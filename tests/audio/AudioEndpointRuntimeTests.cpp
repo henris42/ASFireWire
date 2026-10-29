@@ -61,6 +61,50 @@ TEST(AudioEndpointRuntime, BadCopyArgsZeroOutputs) {
     EXPECT_EQ(generation, 0u);
 }
 
+// The unit's rate from its own timestamps (frames over SPH ticks), for the
+// start sequence's rate check: only this stream generation, and only once
+// enough frames have arrived.
+TEST(AudioEndpointRuntime, MeasuredDeviceRateComesFromTheUnitsTimestamps) {
+    ASFW::Audio::AudioEndpointRuntime runtime(0x1020304050607080ULL);
+    runtime.UpdateConfig(MakeDeviceConfig());
+    IOMemoryDescriptor* outputMemory = nullptr;
+    IOMemoryDescriptor* inputMemory = nullptr;
+    IOMemoryDescriptor* controlMemory = nullptr;
+    uint32_t outputFrames = 0, outputChannels = 0, inputFrames = 0, inputChannels = 0, sampleRateHz = 0;
+    uint64_t generation = 0;
+    ASSERT_EQ(runtime.CopyDirectAudioMemory(&outputMemory, &inputMemory, &controlMemory, &outputFrames,
+                                            &outputChannels, &inputFrames, &inputChannels, &sampleRateHz,
+                                            &generation),
+              kIOReturnSuccess);
+    ASFW::Audio::Runtime::DirectAudioBindingSnapshot snapshot{};
+    ASSERT_TRUE(runtime.CopyDirectAudioBinding(snapshot));
+    auto& control = *snapshot.control;
+    control.ResetForStart();
+    const uint64_t stream = control.generation.load();
+
+    uint32_t rate = 0;
+    EXPECT_FALSE(runtime.MeasuredDeviceRateHz(rate));  // nothing published yet
+
+    // Too few frames to decide.
+    ASSERT_TRUE(control.motuRxSphClock.Publish({.streamGeneration = stream, .rxFrames = 1000,
+                                                .rxTicks = 1000LL * 512}));
+    EXPECT_FALSE(runtime.MeasuredDeviceRateHz(rate));
+
+    // 512 ticks per frame is 48 kHz, whatever rate the stream was set to.
+    ASSERT_TRUE(control.motuRxSphClock.Publish({.streamGeneration = stream, .rxFrames = 4096,
+                                                .rxTicks = 4096LL * 512}));
+    ASSERT_TRUE(runtime.MeasuredDeviceRateHz(rate));
+    EXPECT_EQ(rate, 48000U);
+
+    // A new start forgets the last stream's measurement.
+    control.ResetForStart();
+    EXPECT_FALSE(runtime.MeasuredDeviceRateHz(rate));
+
+    outputMemory->release();
+    inputMemory->release();
+    controlMemory->release();
+}
+
 TEST(AudioEndpointRuntime, CopyDirectAudioMemoryAllocatesCompleteDuplexBinding) {
     ASFW::Audio::AudioEndpointRuntime runtime(0x1020304050607080ULL);
     runtime.UpdateConfig(MakeDeviceConfig());

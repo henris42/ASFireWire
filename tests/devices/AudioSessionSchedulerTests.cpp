@@ -15,6 +15,7 @@
 
 #include "Bus/IRM/IRMTypes.hpp"
 
+#include <chrono>
 #include <future>
 #include <string>
 #include <thread>
@@ -123,6 +124,35 @@ TEST_F(SchedulerTest, MissingProducerTimingRollsBackWithoutConfirming) {
     EXPECT_FALSE(rig.IsStreaming());
     EXPECT_GT(Count("D stop"), 0);
 }
+// b149: on a 48 kHz word clock, 44.1 kHz was accepted and every start then
+// timed out after a second, although the unit's timestamps showed 48 kHz
+// within milliseconds. A unit measured at another rate fails the start at once,
+// as unsupported, so it is not retried like a timeout.
+TEST_F(SchedulerTest, AUnitRunningAtAnotherRateFailsTheStartAtOnce) {
+    Device().readinessPolicy = {.requireTransmitTiming = true, .timeoutMs = 5000};
+    Device().externalClock = "Word clock";
+    rig.binding.measuredRateHz.store(44100, std::memory_order_release);
+    const auto started = std::chrono::steady_clock::now();
+    EXPECT_EQ(rig.Start(), kIOReturnUnsupported);
+    EXPECT_LT(std::chrono::steady_clock::now() - started, std::chrono::milliseconds(2000));
+    EXPECT_EQ(Count("D confirm"), 0);
+    EXPECT_FALSE(rig.IsStreaming());
+    EXPECT_GT(Count("D stop"), 0);
+}
+
+// Clocks drift by parts per million: a rate within the tolerance is the
+// requested one, and the start waits for transmit timing as before.
+TEST_F(SchedulerTest, AMeasuredRateWithinToleranceWaitsForTiming) {
+    Device().readinessPolicy = {.requireTransmitTiming = true};
+    rig.binding.measuredRateHz.store(48010, std::memory_order_release);
+    auto start = std::async(std::launch::async, [&] { return rig.Start(); });
+    EXPECT_TRUE(WaitFor([&] { return rig.binding.readinessChecks.load(std::memory_order_acquire) > 2; }));
+    EXPECT_EQ(Count("D confirm"), 0);
+    rig.binding.timingReady.store(true, std::memory_order_release);
+    EXPECT_EQ(start.get(), kIOReturnSuccess);
+    EXPECT_EQ(rig.Stop(), kIOReturnSuccess);
+}
+
 TEST_F(SchedulerTest, TeardownCancelsProducerTimingWait) {
     Device().readinessPolicy = {.requireTransmitTiming = true};
     auto start = std::async(std::launch::async, [&] { return rig.Start(); });

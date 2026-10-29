@@ -40,6 +40,13 @@ class IDirectAudioBindingSource {
 public:
     virtual ~IDirectAudioBindingSource() = default;
     [[nodiscard]] virtual bool IsTransmitTimingReady() noexcept { return false; }
+    // The unit's sample rate as its own timestamps measure it, once enough of
+    // the current stream has arrived. False before that, and for a family whose
+    // receive side publishes no device clock.
+    [[nodiscard]] virtual bool MeasuredDeviceRateHz(uint32_t& outRateHz) noexcept {
+        (void)outRateHz;
+        return false;
+    }
     [[nodiscard]] virtual bool CopyDirectAudioBinding(DirectAudioBindingSnapshot& out) noexcept = 0;
     // Our 6-bit node id for the CIP header's SID, from the session when it
     // prepares the transmit context. Stored in the control block for the

@@ -58,6 +58,26 @@ void LogReservationRefusal(const char* direction, uint32_t streamIndex, uint64_t
     }
 }
 
+// More than 2 % away: no clock drifts that far, while a rate of the other
+// family is at least 8 % away.
+[[nodiscard]] bool IsForeignRate(uint32_t measuredHz, uint32_t requestedHz) noexcept {
+    if (measuredHz == 0 || requestedHz == 0) return false;
+    const uint32_t difference = measuredHz > requestedHz ? measuredHz - requestedHz
+                                                         : requestedHz - measuredHz;
+    return difference > requestedHz / 50;
+}
+
+// The standard rate nearest a measured one, for the log.
+[[nodiscard]] uint32_t NearestStandardRate(uint32_t hz) noexcept {
+    constexpr uint32_t kRates[] = {32000, 44100, 48000, 88200, 96000, 176400, 192000};
+    const auto distance = [hz](uint32_t rate) { return rate > hz ? rate - hz : hz - rate; };
+    uint32_t nearest = kRates[0];
+    for (const uint32_t rate : kRates) {
+        if (distance(rate) < distance(nearest)) nearest = rate;
+    }
+    return nearest;
+}
+
 // Isochronous transmit is unacknowledged, so a start that succeeds and carries
 // no audio explains nothing; the first question is which speed the packets went
 // out at. One line per start, on the control path.
@@ -652,10 +672,35 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
         const auto elapsed = UptimeMilliseconds() - readyStartMs;
         if (elapsed >= readiness.minimumHostRunMs &&
             (!readiness.requireTransmitTiming || captureOnly || transmitOnly || request.binding->IsTransmitTimingReady())) break;
+        // The unit's own timestamps give its real rate within a few
+        // milliseconds of receive start. A unit that follows an external clock
+        // of the other rate family runs at that clock's rate and never gives
+        // transmit timing at the requested one (b149: 44.1 kHz on a 48 kHz word
+        // clock measured 48000 Hz, then failed after a second). Say what it
+        // runs at and fail now; a retry cannot help, so not as a timeout.
+        if (uint32_t measuredHz = 0; !transmitOnly &&
+            request.binding->MeasuredDeviceRateHz(measuredHz) &&
+            IsForeignRate(measuredHz, clock.sampleRateHz)) {
+            const uint32_t runsAt = NearestStandardRate(measuredHz);
+            if (const char* source = family.ExternalClockSourceName()) {
+                ASFW_LOG_ERROR(Audio,
+                               "[Session] the unit runs at %u Hz, not the %u Hz requested: it follows "
+                               "its %{public}s input, which runs in the %{public}s family. Choose a rate "
+                               "in that family GUID=%llx",
+                               runsAt, clock.sampleRateHz, source,
+                               runsAt % 44100 == 0 ? "44.1 kHz" : "48 kHz", guid);
+            } else {
+                ASFW_LOG_ERROR(Audio,
+                               "[Session] the unit runs at %u Hz (measured %u), not the %u Hz requested "
+                               "GUID=%llx",
+                               runsAt, measuredHz, clock.sampleRateHz, guid);
+            }
+            return rollback(kIOReturnUnsupported, "DeviceRate");
+        }
         if (elapsed >= readiness.timeoutMs + holdMs) {
-            // On an external clock the unit could not lock at this rate (b149:
-            // a 44.1 kHz start on a 48 kHz word clock). The clock signal itself
-            // is sound, so the line names the rate, never the signal.
+            // No timing and no rate to blame: on an external clock the unit
+            // could not lock at this rate (b149: the clock signal itself is
+            // sound, so never send the user to check it).
             if (const char* source = family.ExternalClockSourceName()) {
                 ASFW_LOG_ERROR(Audio,
                                "[Session] the unit could not lock at %u Hz to its %{public}s input; the "

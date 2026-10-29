@@ -304,6 +304,26 @@ public:
         return ready;
     }
 
+    // Device frames over SPH ticks from the receive timing observer
+    // (motuRxSphClock, MOTU), for this stream generation only. A few thousand
+    // frames keep the start-up packets from deciding it.
+    [[nodiscard]] bool MeasuredDeviceRateHz(uint32_t& outRateHz) noexcept override {
+        if (!lock_) return false;
+        constexpr uint64_t kMinimumFrames = 2048;
+        constexpr uint64_t kTicksPerSecond = 24'576'000ULL;
+        Runtime::MotuRxSphClockSample sample{};
+        uint64_t updates = 0;
+        IOLockLock(lock_);
+        const bool read = HasCompleteDirectAudioMemoryLocked() &&
+            directControl_->motuRxSphClock.ReadLatest(sample, updates) &&
+            sample.streamGeneration == directControl_->generation.load(std::memory_order_acquire);
+        IOLockUnlock(lock_);
+        if (!read || sample.rxFrames < kMinimumFrames || sample.rxTicks <= 0) return false;
+        const auto ticks = static_cast<uint64_t>(sample.rxTicks);
+        outRateHz = static_cast<uint32_t>((sample.rxFrames * kTicksPerSecond + ticks / 2) / ticks);
+        return true;
+    }
+
     void PublishCipSourceId(uint8_t sid) noexcept override {
         if (!lock_) return;
         IOLockLock(lock_);

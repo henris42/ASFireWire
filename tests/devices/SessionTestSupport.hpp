@@ -124,9 +124,15 @@ class FakeBindingSource final : public ::ASFW::Audio::Runtime::IDirectAudioBindi
 public:
     std::atomic<bool> timingReady{false};
     std::atomic<uint32_t> readinessChecks{0};
+    // The unit's rate as its timestamps measure it; 0 = nothing measured yet.
+    std::atomic<uint32_t> measuredRateHz{0};
     bool IsTransmitTimingReady() noexcept override {
         readinessChecks.fetch_add(1, std::memory_order_release);
         return timingReady.load(std::memory_order_acquire);
+    }
+    bool MeasuredDeviceRateHz(uint32_t& outRateHz) noexcept override {
+        outRateHz = measuredRateHz.load(std::memory_order_acquire);
+        return outRateHz != 0;
     }
     bool CopyDirectAudioBinding(::ASFW::Audio::Runtime::DirectAudioBindingSnapshot& out) noexcept override {
         out.generation = 1;
@@ -329,6 +335,7 @@ public:
     StartReadinessPolicy GetStartReadinessPolicy() const noexcept override { return readinessPolicy; }
     std::optional<uint32_t> PostEnableDelayMs() const noexcept override { return postEnableDelay; }
     bool RetriesRegisterStagesOnTimeout() const noexcept override { return retriesRegisterStages; }
+    const char* ExternalClockSourceName() const noexcept override { return externalClock; }
 
     std::expected<DuplexPrepareResult, IOReturn> Configure(const AudioDuplexChannels& channels,
                                                            const AudioClockConfig& clock) override {
@@ -421,6 +428,7 @@ public:
     std::shared_ptr<const std::vector<ASFW::Audio::Runtime::RateFormation>> RateFormations() const override { return formations; }
     std::optional<uint32_t> postEnableDelay{};
     bool retriesRegisterStages{false};
+    const char* externalClock{nullptr};
 
 private:
     static std::string Channels(const AudioDuplexChannels& c) {
