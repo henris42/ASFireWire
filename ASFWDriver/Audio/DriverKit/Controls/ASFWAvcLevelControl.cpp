@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "ASFWAvcLevelControl.h"
 #include "ASFWAudioDriver.h"
+#include "../AdkPropertySerialization.hpp"
 #include "../../../Logging/Logging.hpp"
 #include <DriverKit/IOLib.h>
 #include <DriverKit/OSMetaClass.h>
@@ -56,4 +57,16 @@ kern_return_t ASFWAvcLevelControl::HandleChangeScalarValue(float value) {
     // IOUserAudioLevelControl interface. HAL readback and writes share one curve.
     // Scalar is a normalized slider position, not an AV/C wire value.
     return HandleChangeDecibelValue(_GetDecibelFromScalarValue(value));
+}
+kern_return_t ASFWAvcLevelControl::_GetPropertySize(const IOUserAudioObjectPropertyAddress* in_prop_addr,
+    OSData* in_qualifier_data, size_t* out_size) {
+    if (const auto value = ASFW::Audio::DriverKit::LeakProneObjectString(*this, in_prop_addr))
+        return ASFW::Audio::DriverKit::AnswerPropertySize(value.get(), out_size);
+    return super::_GetPropertySize(in_prop_addr, in_qualifier_data, out_size);
+}
+kern_return_t ASFWAvcLevelControl::_GetPropertyData(const IOUserAudioObjectPropertyAddress* in_prop_addr,
+    OSData* in_qualifier_data, OSData** out_data) {
+    if (const auto value = ASFW::Audio::DriverKit::LeakProneObjectString(*this, in_prop_addr))
+        return ASFW::Audio::DriverKit::AnswerPropertyData(value.get(), out_data);
+    return super::_GetPropertyData(in_prop_addr, in_qualifier_data, out_data);
 }

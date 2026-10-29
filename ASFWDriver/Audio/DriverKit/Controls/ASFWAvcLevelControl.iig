@@ -12,6 +12,14 @@ public:
     void free() override;
     kern_return_t HandleChangeDecibelValue(float value) override;
     kern_return_t HandleChangeScalarValue(float value) override;
+    // The name read AudioDriverKit 21 leaks a page on, answered from a cache
+    // instead (AdkPropertySerialization.hpp).
+    // No 'override': IIG keeps AudioDriverKit's private class extension apart
+    // from the class (IOUserAudioStream.iig redeclares these the same way).
+    virtual kern_return_t _GetPropertySize(const IOUserAudioObjectPropertyAddress* in_prop_addr,
+        OSData* in_qualifier_data, size_t* out_size) LOCALONLY;
+    virtual kern_return_t _GetPropertyData(const IOUserAudioObjectPropertyAddress* in_prop_addr,
+        OSData* in_qualifier_data, OSData** out_data) LOCALONLY;
 };
 struct ASFWAvcLevelControl_IVars {
     ASFWAudioDriver* driver;

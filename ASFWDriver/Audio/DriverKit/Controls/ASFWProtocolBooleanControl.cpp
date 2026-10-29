@@ -7,6 +7,7 @@
 
 #include "ASFWProtocolBooleanControl.h"
 #include "ASFWAudioDriver.h"
+#include "../AdkPropertySerialization.hpp"
 #include "../../../Logging/Logging.hpp"
 
 #include <DriverKit/IOLib.h>
@@ -119,4 +120,24 @@ kern_return_t ASFWProtocolBooleanControl::HandleChangeControlValue(bool in_contr
     const auto status = SetControlValue(in_control_value);
     ASFW_LOG(Audio, "[AvcControl] boolean complete class=0x%08x route=0x%06x kr=0x%x", ivars->classIdFourCC, ivars->routedElement, status);
     return status;
+}
+
+kern_return_t ASFWProtocolBooleanControl::_GetPropertySize(const IOUserAudioObjectPropertyAddress* in_prop_addr,
+                                                           OSData* in_qualifier_data,
+                                                           size_t* out_size)
+{
+    if (const auto value = ASFW::Audio::DriverKit::LeakProneObjectString(*this, in_prop_addr)) {
+        return ASFW::Audio::DriverKit::AnswerPropertySize(value.get(), out_size);
+    }
+    return super::_GetPropertySize(in_prop_addr, in_qualifier_data, out_size);
+}
+
+kern_return_t ASFWProtocolBooleanControl::_GetPropertyData(const IOUserAudioObjectPropertyAddress* in_prop_addr,
+                                                           OSData* in_qualifier_data,
+                                                           OSData** out_data)
+{
+    if (const auto value = ASFW::Audio::DriverKit::LeakProneObjectString(*this, in_prop_addr)) {
+        return ASFW::Audio::DriverKit::AnswerPropertyData(value.get(), out_data);
+    }
+    return super::_GetPropertyData(in_prop_addr, in_qualifier_data, out_data);
 }

@@ -26,6 +26,17 @@ public:
 
     kern_return_t HandleChangeSelectedValues(const IOUserAudioSelectorValue* in_control_values,
                                              size_t in_num_values) override;
+
+    // The name and item-name reads AudioDriverKit 21 leaks a page on,
+    // answered from a cache instead (AdkPropertySerialization.hpp).
+    // No 'override': IIG keeps AudioDriverKit's private class extension apart
+    // from the class (IOUserAudioStream.iig redeclares these the same way).
+    virtual kern_return_t _GetPropertySize(const IOUserAudioObjectPropertyAddress* in_prop_addr,
+                                           OSData* in_qualifier_data,
+                                           size_t* out_size) LOCALONLY;
+    virtual kern_return_t _GetPropertyData(const IOUserAudioObjectPropertyAddress* in_prop_addr,
+                                           OSData* in_qualifier_data,
+                                           OSData** out_data) LOCALONLY;
 };
 
 struct ASFWClockSourceControl_IVars {
