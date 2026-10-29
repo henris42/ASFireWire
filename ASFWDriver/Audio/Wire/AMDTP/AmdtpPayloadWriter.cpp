@@ -1,6 +1,7 @@
 #include "AmdtpPayloadWriter.hpp"
 
 #include "PcmSlotCodec.hpp"
+#include "../../../Logging/Logging.hpp"
 
 #include <atomic>
 namespace ASFW::Protocols::Audio::AMDTP {
@@ -82,6 +83,9 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
     uint64_t outsidePacket = 0;
     uint64_t missedFinality = 0;
     int64_t minMarginPackets = INT64_MAX;
+    // The peak feeds only the [TxContent] debug heartbeat: no per-sample work
+    // below that level.
+    const bool meter = ASFW_LOG_ENABLED(DirectAudio, Debug);
     float peak = 0.0f;
     uint32_t peakWord = 0;
 
@@ -164,10 +168,12 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
             const uint32_t word =
                 PcmSlotCodec::EncodeFloat32(sample, txPolicy_.hostToDevicePcmEncoding);
             WriteBE32(dest + slot * kBytesPerSlot, word);
-            const float magnitude = sample < 0.0f ? -sample : sample;
-            if (magnitude > peak) {
-                peak = magnitude;
-                peakWord = word;
+            if (meter) {
+                const float magnitude = sample < 0.0f ? -sample : sample;
+                if (magnitude > peak) {
+                    peak = magnitude;
+                    peakWord = word;
+                }
             }
         }
         ++written;

@@ -73,6 +73,10 @@ void MotuPayloadWriter::WriteFloat32Interleaved(
     // One decision per call: a call never mixes muted and audible frames.
     const bool muted = muted_.load(std::memory_order_acquire);
     uint32_t peakQ24 = 0;
+    // The peak feeds only the [TxContent] debug heartbeat, the packet dumps
+    // only trace: neither costs anything below its level.
+    const bool meter = ASFW_LOG_ENABLED(DirectAudio, Debug);
+    const bool dump = ASFW_LOG_ENABLED(DirectAudio, Trace);
 
     for (uint32_t i = 0; i < hostBuffer.frameCount; ++i) {
         const uint64_t absoluteFrame = hostBuffer.firstFrame + i;
@@ -134,9 +138,12 @@ void MotuPayloadWriter::WriteFloat32Interleaved(
             const float sample = (!muted && srcCh < hostBuffer.channels) ? source[srcCh] : 0.0f;
             const int32_t encoded = Float32ToMotuSample(sample);
             // The 24 significant bits sit in the high bytes; their magnitude is the meter.
-            const uint32_t magnitude = static_cast<uint32_t>(encoded < 0 ? -(encoded >> 8) : (encoded >> 8));
-            if (magnitude > peakQ24) {
-                peakQ24 = magnitude;
+            if (meter) {
+                const uint32_t magnitude =
+                    static_cast<uint32_t>(encoded < 0 ? -(encoded >> 8) : (encoded >> 8));
+                if (magnitude > peakQ24) {
+                    peakQ24 = magnitude;
+                }
             }
             WritePcmSample(
                 std::span<uint8_t>(block + streamConfig_.pcmByteOffset + chunk * kBytesPerChunk,
@@ -145,7 +152,7 @@ void MotuPayloadWriter::WriteFloat32Interleaved(
         }
 
         ++written;
-        if (frameInPacket + 1 == snap.framesInPacket &&
+        if (dump && frameInPacket + 1 == snap.framesInPacket &&
             (dumpedPackets_ < kDumpPackets || (!muted && dumpedAudiblePackets_ < kDumpPackets))) {
             DumpFilledPacket(snap, muted);
         }

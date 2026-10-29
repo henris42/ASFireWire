@@ -213,8 +213,11 @@ void ControllerCore::LogInterruptContext(const InterruptSnapshot& snapshot,
     ASFW_LOG_V3(Controller, "HandleInterrupt: events=0x%08x AsyncSubsystem=%p", events,
                 deps_.asyncController.get());
 
-    const std::string eventDecode = DiagnosticLogger::DecodeInterruptEvents(events);
-    ASFW_LOG_V3(Controller, "%{public}s", eventDecode.c_str());
+    // The decode builds a string on every interrupt: only when it will log.
+    if (ASFW_LOG_ENABLED(Controller, Trace)) {
+        const std::string eventDecode = DiagnosticLogger::DecodeInterruptEvents(events);
+        ASFW_LOG_TRACE(Controller, "%{public}s", eventDecode.c_str());
+    }
 }
 
 void ControllerCore::HandleFaultInterrupts(uint32_t events) {

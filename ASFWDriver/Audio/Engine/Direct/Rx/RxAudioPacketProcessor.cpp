@@ -3,6 +3,7 @@
 #include "../../../Wire/CIP/CIPHeader.hpp"
 #include "../../../../Isoch/Receive/IsochRxTiming.hpp"
 #include "../../../Ports/IWirePayloadCodec.hpp"
+#include "../../../../Logging/Logging.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -126,6 +127,9 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(
         }
     }
 
+    // The peak feeds only the [RxContent] debug heartbeat: no per-sample pass
+    // below that level.
+    const bool meter = ASFW_LOG_ENABLED(DirectAudio, Debug);
     float peak = 0.0f;
     for (size_t i = 0; i < eventCount; ++i) {
         float* frameOut = writer_.Frame(absoluteFrame + i);
@@ -146,10 +150,12 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(
             std::span<const uint8_t>(data + i * strideBytes, strideBytes),
             channels, channelOffset, effectiveMap,
             frameOut + channelOffset, delayedOut);
-        for (uint32_t ch = 0; ch < channels; ++ch) {
-            const float sample = frameOut[channelOffset + ch];
-            const float magnitude = sample < 0.0f ? -sample : sample;
-            if (magnitude > peak) peak = magnitude;
+        if (meter) {
+            for (uint32_t ch = 0; ch < channels; ++ch) {
+                const float sample = frameOut[channelOffset + ch];
+                const float magnitude = sample < 0.0f ? -sample : sample;
+                if (magnitude > peak) peak = magnitude;
+            }
         }
     }
     result.peakQ24 = peak >= 1.0f ? 0x7FFFFFU : static_cast<uint32_t>(peak * 8388607.0f);
