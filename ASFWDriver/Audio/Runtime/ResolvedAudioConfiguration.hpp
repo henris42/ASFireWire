@@ -5,6 +5,7 @@
 #include "../Wire/AMDTP/PcmSlotMap.hpp"
 
 #include <span>
+#include <string>
 #include <vector>
 #include <algorithm>
 
@@ -38,6 +39,11 @@ struct RateFormation final {
     bool packedPcm{false}; // MOTU: 3-byte chunks, not PCM quadlet slots.
     uint32_t packedCaptureMessageChunks{2};
     uint32_t packedPlaybackMessageChunks{2};
+    // Host channel names in host channel order, where the protocol knows them
+    // for this rate (MOTU: ADAT channels on the optical port come and go with
+    // the rate). Empty: the driver names the channels.
+    std::vector<std::string> captureNames;
+    std::vector<std::string> playbackNames;
     friend bool operator==(const RateFormation&, const RateFormation&) = default;
 };
 

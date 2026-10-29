@@ -1120,12 +1120,24 @@ ResolveRate(ASFWAudioDriver_IVars& driver, uint32_t rate, uint64_t revision,
 void InstallDriverFormation(ASFWAudioDriver_IVars& driver,
                               const ASFW::Audio::Runtime::ResolvedAudioConfiguration& resolved) {
     auto& state = driver.device;
-    if (state.inputChannelCount != resolved.captureChannels)
-        for (uint32_t ch = 0; ch < resolved.captureChannels; ++ch)
-            snprintf(state.inputChannelNames[ch], sizeof(state.inputChannelNames[ch]), "Input %u", ch + 1);
-    if (state.outputChannelCount != resolved.playbackChannels)
-        for (uint32_t ch = 0; ch < resolved.playbackChannels; ++ch)
-            snprintf(state.outputChannelNames[ch], sizeof(state.outputChannelNames[ch]), "Output %u", ch + 1);
+    // The formation's own names when it carries one per channel (MOTU ADAT
+    // channels at this rate); otherwise synthesized names once the count
+    // changes, since the old labels may name channels that no longer exist.
+    const auto installNames = [](auto& names, uint32_t priorCount, uint32_t count,
+                                 const std::vector<std::string>& formationNames, const char* plug) {
+        const uint32_t bounded = std::min(count, ASFW::Isoch::Audio::kMaxNamedChannels);
+        if (formationNames.size() == count) {
+            for (uint32_t ch = 0; ch < bounded; ++ch)
+                strlcpy(names[ch], formationNames[ch].c_str(), sizeof(names[ch]));
+        } else if (priorCount != count) {
+            for (uint32_t ch = 0; ch < bounded; ++ch)
+                snprintf(names[ch], sizeof(names[ch]), "%s %u", plug, ch + 1);
+        }
+    };
+    installNames(state.inputChannelNames, state.inputChannelCount, resolved.captureChannels,
+                 resolved.formation.captureNames, "Input");
+    installNames(state.outputChannelNames, state.outputChannelCount, resolved.playbackChannels,
+                 resolved.formation.playbackNames, "Output");
     state.inputChannelCount = resolved.captureChannels;
     state.outputChannelCount = resolved.playbackChannels;
     state.channelCount = std::max(state.inputChannelCount, state.outputChannelCount);

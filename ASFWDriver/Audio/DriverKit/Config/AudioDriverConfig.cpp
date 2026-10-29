@@ -11,6 +11,8 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <string>
+#include <vector>
 #include <cstring>
 
 namespace ASFW::Isoch::Audio {
@@ -104,6 +106,22 @@ void ParseChannelNameArray(OSDictionary* properties,
             strlcpy(dst[i], name->getCStringNoCopy(), 64);
         }
     }
+}
+
+// A formation's own channel names (Model::ASFWAudioDevice publishes them in
+// each rate catalog entry), bounded like the device-level names.
+std::vector<std::string> ParseFormationNames(OSDictionary* entry, const char* key) {
+    std::vector<std::string> names;
+    auto* array = OSDynamicCast(OSArray, entry->getObject(key));
+    if (array == nullptr) {
+        return names;
+    }
+    const uint32_t count = std::min(array->getCount(), kMaxNamedChannels);
+    for (uint32_t i = 0; i < count; ++i) {
+        auto* name = OSDynamicCast(OSString, array->getObject(i));
+        names.emplace_back(name ? name->getCStringNoCopy() : "");
+    }
+    return names;
 }
 
 void ParseChannelNames(OSDictionary* properties, ParsedAudioDriverConfig& inOutConfig) {
@@ -289,6 +307,8 @@ void ParseAudioDriverConfigFromProperties(OSDictionary* properties,
                 formation.packedCaptureMessageChunks = value->unsigned32BitValue();
             if (auto* value = OSDynamicCast(OSNumber, entry->getObject("ASFWMotuPlaybackMessageChunks")))
                 formation.packedPlaybackMessageChunks = value->unsigned32BitValue();
+            formation.captureNames = ParseFormationNames(entry, Keys::kInputChannelNames);
+            formation.playbackNames = ParseFormationNames(entry, Keys::kOutputChannelNames);
             for (uint32_t j = 0; j < playbackCount; ++j)
                 formation.playback.push_back({playback[j].pcmChannels, playback[j].am824Slots,
                     inOutConfig.usesRateFormations ? (playback[j].midiPorts ? 1U : 0U) : playback[j].midiPorts,

@@ -223,6 +223,8 @@ struct ASFWAudioDevice {
                     !add("ASFWMotuPlaybackMessageChunks", formation.packedPlaybackMessageChunks) ||
                     !PublishWireStreams(entry.get(), PropertyKeys::kPlaybackStreams, streams(formation.playback)) ||
                     !PublishWireStreams(entry.get(), PropertyKeys::kCaptureStreams, streams(formation.capture))) return false;
+                PublishChannelNames(entry.get(), PropertyKeys::kInputChannelNames, formation.captureNames);
+                PublishChannelNames(entry.get(), PropertyKeys::kOutputChannelNames, formation.playbackNames);
                 catalog->setObject(entry.get());
             }
             properties->setObject(PropertyKeys::kRateFormations, catalog.get());

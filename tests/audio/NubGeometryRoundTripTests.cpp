@@ -292,6 +292,33 @@ TEST(NubGeometryRoundTrip, RateCatalogPreservesDifferentWidthsMapsAndValidationG
     EXPECT_EQ(parsed.rateFormationCandidates.size(), 2U);
 }
 
+// A formation's channel names cross with it: a MOTU's ADAT channels halve at
+// 2x, so each rate names its own channels (b146: an ADAT unit at 96 kHz showed
+// generic names, 22 of them for 18 channels).
+TEST(NubGeometryRoundTrip, RateCatalogCarriesEachFormationsChannelNames) {
+    auto device = MakeVeniceF24();
+    ASFW::Audio::Runtime::RateFormation base{};
+    base.sampleRateHz = 48000;
+    base.protocolSupported = true;
+    base.playback = {{2, 3, 1, {}}};
+    base.capture = {{3, 4, 1, {}}};
+    base.playbackNames = {"Main L", "Main R"};
+    base.captureNames = {"Analog 1", "ADAT 1", "ADAT 2"};
+    auto high = base;
+    high.sampleRateHz = 96000;
+    high.capture = {{2, 3, 1, {}}};
+    high.captureNames = {"Analog 1", "ADAT 1"};
+    device.rateFormationCandidates = {base, high};
+    bool published = false;
+    auto parsed = RoundTrip(device, published);
+    ASSERT_TRUE(published);
+    ASSERT_EQ(parsed.rateFormationCandidates.size(), 2U);
+    EXPECT_EQ(parsed.rateFormationCandidates[0].captureNames, base.captureNames);
+    EXPECT_EQ(parsed.rateFormationCandidates[0].playbackNames, base.playbackNames);
+    EXPECT_EQ(parsed.rateFormationCandidates[1].captureNames, high.captureNames);
+    EXPECT_EQ(parsed.rateFormationCandidates, device.rateFormationCandidates);
+}
+
 TEST(NubGeometryRoundTrip, AmbiguousOrIncompleteCatalogIsRejectedAsAWhole) {
     auto device = MakeVeniceF24();
     ASFW::Audio::Runtime::RateFormation base{};

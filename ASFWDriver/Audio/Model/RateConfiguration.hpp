@@ -37,8 +37,13 @@ WithRateFormation(const ASFWAudioDevice& prior, uint32_t rateHz) {
     next.captureStreams = convert(resolved->formation.capture);
     // Old per-channel labels may describe unmultiplexed ADAT slots. Keep names
     // only for an unchanged formation; the driver synthesizes names otherwise.
+    // A formation that carries its own names (one per channel) uses them.
     if (next.playbackStreams != prior.playbackStreams) next.outputChannelNames.clear();
     if (next.captureStreams != prior.captureStreams) next.inputChannelNames.clear();
+    if (resolved->formation.playbackNames.size() == next.outputChannelCount)
+        next.outputChannelNames = resolved->formation.playbackNames;
+    if (resolved->formation.captureNames.size() == next.inputChannelCount)
+        next.inputChannelNames = resolved->formation.captureNames;
     return next;
 }
 
