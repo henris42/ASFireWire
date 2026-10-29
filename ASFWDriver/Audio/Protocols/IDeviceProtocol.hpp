@@ -15,6 +15,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace ASFW::AVC {
@@ -90,6 +91,17 @@ public:
                                   std::vector<std::string>& outNames) const {
         (void)inNames;
         (void)outNames;
+        return false;
+    }
+
+    /// The device's clock sources a user can choose, and the one it uses as of
+    /// the last clock read (no bus traffic). `choices` pairs the value
+    /// ApplyDeviceSetting(DeviceSetting::ClockSource, value) takes with its
+    /// name. False: the device has no clock source choice to publish.
+    virtual bool GetClockSourceChoices(std::vector<std::pair<uint32_t, std::string>>& choices,
+                                       uint32_t& current) const {
+        (void)choices;
+        (void)current;
         return false;
     }
 

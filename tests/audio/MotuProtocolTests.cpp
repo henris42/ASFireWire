@@ -203,6 +203,32 @@ TEST(MotuProtocolTests, DecodesTheClockStatusObservedOnHardware) {
     EXPECT_EQ(protocol.CachedSampleRateHz(), 48000U);
 }
 
+// The clock read feeds the HAL clock source control (b146: every unit ran on
+// word clock, 0x0b14 = 0x0c at 48 kHz, while Audio MIDI Setup showed
+// "Default"). Nothing is published before a read succeeds.
+TEST(MotuProtocolTests, TheClockReadNamesTheSourceTheUnitFollows) {
+    RecordingBus bus;
+    bus.readValue = 0x0000000cU;  // 48 kHz, word clock on BNC
+    RouteState routes;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+    std::vector<std::pair<uint32_t, std::string>> choices;
+    uint32_t current = 99;
+    EXPECT_FALSE(protocol.GetClockSourceChoices(choices, current));
+
+    protocol.ReadClockStatus([](IOReturn, ClockStatus) {});
+
+    ASSERT_TRUE(protocol.GetClockSourceChoices(choices, current));
+    EXPECT_EQ(current, 4U);
+    ASSERT_EQ(choices.size(), 4U);
+    EXPECT_EQ(choices[0], (std::pair<uint32_t, std::string>{0U, "Internal"}));
+    EXPECT_EQ(choices[3], (std::pair<uint32_t, std::string>{4U, "Word clock"}));
+
+    bus.readValue = 0x00000008U;
+    protocol.ReadClockStatus([](IOReturn, ClockStatus) {});
+    ASSERT_TRUE(protocol.GetClockSourceChoices(choices, current));
+    EXPECT_EQ(current, 0U);
+}
+
 TEST(MotuProtocolTests, ReportsReadFailureAndLeavesCacheUnset) {
     RecordingBus bus;
     bus.readStatus = AsyncStatus::kTimeout;

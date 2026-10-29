@@ -76,6 +76,8 @@ public:
     /// Port names in host channel order (MotuPortLayout.hpp). They come from the model's
     /// static table, so unlike DICE they are available before PrepareDuplex. Optical
     /// extras past the table are left unnamed for the caller to synthesize.
+    bool GetClockSourceChoices(std::vector<std::pair<uint32_t, std::string>>& choices,
+                               uint32_t& current) const override;
     bool GetChannelLabels(std::vector<std::string>& inNames,
                           std::vector<std::string>& outNames) const override;
 
@@ -225,6 +227,10 @@ private:
     uint64_t notificationAddress_{0};
     Discovery::DeviceRouteToken route_;
     std::atomic<uint32_t> cachedSampleRateHz_{0};
+    // Clock source field of the last clock read (v2: bits [2:0]); kNoClockSource
+    // until one succeeds.
+    static constexpr uint32_t kNoClockSource = 0xFFFFFFFFu;
+    std::atomic<uint32_t> cachedClockSource_{kNoClockSource};
     std::atomic<bool> asyncAddressRegistered_{false};
     bool initialized_{false};
     std::atomic<bool> shuttingDown_{false};

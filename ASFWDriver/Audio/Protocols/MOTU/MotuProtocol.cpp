@@ -139,6 +139,9 @@ void MotuProtocol::ReadClockStatus(ClockStatusCallback callback) {
                 ? DecodeClockSourceV3(value)
                 : DecodeClockSourceV2(value);
             cachedSampleRateHz_.store(clock.sampleRateHz, std::memory_order_release);
+            if (IsV2()) {
+                cachedClockSource_.store(value & 0x7u, std::memory_order_release);
+            }
 
             if (callback) {
                 callback(kIOReturnSuccess, clock);
@@ -497,6 +500,47 @@ void MotuProtocol::ReadRateObservation(std::function<void(IOReturn, RateHardware
         observation.clockConfirmed = status == kIOReturnSuccess && clock.sampleRateHz != 0;
         if (callback) callback(status, observation);
     });
+}
+
+namespace {
+
+// What Audio MIDI Setup shows for each v2 clock source code.
+[[nodiscard]] const char* ClockSourceNameV2(uint32_t source) noexcept {
+    switch (static_cast<ClockSourceV2>(source)) {
+    case ClockSourceV2::Internal: return "Internal";
+    case ClockSourceV2::AdatOnOpt: return "ADAT optical";
+    case ClockSourceV2::Spdif: return "S/PDIF";
+    case ClockSourceV2::Sph: return "FireWire bus";
+    case ClockSourceV2::WordOnBnc: return "Word clock";
+    case ClockSourceV2::AdatOnDsub: return "ADAT D-sub";
+    case ClockSourceV2::AesEbuOnXlr: return "AES/EBU";
+    }
+    return "Unknown";
+}
+
+} // namespace
+
+bool MotuProtocol::GetClockSourceChoices(std::vector<std::pair<uint32_t, std::string>>& choices,
+                                         uint32_t& current) const {
+    choices.clear();
+    if (!IsV2()) {
+        return false;
+    }
+    const uint32_t source = cachedClockSource_.load(std::memory_order_acquire);
+    if (source == kNoClockSource) {
+        return false;
+    }
+    const uint32_t options = V2ClockSourceOptions();
+    for (uint32_t value = 0; value < 8; ++value) {
+        // The source in use is listed even when it is no front-panel choice
+        // (bus sync while streaming), so the selector never shows a value it
+        // does not have.
+        if ((options & (1u << value)) != 0 || value == source) {
+            choices.emplace_back(value, ClockSourceNameV2(value));
+        }
+    }
+    current = source;
+    return true;
 }
 
 const char* MotuProtocol::OpticalExtraName() const noexcept {
