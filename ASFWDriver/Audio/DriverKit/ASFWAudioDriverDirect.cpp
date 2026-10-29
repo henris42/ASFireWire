@@ -150,7 +150,7 @@ bool BindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars,
         .sampleRateHz = static_cast<uint32_t>(ivars.device.currentSampleRate),
         .memory = ASFW::Audio::Runtime::AudioStreamMemory{
             .inputBase = reinterpret_cast<float*>(static_cast<uintptr_t>(ivars.inputMap->GetAddress())),
-            .outputBase = reinterpret_cast<const float*>(static_cast<uintptr_t>(ivars.outputMap->GetAddress())),
+            .outputBase = reinterpret_cast<float*>(static_cast<uintptr_t>(ivars.outputMap->GetAddress())),
             .inputFrameCapacity = inputFrameCapacity,
             .outputFrameCapacity = outputFrameCapacity,
             .inputChannels = physicalGeometry.inputChannels,

@@ -11,7 +11,9 @@
 //   owner), copies each written frame once from that ring into the armed
 //   packet that carries it, if the packet is still ahead of the hardware.
 //   RT-safe: no locks, no allocation; the timeline and the clock pair are
-//   read through their seqlocks.
+//   read through their seqlocks. The whole ring is cleared at every start
+//   (ClearPlaybackRing), so a frame CoreAudio never wrote in this session is
+//   silence rather than the previous session's output.
 //
 // Both are called unchanged from the host TX tests.
 //
@@ -19,6 +21,8 @@
 #include "ASFWAudioDriverPrivate.hpp"
 #include "../Runtime/PlaybackRingRange.hpp"
 #include "../../Common/TimingUtils.hpp"
+
+#include <cstring>
 #ifdef ASFW_HOST_TEST
 #include "../../Testing/HostDriverKitStubs.hpp"
 #endif
@@ -124,7 +128,37 @@ namespace {
     return completion + (elapsedNanos + kCycleNanos - 1) / kCycleNanos;
 }
 
+// Zeroes `count` frames of the playback ring from absolute frame `first`,
+// across the wrap.
+void ClearRingFrames(const ASFW::Audio::Runtime::AudioStreamMemory& memory,
+                     uint64_t first,
+                     uint64_t count) noexcept {
+    const uint32_t capacity = memory.outputFrameCapacity;
+    if (memory.outputBase == nullptr || capacity == 0 || memory.outputChannels == 0 ||
+        count == 0) {
+        return;
+    }
+    if (count > capacity) {
+        first += count - capacity;
+        count = capacity;
+    }
+    float* const base = memory.outputBase;
+    const size_t frameBytes = static_cast<size_t>(memory.outputChannels) * sizeof(float);
+    const uint64_t start = first % capacity;
+    const uint64_t firstRun = count < capacity - start ? count : capacity - start;
+    std::memset(base + start * memory.outputChannels, 0,
+                static_cast<size_t>(firstRun) * frameBytes);
+    if (count > firstRun) {
+        std::memset(base, 0, static_cast<size_t>(count - firstRun) * frameBytes);
+    }
+}
+
 } // namespace
+
+void ClearPlaybackRing(ASFWAudioDriver_IVars& ivars) noexcept {
+    const auto& memory = ivars.runtime.directAudioGraph.memory;
+    ClearRingFrames(memory, 0, memory.outputFrameCapacity);
+}
 
 void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars) noexcept {
     auto* control = ivars.runtime.directAudioGraph.control;

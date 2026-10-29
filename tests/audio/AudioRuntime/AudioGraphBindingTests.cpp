@@ -18,7 +18,7 @@ using ASFW::Audio::Runtime::AudioWireFormat;
 AudioGraphBinding MakeBinding(AudioTransportControlBlock* control,
                               IOUserAudioDevice* audioDevice,
                               float* input,
-                              const float* output) {
+                              float* output) {
     return AudioGraphBinding{
         .guid = 0x1122334455667788ULL,
         .sampleRateHz = 48000,

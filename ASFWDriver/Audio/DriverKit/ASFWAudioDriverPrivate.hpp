@@ -417,6 +417,9 @@ struct TxPlacementSample final {
 // finality frontier (projected hardware position + guard). Runs inside
 // WriteEnd on CoreAudio's IO thread, its only owner; RT-safe.
 void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars) noexcept;
+// Zeroes CoreAudio's whole output ring. Every start, before CoreAudio's first
+// write: the ring still holds the previous session's output.
+void ClearPlaybackRing(ASFWAudioDriver_IVars& ivars) noexcept;
 
 // The CoreAudio WriteEnd step (ASFWAudioDriverOutputWrite.cpp). Returns false
 // when the span exceeds the output ring, which the IO handler reports as

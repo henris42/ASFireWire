@@ -12,7 +12,8 @@ enum class AudioSampleStorage : uint32_t {
 
 struct AudioStreamMemory final {
     float* inputBase{nullptr};
-    const float* outputBase{nullptr};
+    // CoreAudio's output ring: the fill reads it and clears what it copied.
+    float* outputBase{nullptr};
 
     uint32_t inputFrameCapacity{0};
     uint32_t outputFrameCapacity{0};

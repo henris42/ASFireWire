@@ -1806,6 +1806,21 @@ TEST(TxOwnershipLifecycle, AFirstWriteThatOverstatesItsSpanSendsNoOldFrames) {
     EXPECT_TRUE(sawPcm);
 }
 
+// Every start silences CoreAudio's output ring before IO: it still holds the
+// previous session's output.
+TEST(TxOwnershipLifecycle, ArmingTheProducerClearsThePlaybackRing) {
+    const ASFW::Isoch::Audio::DICE::DiceProfile profile{{.name = "Focusrite Saffire (DICE)"}};
+    TxProducerRig rig;
+    rig.SetResolvedPlayback({.pcmChannels = 8, .am824Slots = 9, .midiPorts = 1});
+    std::vector<float> ring(static_cast<size_t>(1024) * 8, 0.25f);
+    auto& memory = rig.Ivars().runtime.directAudioGraph.memory;
+    memory.outputBase = ring.data();
+    memory.outputFrameCapacity = 1024;
+    memory.outputChannels = 8;
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::FocusriteSPro24Dsp, 48000));
+    EXPECT_TRUE(std::all_of(ring.begin(), ring.end(), [](float v) { return v == 0.0f; }));
+}
+
 TEST(AudioDriverTxProducerTests, SyntheticHeaderlessBootstrapTransitionsAtWritableBoundary) {
     SyntheticHeaderlessReplayProfile profile;
     TxProducerRig rig;
