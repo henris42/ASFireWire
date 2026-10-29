@@ -715,6 +715,12 @@ TEST(AudioCoordinatorRoutingTests, MotuAddedIsDescribedFromTheOpticalRegisterAnd
     ASSERT_EQ(at96k->captureNames.size(), 18U);
     EXPECT_EQ(at96k->captureNames[17], "ADAT 4");
     EXPECT_EQ(at96k->playbackNames.size(), 14U);
+    // The clock source for the HAL control: the 828mkII's front-panel choices
+    // and the source in use (the clock register reads 8: internal, 48 kHz).
+    EXPECT_EQ(committed.clockSourceValues, (std::vector<uint32_t>{0U, 1U, 2U, 4U}));
+    EXPECT_EQ(committed.clockSourceNames,
+              (std::vector<std::string>{"Internal", "ADAT optical", "S/PDIF", "Word clock"}));
+    EXPECT_EQ(committed.clockSource, 0U);
 }
 
 // StartIO unwinds a failed start with StopStreaming. By then the device owns

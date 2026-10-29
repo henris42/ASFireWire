@@ -71,6 +71,17 @@ Model::ASFWAudioDevice MotuFamilyAdapter::BuildNubConfig(const Discovery::Device
         dev.inputChannelNames = std::move(inNames);
         dev.outputChannelNames = std::move(outNames);
     }
+    // The clock source the unit uses, for the HAL clock source control (b146:
+    // Audio MIDI Setup showed "Default" while every unit ran on word clock).
+    std::vector<std::pair<uint32_t, std::string>> clockChoices;
+    uint32_t clockSource = 0;
+    if (protocol.GetClockSourceChoices(clockChoices, clockSource)) {
+        for (auto& [value, name] : clockChoices) {
+            dev.clockSourceValues.push_back(value);
+            dev.clockSourceNames.push_back(std::move(name));
+        }
+        dev.clockSource = clockSource;
+    }
     return dev;
 }
 

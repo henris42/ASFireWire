@@ -21,6 +21,8 @@ constexpr uint32_t kMaxSampleRates = 8;
 // so per-channel device labels can be carried for every element, not just the
 // first 8. Each name is at most 64 bytes (see ParsedAudioDriverConfig).
 constexpr uint32_t kMaxNamedChannels = ::ASFW::Audio::Runtime::kMaxHostPcmChannels;
+// A clock source field is three bits wide on every family that has one.
+constexpr uint32_t kMaxClockSources = 8;
 constexpr uint32_t kMaxBoolControls = 16;
 /// Must equal kMaxAudioStreamsPerDirection (Audio/Protocols/AudioTypes.hpp).
 /// Duplicated rather than included so this header stays on the AudioDriverKit
@@ -112,6 +114,13 @@ struct ParsedAudioDriverConfig {
     // synthesized "<plug> N" names so CoreAudio shows the device's real labels.
     char deviceInputChannelNames[kMaxNamedChannels][64]{};
     char deviceOutputChannelNames[kMaxNamedChannels][64]{};
+
+    // The device's clock sources and the current one (kClockSource*). A count
+    // of zero means no clock source control.
+    uint32_t clockSourceCount{0};
+    uint32_t clockSourceValues[kMaxClockSources]{};
+    char clockSourceNames[kMaxClockSources][64]{};
+    uint32_t clockSource{0};
 };
 
 void InitializeAudioDriverConfigDefaults(ParsedAudioDriverConfig& outConfig);

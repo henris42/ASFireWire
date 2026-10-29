@@ -319,6 +319,26 @@ TEST(NubGeometryRoundTrip, RateCatalogCarriesEachFormationsChannelNames) {
     EXPECT_EQ(parsed.rateFormationCandidates, device.rateFormationCandidates);
 }
 
+// The clock sources reach the audio side for its HAL clock source control.
+TEST(NubGeometryRoundTrip, ClockSourcesSurviveTheCrossing) {
+    auto device = MakeVeniceF24();
+    device.clockSourceValues = {0, 1, 2, 4};
+    device.clockSourceNames = {"Internal", "ADAT optical", "S/PDIF", "Word clock"};
+    device.clockSource = 4;
+    bool published = false;
+    const auto parsed = RoundTrip(device, published);
+    ASSERT_TRUE(published);
+    ASSERT_EQ(parsed.clockSourceCount, 4U);
+    EXPECT_EQ(parsed.clockSourceValues[3], 4U);
+    EXPECT_STREQ(parsed.clockSourceNames[3], "Word clock");
+    EXPECT_STREQ(parsed.clockSourceNames[1], "ADAT optical");
+    EXPECT_EQ(parsed.clockSource, 4U);
+
+    // Values and names that disagree publish no control.
+    device.clockSourceNames.pop_back();
+    EXPECT_EQ(RoundTrip(device, published).clockSourceCount, 0U);
+}
+
 TEST(NubGeometryRoundTrip, AmbiguousOrIncompleteCatalogIsRejectedAsAWhole) {
     auto device = MakeVeniceF24();
     ASFW::Audio::Runtime::RateFormation base{};

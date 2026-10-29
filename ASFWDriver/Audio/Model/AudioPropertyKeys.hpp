@@ -53,6 +53,11 @@ inline constexpr const char* kRateFormations = "ASFWRateFormations";
 inline constexpr const char* kUsesRateFormations = "ASFWDiceRateFormations";
 inline constexpr const char* kFormationProtocolSupported = "ProtocolSupported";
 inline constexpr const char* kFormationHardwareValidated = "HardwareValidated";
+// The device's clock sources (values and names, same order) and the current
+// one. The audio side publishes them as the HAL clock source control.
+inline constexpr const char* kClockSourceValues = "ASFWClockSourceValues";
+inline constexpr const char* kClockSourceNames = "ASFWClockSourceNames";
+inline constexpr const char* kClockSource = "ASFWClockSource";
 
 // Keys within one stream entry.
 inline constexpr const char* kStreamPcmChannels = "PCM";

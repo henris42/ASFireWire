@@ -70,6 +70,11 @@ struct ASFWAudioDevice {
     // Per-channel device labels in channel order (empty = synthesize names).
     std::vector<std::string> inputChannelNames{};
     std::vector<std::string> outputChannelNames{};
+    // Clock sources the user can choose (values and names, same order) and
+    // the one in use; empty when the device offers no choice.
+    std::vector<uint32_t> clockSourceValues{};
+    std::vector<std::string> clockSourceNames{};
+    uint32_t clockSource{0};
     StreamMode streamMode{StreamMode::kNonBlocking};
 
     // Resolved per-stream wire geometry, in stream order. Empty means the
@@ -171,6 +176,21 @@ struct ASFWAudioDevice {
         // channel order and prefers them over synthesized names.
         PublishChannelNames(properties, PropertyKeys::kInputChannelNames, inputChannelNames);
         PublishChannelNames(properties, PropertyKeys::kOutputChannelNames, outputChannelNames);
+        if (!clockSourceValues.empty() && clockSourceValues.size() == clockSourceNames.size()) {
+            auto values = OSSharedPtr(OSArray::withCapacity(
+                static_cast<uint32_t>(clockSourceValues.size())), OSNoRetain);
+            auto current = OSSharedPtr(OSNumber::withNumber(clockSource, 32), OSNoRetain);
+            if (values && current) {
+                for (uint32_t value : clockSourceValues) {
+                    if (auto n = OSSharedPtr(OSNumber::withNumber(value, 32), OSNoRetain)) {
+                        values->setObject(n.get());
+                    }
+                }
+                properties->setObject(PropertyKeys::kClockSourceValues, values.get());
+                PublishChannelNames(properties, PropertyKeys::kClockSourceNames, clockSourceNames);
+                properties->setObject(PropertyKeys::kClockSource, current.get());
+            }
+        }
 
         // Resolved per-stream geometry. This is what lets the audio side frame
         // packets from what the device reported instead of from a compiled-in

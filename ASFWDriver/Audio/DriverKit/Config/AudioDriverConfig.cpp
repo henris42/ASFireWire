@@ -124,6 +124,31 @@ std::vector<std::string> ParseFormationNames(OSDictionary* entry, const char* ke
     return names;
 }
 
+// Values and names must agree in count, or the control is not published.
+void ParseClockSources(OSDictionary* properties, ParsedAudioDriverConfig& inOutConfig) {
+    inOutConfig.clockSourceCount = 0;
+    auto* values = OSDynamicCast(OSArray, properties->getObject(Keys::kClockSourceValues));
+    auto* names = OSDynamicCast(OSArray, properties->getObject(Keys::kClockSourceNames));
+    auto* current = OSDynamicCast(OSNumber, properties->getObject(Keys::kClockSource));
+    if (values == nullptr || names == nullptr || current == nullptr ||
+        values->getCount() != names->getCount() || values->getCount() == 0 ||
+        values->getCount() > kMaxClockSources) {
+        return;
+    }
+    for (uint32_t i = 0; i < values->getCount(); ++i) {
+        auto* value = OSDynamicCast(OSNumber, values->getObject(i));
+        auto* name = OSDynamicCast(OSString, names->getObject(i));
+        if (value == nullptr || name == nullptr) {
+            return;
+        }
+        inOutConfig.clockSourceValues[i] = value->unsigned32BitValue();
+        strlcpy(inOutConfig.clockSourceNames[i], name->getCStringNoCopy(),
+                sizeof(inOutConfig.clockSourceNames[i]));
+    }
+    inOutConfig.clockSource = current->unsigned32BitValue();
+    inOutConfig.clockSourceCount = values->getCount();
+}
+
 void ParseChannelNames(OSDictionary* properties, ParsedAudioDriverConfig& inOutConfig) {
     ParseChannelNameArray(properties, Keys::kInputChannelNames, inOutConfig.deviceInputChannelNames);
     ParseChannelNameArray(properties, Keys::kOutputChannelNames, inOutConfig.deviceOutputChannelNames);
@@ -324,6 +349,7 @@ void ParseAudioDriverConfigFromProperties(OSDictionary* properties,
     }
     ParsePlugNames(properties, inOutConfig);
     ParseChannelNames(properties, inOutConfig);
+    ParseClockSources(properties, inOutConfig);
     ParseWireStreams(properties, Keys::kPlaybackStreams,
                      inOutConfig.playbackStreams, inOutConfig.playbackStreamCount);
     ParseWireStreams(properties, Keys::kCaptureStreams,
