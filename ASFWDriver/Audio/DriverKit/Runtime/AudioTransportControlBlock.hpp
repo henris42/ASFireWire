@@ -506,6 +506,9 @@ struct AudioTransportControlBlock final {
     std::atomic<uint64_t> playbackRingDiscontinuityGeneration{0};
     std::atomic<uint64_t> playbackRingUnderruns{0};
     std::atomic<uint64_t> playbackRingOverruns{0};
+    // CoreAudio writes that ended behind the recorded written end (the range
+    // followed them back, PlaybackRingRange). Each means that end ran ahead.
+    std::atomic<uint64_t> playbackRingRewinds{0};
     // The first CoreAudio writes of a start as the IO handler received them,
     // and the largest span any write reported. Logged when the wire stops, so
     // a start can be checked for a first write that claims more than one IO
@@ -537,6 +540,7 @@ struct AudioTransportControlBlock final {
             frames.store(0, std::memory_order_relaxed);
         }
         outputWriteMaxFrames.store(0, std::memory_order_relaxed);
+        playbackRingRewinds.store(0, std::memory_order_relaxed);
         outputWriteLogCount.store(0, std::memory_order_release);
     }
 

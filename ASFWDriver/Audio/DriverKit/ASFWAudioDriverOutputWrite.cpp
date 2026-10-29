@@ -53,6 +53,9 @@ void PublishPlaybackRingWriteEnd(ASFW::Audio::Runtime::AudioGraphBinding& graph,
     if (update.overrun) {
         control.playbackRingOverruns.fetch_add(1, std::memory_order_relaxed);
     }
+    if (update.rewound) {
+        control.playbackRingRewinds.fetch_add(1, std::memory_order_relaxed);
+    }
     control.playbackRingWriteFrame.store(update.writtenEndFrame, std::memory_order_release);
 }
 
@@ -137,10 +140,18 @@ void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars) noexcept {
     const uint64_t oldestValid =
         control->playbackRingOldestValidFrame.load(std::memory_order_acquire);
     uint64_t& filled = ivars.runtime.txFilledFrameEnd;
+    const uint64_t writeStart =
+        control->client.outputWriteEndSampleFrame.load(std::memory_order_acquire);
     if (filled == 0) {
         // Frames before CoreAudio's first write were never written: there is
         // nothing to fill, and they must not count as missed deadlines.
-        filled = control->client.outputWriteEndSampleFrame.load(std::memory_order_acquire);
+        filled = writeStart;
+    } else if (writeStart < filled) {
+        // CoreAudio wrote frames this fill has already copied: an overlapping
+        // write, or a written end that had run ahead and was just followed
+        // back (PlaybackRingRange rewound). Copy them again, so every packet
+        // still ahead of the hardware carries CoreAudio's latest write.
+        filled = writeStart;
     }
     if (filled < oldestValid) {
         filled = oldestValid;  // frames the ring no longer holds stay silent

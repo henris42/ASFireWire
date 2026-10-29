@@ -129,10 +129,10 @@ void RunOnWorkQueue(ASFWAudioDriver_IVars& ivars, IODispatchBlock block) noexcep
            ivars.runtime.txSlotProvider.queueControl != nullptr;
 }
 
-// The first CoreAudio writes of this IO session and the playback range's
-// discontinuities, on every HAL StopIO. b146: a cold start replayed the
-// previous session's output for about one ring after CoreAudio's first write,
-// as if that write had claimed the whole ring.
+// The first CoreAudio writes of this IO session and how often the playback
+// range had to follow a write back, on every HAL StopIO. b146: a cold start
+// replayed the previous session's output for about one ring after CoreAudio's
+// first write, as if that write had claimed the whole ring.
 void LogOutputWrites(const ASFWAudioDriver_IVars& ivars) noexcept {
     const auto* control = ivars.runtime.directAudioGraph.control;
     if (control == nullptr) {
@@ -149,9 +149,10 @@ void LogOutputWrites(const ASFWAudioDriver_IVars& ivars) noexcept {
     }
     ASFW_LOG(DirectAudio,
              "[OutputWrites] guid=0x%016llx first=%llu/%u %llu/%u %llu/%u %llu/%u maxFrames=%u "
-             "discont=%llu overruns=%llu",
+             "rewinds=%llu discont=%llu overruns=%llu",
              ivars.device.guid, sample[0], frames[0], sample[1], frames[1], sample[2], frames[2],
              sample[3], frames[3], control->outputWriteMaxFrames.load(std::memory_order_relaxed),
+             control->playbackRingRewinds.load(std::memory_order_relaxed),
              control->playbackRingDiscontinuityGeneration.load(std::memory_order_relaxed),
              control->playbackRingOverruns.load(std::memory_order_relaxed));
 }

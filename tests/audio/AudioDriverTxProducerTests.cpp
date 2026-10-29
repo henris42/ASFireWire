@@ -37,6 +37,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -301,6 +302,10 @@ public:
         // False models a TX preparation queue that wakes late: WriteEnd's
         // wake request is not run, only the transport interrupts are.
         bool dispatchWriteEndWakes{true};
+        // Nonzero: the first WriteEnd reports this many frames while
+        // CoreAudio wrote only ioFrames (b146: a cold start replayed about one
+        // ring of the previous session after the first write).
+        uint32_t firstWriteReportsFrames{0};
     };
 
     void EnableHostOutput(const HostOutputPlan& plan) {
@@ -314,6 +319,10 @@ public:
         memory.outputFrameCapacity = ringFrames_;
         memory.outputChannels = pcmChannels_;
     }
+
+    // Every sample of CoreAudio's output ring set to `value`: what the
+    // previous session left there.
+    void FillOutputRing(float value) { std::fill(outputRing_.begin(), outputRing_.end(), value); }
 
     [[nodiscard]] uint32_t SampleRate() const { return sampleRate_; }
     [[nodiscard]] uint32_t PcmChannels() const { return pcmChannels_; }
@@ -467,8 +476,11 @@ private:
                 }
             }
             const auto wakesBefore = nub_.txPreparationRequests;
+            const uint32_t reported = (writeEnds_ == 0 && plan.firstWriteReportsFrames != 0)
+                                          ? plan.firstWriteReportsFrames
+                                          : plan.ioFrames;
             EXPECT_TRUE(ASFW::Audio::DriverKit::HandleOutputWriteEnd(
-                ivars_, *control_, nextWrite_, HostTicksFor(atPacket), plan.ioFrames));
+                ivars_, *control_, nextWrite_, HostTicksFor(atPacket), reported));
             ++writeEnds_;
             nextWrite_ += plan.ioFrames;
             // WriteEnd asked for a TX preparation action: run it now, as the
@@ -1730,6 +1742,68 @@ TEST(TxOwnershipLifecycle, RestartStartsEveryPerStreamStateOver) {
               runtime.txMissedFinalityAtStart);
     EXPECT_EQ(runtime.txStreamEngine.TakeMinFinalityMarginPackets(), INT64_MAX);
     EXPECT_TRUE(runtime.txActive.load());
+}
+
+// PCM samples on the wire below zero. The rig's CoreAudio writes positive
+// tags only, so a negative sample is content it never wrote this session.
+uint64_t CountNegativePcmSamples(const std::vector<WirePacket>& wire, uint32_t dbs, uint32_t pcm) {
+    uint64_t negative = 0;
+    for (const auto& packet : wire) {
+        if (packet.bytes.size() <= 8 || !packet.IsData()) {
+            continue;
+        }
+        const auto blocks = static_cast<uint32_t>((packet.bytes.size() - 8) / (dbs * 4));
+        for (uint32_t b = 0; b < blocks; ++b) {
+            for (uint32_t slot = 0; slot < pcm; ++slot) {
+                int32_t value = static_cast<int32_t>(
+                    packet.Quadlet(8 + (static_cast<size_t>(b) * dbs + slot) * 4) & 0x00FFFFFFu);
+                if (value & 0x00800000) {
+                    value -= 0x01000000;
+                }
+                if (value < 0) {
+                    ++negative;
+                }
+            }
+        }
+    }
+    return negative;
+}
+
+// b146 PRIORITY: a cold start played the previous session's output for about
+// one ring after CoreAudio's first write, louder than anything written. Here
+// the ring holds old content (-0.5) and CoreAudio's first write reports a
+// whole ring while it wrote one buffer. The written end must follow the next
+// write back and the fill copy each frame again once CoreAudio writes it, so
+// no old sample reaches the wire.
+TEST(TxOwnershipLifecycle, AFirstWriteThatOverstatesItsSpanSendsNoOldFrames) {
+    const ASFW::Isoch::Audio::DICE::DiceProfile profile{{.name = "Focusrite Saffire (DICE)"}};
+    TxProducerRig rig;
+    rig.SetResolvedPlayback({.pcmChannels = 8, .am824Slots = 9, .midiPorts = 1});
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::FocusriteSPro24Dsp, 48000));
+    rig.FeedBlockingRx(8);
+    TxProducerRig::HostOutputPlan plan{.ioFrames = 512, .leadFrames = 560};
+    const uint32_t ringFrames =
+        ASFW::IsochTransport::HalBufferProfileForRate(48000).zeroTimestampPeriodFrames;
+    plan.firstWriteReportsFrames = ringFrames;
+    rig.EnableHostOutput(plan);
+    rig.FillOutputRing(-0.5f);
+    ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets)) << rig.DescribeFault();
+
+    EXPECT_EQ(CountNegativePcmSamples(rig.Wire(), rig.Dbs(), rig.PcmChannels()), 0U);
+    const auto& control = rig.Control();
+    EXPECT_EQ(control.outputWriteLogFrames[0].load(), ringFrames);
+    EXPECT_EQ(control.outputWriteLogFrames[1].load(), 512U);
+    EXPECT_EQ(control.outputWriteMaxFrames.load(), ringFrames);
+    EXPECT_EQ(control.playbackRingRewinds.load(), 1U);
+    // The stream still carries CoreAudio's frames once they are written.
+    bool sawPcm = false;
+    for (const auto& packet : rig.Wire()) {
+        if (ViewPacket(packet, rig.Dbs(), rig.PcmChannels()).kind == PacketView::Kind::Pcm) {
+            sawPcm = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(sawPcm);
 }
 
 TEST(AudioDriverTxProducerTests, SyntheticHeaderlessBootstrapTransitionsAtWritableBoundary) {
