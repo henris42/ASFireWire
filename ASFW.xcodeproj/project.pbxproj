@@ -477,6 +477,7 @@
 		DEDDAD0E6D847EE68A270A23 /* TransactionManager.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A564F1D1FD37AFCF06BE08F6 /* TransactionManager.cpp */; };
 		DF61F7FA9A4B90CC4828BF2F /* ASFWMCPBeBoBShell.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DFCB5123B1C703565B85311 /* ASFWMCPBeBoBShell.swift */; };
 		DF7462402B482B3EFBBDA62B /* ARContextBase.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 2F71CB461722CD8C87ECA7A6 /* ARContextBase.cpp */; };
+		DFD9227A1B1A8B684105EC8D /* DeviceSettingsWireTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D618A19E522D229B7855763 /* DeviceSettingsWireTests.swift */; };
 		E015D0FBA720A69440DC5BD5 /* MCPHardwareSmokeRunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CF6AA538A8321AEB7DDB655 /* MCPHardwareSmokeRunnerTests.swift */; };
 		E018A0B327C4C50BE9859DB7 /* MacOS12Compat.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C8ED255B3C001391060EC32 /* MacOS12Compat.swift */; };
 		E04F42C99AC3472C4238B8B5 /* ControllerCoreLifecycle.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D9C9CEE2B5EF0A53B8A52533 /* ControllerCoreLifecycle.cpp */; };
@@ -1056,6 +1057,7 @@
 		6CED4ABB37290E713D23B5EB /* IsochTxDmaRing.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IsochTxDmaRing.hpp; sourceTree = "<group>"; };
 		6D480F7DDED0A5BBF93035DB /* WriteCommand.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = WriteCommand.hpp; sourceTree = "<group>"; };
 		6D5353B65B1BD2E442295033 /* ApogeeParamsSerdes.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ApogeeParamsSerdes.hpp; sourceTree = "<group>"; };
+		6D618A19E522D229B7855763 /* DeviceSettingsWireTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceSettingsWireTests.swift; sourceTree = "<group>"; };
 		6DEA59E2D688679C4E7F3544 /* RME.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RME.hpp; sourceTree = "<group>"; };
 		6DFCB5123B1C703565B85311 /* ASFWMCPBeBoBShell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWMCPBeBoBShell.swift; sourceTree = "<group>"; };
 		6E19A59FAA3BF184E71524C1 /* TransactionHandler.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = TransactionHandler.cpp; sourceTree = "<group>"; };
@@ -2344,6 +2346,7 @@
 				FCAAF6D468CB84A199F3F757 /* BeBoBShellTelemetryTests.swift */,
 				AED113166DE4061F3A41FC54 /* BoundedDequeTests.swift */,
 				5B668A64B66FB445EED7D417 /* BusInspectorTests.swift */,
+				6D618A19E522D229B7855763 /* DeviceSettingsWireTests.swift */,
 				BB11B96550349557FDAD7568 /* DiceFixtures.swift */,
 				FB526A29FF8CDD653C1E0F62 /* DiceRegisterModelTests.swift */,
 				67D910E07C1B26B84C2119E2 /* DiceReportTextFormatterTests.swift */,
@@ -4370,6 +4373,7 @@
 				802EB5D0041784102F261F25 /* BoundedDequeTests.swift in Sources */,
 				3B5176437159E98DEA80D49D /* BusInspectorTests.swift in Sources */,
 				0C626732DADDA7124E80171F /* DVFrameAssemblerTests.swift in Sources */,
+				DFD9227A1B1A8B684105EC8D /* DeviceSettingsWireTests.swift in Sources */,
 				2F3912F15BE258E7CD1E1712 /* DiceFixtures.swift in Sources */,
 				501A2A879B5CE46A068C4895 /* DiceRegisterModelTests.swift in Sources */,
 				1764B86AD16F92E703D25BCB /* DiceReportTextFormatterTests.swift in Sources */,

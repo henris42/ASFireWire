@@ -128,17 +128,24 @@ final class ConfigApplier {
         for (setting, value) in wanted.sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
             guard current.supports(setting) else { continue }
             let now: UInt32
+            var target = value
             switch setting {
             case .clockSource: now = current.clockSource
             case .opticalInputMode: now = current.opticalInputMode
             case .opticalOutputMode: now = current.opticalOutputMode
+            case .inputLevels:
+                now = current.inputLevels
+                target = value & current.analogInputSwitches
+            case .inputBoosts:
+                now = current.inputBoosts
+                target = value & current.analogInputSwitches
             }
-            guard now != value else { continue }
-            switch await connector.performDeviceSettings(guid: device.guid, set: setting, value: value) {
+            guard now != target else { continue }
+            switch await connector.performDeviceSettings(guid: device.guid, set: setting, value: target) {
             case .ready(let fresh):
                 current = fresh
                 changed += 1
-                Self.say("\(name): \(setting.title) \(now) -> \(value).")
+                Self.say("\(name): \(setting.title) \(Self.shown(now, setting)) -> \(Self.shown(target, setting)).")
             case .failed(let kr):
                 unsettled += 1
                 Self.say("\(name): \(setting.title) not applied: \(connector.interpretIOReturn(kr)).")
@@ -189,6 +196,14 @@ final class ConfigApplier {
             Self.say("\(name): sample rate \(Int(rate)) Hz not applied (OSStatus \(status)).")
         }
         return true
+    }
+
+    /// A value as the log shows it: the input switch settings are bit masks.
+    private static func shown(_ value: UInt32, _ setting: DeviceSetting) -> String {
+        switch setting {
+        case .inputLevels, .inputBoosts: return String(format: "0x%02X", value)
+        case .clockSource, .opticalInputMode, .opticalOutputMode: return "\(value)"
+        }
     }
 
     private static func say(_ line: String) {

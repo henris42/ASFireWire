@@ -3,8 +3,8 @@
 //  ASFW
 //
 //  One controller's devices with host-settable configuration (today: MOTU
-//  clock source and optical modes), their current state, and the changes the
-//  user asks for.
+//  clock source, optical modes and analog input switches), their current
+//  state, and the changes the user asks for.
 //
 
 import Combine
@@ -97,9 +97,12 @@ final class DeviceSettingsViewModel: ObservableObject {
         switch await connector.performDeviceSettings(guid: guid, set: setting, value: value) {
         case .ready(let fresh):
             snapshot = fresh
-            message = setting == .clockSource
-                ? nil
-                : "Optical mode changed; the device's streams are republished with the new channel layout."
+            switch setting {
+            case .opticalInputMode, .opticalOutputMode:
+                message = "Optical mode changed; the device's streams are republished with the new channel layout."
+            case .clockSource, .inputLevels, .inputBoosts:
+                message = nil
+            }
             store.remember(guid: guid, setting: setting, value: value)
             remembered = store.remembered(for: guid)
         case .failed(let kr):

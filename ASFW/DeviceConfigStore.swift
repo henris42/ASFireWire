@@ -2,7 +2,8 @@
 //  DeviceConfigStore.swift
 //  ASFW
 //
-//  Remembered device settings (clock source, optical modes) per device GUID.
+//  Remembered device settings (clock source, optical modes, analog input
+//  switches) per device GUID.
 //  Kept in the app's UserDefaults, which the sandbox allows and which the
 //  login agent (`ASFW --apply-config`, same bundle) shares, so a choice made in
 //  the app is applied again after every login and whenever the device

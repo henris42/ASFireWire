@@ -2,9 +2,10 @@
 //  DeviceSettingsModels.swift
 //  ASFW
 //
-//  Host-settable device configuration: the clock source and what the optical
-//  ports carry. Mirrors ASFWDriver/Audio/Protocols/DeviceSettings.hpp and the
-//  user client's DeviceSettingsWire.hpp.
+//  Host-settable device configuration: the clock source, what the optical
+//  ports carry and the analog input switches. Mirrors
+//  ASFWDriver/Audio/Protocols/DeviceSettings.hpp and the user client's
+//  DeviceSettingsWire.hpp.
 //
 
 import Foundation
@@ -13,12 +14,18 @@ enum DeviceSetting: UInt32, CaseIterable {
     case clockSource = 1
     case opticalInputMode = 2
     case opticalOutputMode = 3
+    /// One bit per analog input: set = +4 dBu, clear = −10 dBV.
+    case inputLevels = 4
+    /// One bit per analog input: set = boost (+6 dB) on.
+    case inputBoosts = 5
 
     var title: String {
         switch self {
         case .clockSource: return "Clock Source"
         case .opticalInputMode: return "Optical In"
         case .opticalOutputMode: return "Optical Out"
+        case .inputLevels: return "Input Levels"
+        case .inputBoosts: return "Input Boost"
         }
     }
 }
@@ -72,6 +79,11 @@ struct DeviceSettingsSnapshot: Equatable {
     var opticalModeOptions: UInt32 = 0
     var clockRaw: UInt32 = 0
     var opticalRaw: UInt32 = 0
+    /// Bit n: analog input n+1 has the level and boost switches. The two
+    /// registers use the same bit order; only these bits are the inputs' state.
+    var analogInputSwitches: UInt32 = 0
+    var inputLevelRaw: UInt32 = 0
+    var inputBoostRaw: UInt32 = 0
 
     func supports(_ setting: DeviceSetting) -> Bool {
         supportedSettings & (1 << setting.rawValue) != 0
@@ -85,8 +97,28 @@ struct DeviceSettingsSnapshot: Equatable {
         DeviceOpticalMode.allCases.filter { opticalModeOptions & (1 << $0.rawValue) != 0 }
     }
 
-    /// DeviceSettingsResultWire, little-endian, 48 bytes.
+    /// Analog inputs, numbered from 1, that have the level and boost switches.
+    var switchableInputs: [Int] { Self.inputs(in: analogInputSwitches) }
+    /// The inputLevels value: bit n set = analog input n+1 at +4 dBu.
+    var inputLevels: UInt32 { inputLevelRaw & analogInputSwitches }
+    /// The inputBoosts value: bit n set = analog input n+1 boosted.
+    var inputBoosts: UInt32 { inputBoostRaw & analogInputSwitches }
+
+    /// The analog inputs, numbered from 1, whose bit is set in `mask`.
+    static func inputs(in mask: UInt32) -> [Int] {
+        (0..<32).filter { mask & (UInt32(1) << UInt32($0)) != 0 }.map { $0 + 1 }
+    }
+
+    /// `mask` with analog input `input`'s bit set or cleared.
+    static func mask(_ mask: UInt32, input: Int, set: Bool) -> UInt32 {
+        let bit = UInt32(1) << UInt32(input - 1)
+        return set ? mask | bit : mask & ~bit
+    }
+
+    /// DeviceSettingsResultWire, little-endian: 48 bytes, or 60 with the analog
+    /// input switches (a driver that predates them sends 48).
     static let wireSize = 48
+    static let extendedWireSize = 60
 
     init() {}
 
@@ -105,6 +137,11 @@ struct DeviceSettingsSnapshot: Equatable {
         opticalModeOptions = u32(36)
         clockRaw = u32(40)
         opticalRaw = u32(44)
+        if data.count >= Self.extendedWireSize {
+            analogInputSwitches = u32(48)
+            inputLevelRaw = u32(52)
+            inputBoostRaw = u32(56)
+        }
     }
 
     /// The transaction's own status is bytes 4..<8 of the wire structure.

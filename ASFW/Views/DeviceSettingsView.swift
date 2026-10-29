@@ -2,7 +2,8 @@
 //  DeviceSettingsView.swift
 //  ASFW
 //
-//  Clock source and optical port modes of the controller's MOTU devices.
+//  Clock source, optical port modes and analog input switches of the
+//  controller's MOTU devices.
 //
 
 import SwiftUI
@@ -63,7 +64,19 @@ struct DeviceSettingsView: View {
         switch setting {
         case .clockSource: return DeviceClockSource(rawValue: value)?.title ?? "\(value)"
         case .opticalInputMode, .opticalOutputMode: return DeviceOpticalMode(rawValue: value)?.title ?? "\(value)"
+        case .inputLevels: return inputsTitle(value, set: "+4 dBu on", none: "−10 dBV on all")
+        case .inputBoosts: return inputsTitle(value, set: "on for", none: "off")
         }
+    }
+
+    /// "<set> 1, 2, 5" for the analog inputs whose bit is set, `none` without any.
+    private func inputsTitle(_ mask: UInt32, set: String, none: String) -> String {
+        let inputs = DeviceSettingsSnapshot.inputs(in: mask).map(String.init)
+        return inputs.isEmpty ? none : "\(set) \(inputs.joined(separator: ", "))"
+    }
+
+    private func inputBit(_ input: Int) -> UInt32 {
+        DeviceSettingsSnapshot.mask(0, input: input, set: true)
     }
 
     @ViewBuilder
@@ -120,6 +133,50 @@ struct DeviceSettingsView: View {
             }
         }
 
+        if snapshot.supports(.inputLevels) || snapshot.supports(.inputBoosts) {
+            GroupBox("Analog Inputs") {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(snapshot.switchableInputs, id: \.self) { input in
+                        HStack(spacing: 16) {
+                            Text("Analog \(input)")
+                                .frame(width: 72, alignment: .leading)
+                            if snapshot.supports(.inputLevels) {
+                                Picker("Analog \(input) level", selection: Binding(
+                                    get: { snapshot.inputLevels & inputBit(input) != 0 },
+                                    set: { plus4 in
+                                        let value = DeviceSettingsSnapshot.mask(snapshot.inputLevels, input: input, set: plus4)
+                                        Task { await viewModel.apply(.inputLevels, value: value) }
+                                    }
+                                )) {
+                                    Text("+4 dBu").tag(true)
+                                    Text("−10 dBV").tag(false)
+                                }
+                                .pickerStyle(.segmented)
+                                .labelsHidden()
+                                .frame(width: 170)
+                            }
+                            if snapshot.supports(.inputBoosts) {
+                                Toggle("Boost +6 dB", isOn: Binding(
+                                    get: { snapshot.inputBoosts & inputBit(input) != 0 },
+                                    set: { on in
+                                        let value = DeviceSettingsSnapshot.mask(snapshot.inputBoosts, input: input, set: on)
+                                        Task { await viewModel.apply(.inputBoosts, value: value) }
+                                    }
+                                ))
+                            }
+                        }
+                    }
+                    Text("+4 dBu suits professional line-level sources, −10 dBV consumer ones; Boost adds 6 dB for a quiet source. The unit switches at once, and a running stream is not restarted.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .padding(6)
+                .frame(maxWidth: 520, alignment: .leading)
+            }
+            // Each change is built from the state last read: one at a time.
+            .disabled(viewModel.isBusy)
+        }
+
         GroupBox("At Login") {
             VStack(alignment: .leading, spacing: 8) {
                 if viewModel.remembered.isEmpty {
@@ -139,7 +196,9 @@ struct DeviceSettingsView: View {
             .frame(maxWidth: 520, alignment: .leading)
         }
 
-        Text(String(format: "Registers: clock 0x%08X · optical 0x%08X", snapshot.clockRaw, snapshot.opticalRaw))
+        Text(String(format: "Registers: clock 0x%08X · optical 0x%08X", snapshot.clockRaw, snapshot.opticalRaw)
+             + (snapshot.analogInputSwitches == 0 ? "" :
+                String(format: " · level 0x%08X · boost 0x%08X", snapshot.inputLevelRaw, snapshot.inputBoostRaw)))
             .font(.system(.caption, design: .monospaced))
             .foregroundColor(.secondary)
 

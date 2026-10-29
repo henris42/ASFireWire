@@ -2,8 +2,8 @@
 //  DriverConnector+DeviceSettings.swift
 //  ASFW
 //
-//  Clock source and optical port modes of a device, through the user client's
-//  request/result pair (selectors 69/70). Reading or changing them is a bus
+//  Clock source, optical port modes and analog input switches of a device,
+//  through the user client's request/result pair (selectors 69/70). Reading or changing them is a bus
 //  transaction, so the driver answers asynchronously and the app polls.
 //
 
