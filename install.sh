@@ -176,6 +176,37 @@ remove_config_agent() {
   fi
 }
 
+# OpenCore publishes its version in NVRAM; the driver only runs on a controller
+# that OpenCore's DeviceProperties mark asfw-armed (INSTALL.md, "Arm the controller").
+OPENCORE_ARM_SCRIPT="${SCRIPT_DIR}/asfw-opencore-arm.sh"
+
+offer_opencore_arming() {
+  [[ -f "$OPENCORE_ARM_SCRIPT" ]] || return 0
+  nvram 4D1FDA02-38C7-4A6A-9CC6-4BCCA8B30102:opencore-version >/dev/null 2>&1 || return 0
+  if ioreg -rc IOPCIDevice 2>/dev/null | grep -q '"asfw-armed"'; then
+    info "OpenCore: the FireWire controller is armed."
+    return 0
+  fi
+  step "Arm the FireWire controller in OpenCore"
+  info "The driver only runs on a FireWire controller that OpenCore marks asfw-armed;"
+  info "until then Apple's driver keeps the card. Current state:"
+  /bin/bash "$OPENCORE_ARM_SCRIPT" --report || true
+  local answer=""
+  if [[ -t 0 ]]; then
+    print -n -- "[ASFW] Arm it now in the boot disk's OpenCore config.plist (a dated backup is kept)? [y/N] "
+    read -r answer || answer=""
+  fi
+  if [[ "$answer" == [yY]* ]]; then
+    if sudo /bin/bash "$OPENCORE_ARM_SCRIPT" --arm; then
+      info "Armed. It takes effect at the next boot."
+    else
+      info "Arming did not complete; see above."
+    fi
+  else
+    info "Not armed. To arm later: sudo ./asfw-opencore-arm.sh   (--help for options)"
+  fi
+}
+
 developer_mode_on() {
   systemextensionsctl developer 2>/dev/null | grep -qi 'is on'
 }
@@ -368,6 +399,8 @@ if is_loader_app "$INSTALLED_APP"; then
   step "Device-settings login agent"
   install_config_agent
 fi
+
+offer_opencore_arming
 
 if report_driver_state; then
   print -r -- ""
