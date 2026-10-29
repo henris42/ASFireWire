@@ -68,6 +68,8 @@ public:
     kern_return_t ReadProtocolBooleanControl(uint32_t classIdFourCC,
                                              uint32_t element,
                                              bool* outValue) LOCALONLY;
+    // HAL clock source control bridge (ASFWClockSourceControl).
+    kern_return_t ApplyDeviceClockSource(uint32_t source, uint32_t* outConfirmed) LOCALONLY;
 };
 
 #endif /* ASFWAudioDriver_h */

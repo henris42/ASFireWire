@@ -946,6 +946,9 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
     });
 
     if (kr == kIOReturnSuccess) {
+        // The start read the device's clock register: show its clock source,
+        // which the front panel can have changed since publication.
+        ASFW::Audio::DriverKit::RefreshClockSourceControl(ivars);
         const auto inputFormat = ivars.inputStream
             ? ivars.inputStream->GetCurrentStreamFormat()
             : IOUserAudioStreamBasicDescription{};

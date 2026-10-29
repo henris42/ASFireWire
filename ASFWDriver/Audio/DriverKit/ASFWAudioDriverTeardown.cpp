@@ -46,6 +46,8 @@ void TearDownAudioGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars) n
 
     ivars.device.avcControlCount = 0;
     ivars.device.boolControlCount = 0;
+    ivars.device.clockSourceCount = 0;
+    ivars.clockSourceControl.reset();
     ASFW::Isoch::Audio::ResetBoolControlSlots(ivars.device.boolControls,
                                               ASFW::Isoch::Audio::kMaxBoolControls);
     ivars.outputStream.reset();

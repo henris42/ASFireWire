@@ -1,0 +1,35 @@
+//
+// ASFWClockSourceControl.iig
+// ASFWDriver
+//
+// The device's clock source as a HAL clock source control ('clck'), so Audio
+// MIDI Setup shows and sets it. Changes go ASFWAudioDriver -> ASFWAudioNub ->
+// the device protocol's ClockSource setting, and the control takes the source
+// the device reports afterwards.
+//
+
+#ifndef ASFWClockSourceControl_h
+#define ASFWClockSourceControl_h
+
+#include <AudioDriverKit/IOUserAudioSelectorControl.iig>
+
+class ASFWAudioDriver;
+
+class ASFWClockSourceControl : public IOUserAudioSelectorControl
+{
+public:
+    static OSSharedPtr<ASFWClockSourceControl> Create(ASFWAudioDriver* ownerDriver) LOCALONLY;
+
+    bool init(ASFWAudioDriver* ownerDriver) LOCALONLY;
+
+    void free() override;
+
+    kern_return_t HandleChangeSelectedValues(const IOUserAudioSelectorValue* in_control_values,
+                                             size_t in_num_values) override;
+};
+
+struct ASFWClockSourceControl_IVars {
+    ASFWAudioDriver* ownerDriver;
+};
+
+#endif /* ASFWClockSourceControl_h */

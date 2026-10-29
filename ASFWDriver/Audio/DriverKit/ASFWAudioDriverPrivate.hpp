@@ -6,6 +6,7 @@
 #include "Config/IAudioDeviceProfile.hpp"
 #include "Config/ProfileTimingGeometry.hpp"
 #include "Controls/AudioControlBuilder.hpp"
+#include "ASFWClockSourceControl.h"
 #include "Runtime/AudioGraphBinding.hpp"
 #include "Runtime/AudioTransportControlBlock.hpp"
 #include "Runtime/DirectAudioDebugSnapshot.hpp"
@@ -72,6 +73,13 @@ struct AudioDriverDeviceState {
     // narrows the device can remove the names past its new channel count.
     uint32_t namedInputElements{0};
     uint32_t namedOutputElements{0};
+
+    // Clock sources published by the core side and the one the HAL control
+    // shows (ASFWClockSourceControl). A count of zero: no control.
+    uint32_t clockSourceCount{0};
+    uint32_t clockSourceValues[ASFW::Isoch::Audio::kMaxClockSources]{};
+    char clockSourceNames[ASFW::Isoch::Audio::kMaxClockSources][64]{};
+    uint32_t clockSource{0};
 
     // Resolved per-stream wire geometry, carried across the nub. StartIO frames
     // playback from this rather than from the profile's compiled-in constants,
@@ -361,6 +369,8 @@ struct ASFWAudioDriver_IVars {
     OSSharedPtr<IODispatchQueue> ztsQueue;
     OSSharedPtr<OSAction> deviceClockChangedAction;
     OSSharedPtr<OSAction> ioRestartRequiredAction;
+    // The HAL clock source control, when the device publishes clock sources.
+    OSSharedPtr<ASFWClockSourceControl> clockSourceControl;
 
 
 
@@ -424,6 +434,9 @@ void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars) noexcept;
 // Zeroes CoreAudio's whole output ring. Every start, before CoreAudio's first
 // write: the ring still holds the previous session's output.
 void ClearPlaybackRing(ASFWAudioDriver_IVars& ivars) noexcept;
+// Brings the HAL clock source control to the source the device reported at its
+// last clock read (every start reads it). No bus traffic.
+void RefreshClockSourceControl(ASFWAudioDriver_IVars& ivars) noexcept;
 
 // The CoreAudio WriteEnd step (ASFWAudioDriverOutputWrite.cpp). Returns false
 // when the span exceeds the output ring, which the IO handler reports as

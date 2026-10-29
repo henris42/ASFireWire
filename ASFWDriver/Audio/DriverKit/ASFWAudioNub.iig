@@ -201,6 +201,13 @@ public:
         uint32_t classIdFourCC,
         uint32_t element,
         bool value);
+
+    // HAL clock source control bridge (ASFWClockSourceControl). Same process;
+    // crosses dispatch queues. Set writes the device's clock source and returns
+    // the source the device reports afterwards; Get returns the source of the
+    // last clock read (every start reads it), with no bus traffic.
+    virtual kern_return_t SetDeviceClockSource(uint32_t source, uint32_t* outConfirmed);
+    virtual kern_return_t GetDeviceClockSource(uint32_t* outSource);
 };
 
 struct ASFWAudioNub_IVars {

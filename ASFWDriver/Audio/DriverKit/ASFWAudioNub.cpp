@@ -1137,6 +1137,64 @@ kern_return_t IMPL(ASFWAudioNub, SetProtocolBooleanControl)
     return binding.protocol->SetBooleanControlValue(classIdFourCC, element, value);
 }
 
+kern_return_t IMPL(ASFWAudioNub, SetDeviceClockSource)
+{
+    if (!ivars || !outConfirmed) {
+        return kIOReturnBadArgument;
+    }
+    ProtocolRuntimeBinding binding{};
+    if (const kern_return_t status = ResolveProtocolRuntimeBinding(ivars, binding);
+        status != kIOReturnSuccess) {
+        return status;
+    }
+    std::vector<std::pair<uint32_t, std::string>> choices;
+    uint32_t current = 0;
+    if (!binding.protocol->GetClockSourceChoices(choices, current)) {
+        return kIOReturnUnsupported;
+    }
+    // The register write and its readback complete on the controller queue;
+    // this queue may wait for them.
+    auto protocol = binding.protocolOwner;
+    const auto result = ASFW::Audio::WaitForAsyncResult<uint32_t>([protocol, source](auto done) {
+        protocol->ApplyDeviceSetting(ASFW::Audio::DeviceSetting::ClockSource, source,
+            [protocol, done](IOReturn status) {
+                if (status != kIOReturnSuccess) {
+                    done(status, 0U);
+                    return;
+                }
+                protocol->ReadDeviceSettings(
+                    [done](IOReturn readStatus, ASFW::Audio::DeviceSettingsSnapshot snapshot) {
+                        done(readStatus, snapshot.clockSource);
+                    });
+            });
+    }, 2000, kIOReturnTimeout, nullptr, 1);
+    ASFW_LOG(Audio, "[ClockSource] guid=0x%016llx set %u -> device reports %u kr=0x%x (%{public}s)",
+             ivars->guid, source, result.value, result.status, ASFW::Logging::IOReturnName(result.status));
+    if (result.status == kIOReturnSuccess) {
+        *outConfirmed = result.value;
+    }
+    return result.status;
+}
+
+kern_return_t IMPL(ASFWAudioNub, GetDeviceClockSource)
+{
+    if (!ivars || !outSource) {
+        return kIOReturnBadArgument;
+    }
+    ProtocolRuntimeBinding binding{};
+    if (const kern_return_t status = ResolveProtocolRuntimeBinding(ivars, binding);
+        status != kIOReturnSuccess) {
+        return status;
+    }
+    std::vector<std::pair<uint32_t, std::string>> choices;
+    uint32_t current = 0;
+    if (!binding.protocol->GetClockSourceChoices(choices, current)) {
+        return kIOReturnUnsupported;
+    }
+    *outSource = current;
+    return kIOReturnSuccess;
+}
+
 // The nub queue may wait; the controller Default queue must never wait on FCP.
 // Queue-confined graph lookup and all continuations run on that controller queue.
 // Callbacks own their unit and wait state, so a timeout never leaves stack borrows.

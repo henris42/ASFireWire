@@ -67,6 +67,13 @@ void CopyParsedConfigToDeviceState(const ASFW::Isoch::Audio::ParsedAudioDriverCo
                 parsedConfig.outputChannelNames[index],
                 sizeof(device.outputChannelNames[index]));
     }
+    device.clockSourceCount = parsedConfig.clockSourceCount;
+    for (uint32_t index = 0; index < device.clockSourceCount; ++index) {
+        device.clockSourceValues[index] = parsedConfig.clockSourceValues[index];
+        strlcpy(device.clockSourceNames[index], parsedConfig.clockSourceNames[index],
+                sizeof(device.clockSourceNames[index]));
+    }
+    device.clockSource = parsedConfig.clockSource;
     device.playbackStreamCount = parsedConfig.playbackStreamCount;
     device.captureStreamCount = parsedConfig.captureStreamCount;
     device.resolvedGeometryRequired = parsedConfig.resolvedGeometryRequired;
@@ -840,6 +847,28 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         std::min(ivars.device.inputChannelCount, ASFW::Isoch::Audio::kMaxNamedChannels);
     ivars.device.namedOutputElements =
         std::min(ivars.device.outputChannelCount, ASFW::Isoch::Audio::kMaxNamedChannels);
+
+    // The device's clock source as the HAL clock source control (b146: Audio
+    // MIDI Setup showed "Clock Source: Default" with every unit on word clock).
+    if (ivars.device.clockSourceCount != 0) {
+        auto clock = ASFWClockSourceControl::Create(&driver);
+        if (!clock) return kIOReturnNoMemory;
+        IOUserAudioSelectorValueDescription choices[ASFW::Isoch::Audio::kMaxClockSources]{};
+        for (uint32_t index = 0; index < ivars.device.clockSourceCount; ++index) {
+            choices[index].m_value = ivars.device.clockSourceValues[index];
+            choices[index].m_name =
+                OSSharedPtr(OSString::withCString(ivars.device.clockSourceNames[index]), OSNoRetain);
+            if (!choices[index].m_name) return kIOReturnNoMemory;
+        }
+        const IOUserAudioSelectorValue current = ivars.device.clockSource;
+        kern_return_t clockStatus = clock->AddControlValueDescriptions(choices, ivars.device.clockSourceCount);
+        if (clockStatus == kIOReturnSuccess) clockStatus = clock->SetCurrentSelectedValues(&current, 1);
+        if (clockStatus == kIOReturnSuccess) clockStatus = ivars.audioDevice->AddControl(clock.get());
+        ASFW_LOG(Audio, "ADK GRAPH op=device.AddControl(clock-source) sources=%u current=%u kr=0x%x",
+                 ivars.device.clockSourceCount, current, clockStatus);
+        if (clockStatus != kIOReturnSuccess) return clockStatus;
+        ivars.clockSourceControl = std::move(clock);
+    }
 
     for (uint32_t index = 0; index < ivars.device.avcControlCount; ++index) {
         const auto& descriptor = ivars.device.avcControls[index];
