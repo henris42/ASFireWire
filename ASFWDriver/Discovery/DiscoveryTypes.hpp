@@ -373,7 +373,10 @@ struct ROMScannerParams {
     FwSpeed startSpeed{FwSpeed::S400};
     uint8_t maxInflight{2};
     uint8_t perStepRetries{2};
-    uint8_t configROMReadyRetries{4};
+    // The patience for a unit slow to answer at power-up, at its own speed: a
+    // 828mkII took 14.5 s at boot (b152). 16 delayed retries plus the per-step
+    // retries give it about 30 s before the node is left unconnected.
+    uint8_t configROMReadyRetries{16};
     uint64_t configROMReadyRetryDelayNs{500ULL * 1'000'000ULL};
     bool doIRMCheck{false};
 };
