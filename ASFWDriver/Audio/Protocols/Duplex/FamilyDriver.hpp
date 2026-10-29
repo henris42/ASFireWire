@@ -93,7 +93,7 @@ public:
 
     // The name of the external clock input the device follows, as of its last
     // clock read; null when it runs on its own clock or the family cannot say.
-    // Only names the input in a failed start's log.
+    // Only names the input in a failed start's log (a rate it cannot lock at).
     [[nodiscard]] virtual const char* ExternalClockSourceName() const noexcept { return nullptr; }
     // Clock and lock state, for the pre-stream clock gate.
     [[nodiscard]] virtual std::expected<DuplexHealthResult, IOReturn> ReadHealth(uint32_t timeoutMs) = 0;

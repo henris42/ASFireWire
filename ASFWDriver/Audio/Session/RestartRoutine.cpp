@@ -653,16 +653,14 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
         if (elapsed >= readiness.minimumHostRunMs &&
             (!readiness.requireTransmitTiming || captureOnly || transmitOnly || request.binding->IsTransmitTimingReady())) break;
         if (elapsed >= readiness.timeoutMs + holdMs) {
-            // A unit clocked from an external input that is missing or not
-            // locked gives no usable timing; say which input to check, so a
-            // clock problem is not read as a driver fault (b146: a unit on
-            // word clock failed every start with a bare timeout).
+            // On an external clock the unit could not lock at this rate (b149:
+            // a 44.1 kHz start on a 48 kHz word clock). The clock signal itself
+            // is sound, so the line names the rate, never the signal.
             if (const char* source = family.ExternalClockSourceName()) {
                 ASFW_LOG_ERROR(Audio,
-                               "[Session] no transmit timing after %llu ms: the unit is clocked from "
-                               "%{public}s, and that input is probably absent or not locked; check the "
-                               "%{public}s signal GUID=%llx",
-                               elapsed, source, source, guid);
+                               "[Session] the unit could not lock at %u Hz to its %{public}s input; the "
+                               "external clock may be running at a different rate family GUID=%llx",
+                               clock.sampleRateHz, source, guid);
             }
             return rollback(kIOReturnTimeout, "TransmitTimingReady");
         }
