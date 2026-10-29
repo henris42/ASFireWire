@@ -342,7 +342,7 @@ public:
         IOLockLock(lock_);
         if (!HasCompleteDirectAudioMemoryLocked()) {
             IOLockUnlock(lock_);
-            ASFW_LOG_RL(DirectAudio, "endpoint_bind/not_ready", 1000, OS_LOG_TYPE_DEFAULT,
+            ASFW_LOG_RL(DirectAudio, "endpoint_bind/not_ready", 1000, Debug,
                         "ADK DBG BIND runtime get refused not_ready guid=0x%016llx gen=%llu control=%p rate=%u outBase=%p outFrames=%u outCh=%u inBase=%p inFrames=%u inCh=%u",
                         guid_,
                         directGeneration_,

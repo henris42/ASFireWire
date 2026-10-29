@@ -18,14 +18,18 @@ void BringUpTrace::Begin() noexcept {
 }
 
 void BringUpTrace::Step(const char* format, ...) noexcept {
+    const uint32_t step = sequence_.fetch_add(1, std::memory_order_relaxed) + 1;
+    // A milestone, logged from warn up; below that, skip the formatting too.
+    if (!ASFW_LOG_ENABLED(Controller, Warning)) {
+        return;
+    }
     char text[160];
     va_list args;
     va_start(args, format);
     (void)vsnprintf(text, sizeof(text), format, args);
     va_end(args);
 
-    const uint32_t step = sequence_.fetch_add(1, std::memory_order_relaxed) + 1;
-    ASFW_LOG(Controller, "[StartStep] #%02u %{public}s", step, text);
+    ASFW_LOG_MILESTONE(Controller, "[StartStep] #%02u %{public}s", step, text);
 #ifdef ASFW_HOST_TEST
     char line[192];
     (void)snprintf(line, sizeof(line), "[StartStep] #%02u %s", step, text);

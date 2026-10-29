@@ -117,6 +117,7 @@ add_library(asfw_test_support STATIC
     "support/LoggingStubs.cpp"
     "support/HardwareInterfaceStub.cpp"
     "${ASFW_DRIVER_DIR}/Logging/LogRing.cpp"
+    "${ASFW_DRIVER_DIR}/Logging/LogLevels.cpp"
     "${ASFW_DRIVER_DIR}/Logging/BringUpTrace.cpp"
 )
 target_link_libraries(asfw_test_support PUBLIC asfw_test_common_interface)

@@ -283,7 +283,7 @@ std::optional<uint32_t> SessionScheduler::RebindBackoffMs() noexcept {
     const uint64_t now = UptimeMilliseconds();
     if (const uint64_t gaveUp = gaveUpAtMs_.load(std::memory_order_acquire); gaveUp != 0) {
         if (now - gaveUp < kGiveUpHoldMs) {
-            ASFW_LOG_RL(Audio, "session/rebind-held", 5000, OS_LOG_TYPE_DEFAULT,
+            ASFW_LOG_RL(Audio, "session/rebind-held", 5000, Warning,
                         "[Session] bus-reset restart still refused GUID=%llx (%llu of %u ms)",
                         guid_, now - gaveUp, kGiveUpHoldMs);
             return std::nullopt;
@@ -415,7 +415,7 @@ uint32_t SessionScheduler::RestartQuietPeriodMs() const noexcept {
     if (quietMs != 0 && (deps_.timer == nullptr || *deps_.timer == nullptr || deps_.queue == nullptr)) {
         // A composition bug: the family wants its events to settle, but no
         // timer was installed. Restart at once, as before the quiet period.
-        ASFW_LOG_RL(Audio, "session/no-timer", 60000, OS_LOG_TYPE_ERROR,
+        ASFW_LOG_RL(Audio, "session/no-timer", 60000, Error,
                     "[Session] no timer for a %u ms quiet period GUID=%llx; restarting at once",
                     quietMs, guid_);
         return 0;

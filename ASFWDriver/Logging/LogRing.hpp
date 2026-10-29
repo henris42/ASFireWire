@@ -65,13 +65,15 @@ enum class LogCategory : uint8_t {
     Count = 23,
 };
 
-/// Severity scale (smaller = more severe), used for filtering.
+/// Severity scale (smaller = more severe), used for filtering. The log level
+/// (LogLevels.hpp) decides which severities are logged at all.
 enum class LogLevel : uint8_t {
     Error = 0,
     Warning = 1,
     Notice = 2,  // plain ASFW_LOG default
     Info = 3,
     Debug = 4,
+    Trace = 5,
 };
 
 inline constexpr uint32_t kLogRingCategoryCount =
@@ -169,7 +171,7 @@ inline constexpr uint32_t kLogRingCapacityRecords =
 struct LogRingQuery {
     uint64_t afterSequence{0};
     uint32_t categoryMask{0xFFFFFFFFU}; // bit (1 << LogCategory)
-    uint8_t maxLevel{static_cast<uint8_t>(LogLevel::Debug)};
+    uint8_t maxLevel{static_cast<uint8_t>(LogLevel::Trace)};
     char contains[48]{}; // empty = no substring filter
 };
 
@@ -207,7 +209,7 @@ class LogRing;
 struct __attribute__((packed)) LogRingQueryRequestWire {
     uint64_t afterSequence{0};
     uint32_t categoryMask{0xFFFFFFFFU};
-    uint32_t maxLevel{static_cast<uint32_t>(LogLevel::Debug)};
+    uint32_t maxLevel{static_cast<uint32_t>(LogLevel::Trace)};
     uint32_t maxRecords{0}; // 0 = fill the byte budget
     uint32_t reserved{0};
     char contains[48]{};    // NUL-terminated substring filter; empty = all
@@ -356,20 +358,6 @@ void PackLogStats(const LogRing& ring, LogRingStatsWire& outStats) noexcept;
 /// Fills the category and named-preset catalog exported to clients.
 void PackLogCategoryCatalog(LogCategoryCatalogWire& outCatalog) noexcept;
 
-/// Maps a raw os_log_type_t value onto the ring's severity scale.
-[[nodiscard]] constexpr LogLevel RingLevelForOsType(uint8_t osLogType) noexcept {
-    switch (osLogType) {
-        case 0x10: // OS_LOG_TYPE_ERROR
-        case 0x11: // OS_LOG_TYPE_FAULT
-            return LogLevel::Error;
-        case 0x01: // OS_LOG_TYPE_INFO
-        case 0x02: // OS_LOG_TYPE_DEBUG
-            return LogLevel::Info;
-        default:
-            return LogLevel::Notice;
-    }
-}
-
 /// Rewrites an os_log format string into plain printf by dropping `{...}`
 /// annotations ("%{public}s" -> "%s"). Always NUL-terminates.
 void SanitizeOsLogFormat(const char* input, char* output,
@@ -377,11 +365,12 @@ void SanitizeOsLogFormat(const char* input, char* output,
 
 /// Formats through `ring` after sanitizing the os_log-style format string.
 void RingLogTo(LogRing& ring, LogCategory category, LogLevel level,
-               const char* osLogFormat, ...) noexcept;
+               const char* osLogFormat, ...) noexcept
+    __attribute__((format(os_log, 4, 5)));
 
-/// RingLogTo against the shared ring — the ASFW_LOG macro backend.
+/// RingLogTo against the shared ring: the ring-only macros' backend.
 void RingLog(LogCategory category, LogLevel level, const char* osLogFormat,
-             ...) noexcept;
+             ...) noexcept __attribute__((format(os_log, 3, 4)));
 
 class LogRing {
 public:
@@ -397,6 +386,9 @@ public:
     /// plain printf (os_log `%{...}` annotations stripped by the caller).
     void Append(LogCategory category, LogLevel level, const char* format,
                 va_list args) noexcept;
+
+    /// Publishes one record whose text is already formatted (EmitLine).
+    void AppendText(LogCategory category, LogLevel level, const char* text) noexcept;
 
     /// Copies up to `maxRecords` filtered records at/after the cursor into
     /// `outRecords` (oldest first). Busy or reused slots are skipped.

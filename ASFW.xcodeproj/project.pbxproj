@@ -155,6 +155,7 @@
 		3F131D4ADFD80B60916B1D4F /* MotuProfile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 73E288D538C22D6D2B941CBE /* MotuProfile.cpp */; };
 		3F4A930252C8F951E3F089FF /* AudioSessions.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E63E32AE7B0FFD5E318CD42B /* AudioSessions.cpp */; };
 		3F5CE89F15F8E532332EEFDA /* AudioCoordinator.cpp in Sources */ = {isa = PBXBuildFile; fileRef = F71A638FD501761865722676 /* AudioCoordinator.cpp */; };
+		3FDEC56535C974185BB745F2 /* LogLevels.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 49872410194E6435530559A9 /* LogLevels.cpp */; };
 		401E44CBDFBC77458321F08C /* LocalCSRAccessor.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3F9F1B6A7A51F012545B6764 /* LocalCSRAccessor.cpp */; };
 		40DC38C2F810F45E61A0C90B /* Syt.cpp in Sources */ = {isa = PBXBuildFile; fileRef = FE0A655B89850ED93F6008C8 /* Syt.cpp */; };
 		417D66A9EBE23DBB15A978FC /* FCPTransport.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 632D4C8307E08820BF267291 /* FCPTransport.cpp */; };
@@ -771,6 +772,7 @@
 		2B18229BBBBB7883F695C3E1 /* CycleObserver.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = CycleObserver.cpp; sourceTree = "<group>"; };
 		2B6017AA779449F97169ED9F /* MAudioPresentationObserver.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MAudioPresentationObserver.hpp; sourceTree = "<group>"; };
 		2B9C9C6549FBEB3866F75953 /* ARStreamProcessor.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ARStreamProcessor.hpp; sourceTree = "<group>"; };
+		2BF862691F861BF5E367D30F /* LogLevels.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = LogLevels.hpp; sourceTree = "<group>"; };
 		2C818DB628E918248C3E1A5D /* PayloadHandle.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = PayloadHandle.cpp; sourceTree = "<group>"; };
 		2C8639EC3C313944C35F4997 /* CipHeader.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = CipHeader.cpp; sourceTree = "<group>"; };
 		2CB969C8FE3B9EA62B56B7CC /* ASFWMCPWritePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWMCPWritePolicy.swift; sourceTree = "<group>"; };
@@ -899,6 +901,7 @@
 		48B7D5833B83F89B4F5C689C /* DiscoveryCoordinator.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = DiscoveryCoordinator.cpp; sourceTree = "<group>"; };
 		48FDF8C4429AF4787E9A4C31 /* DVCaptureService.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DVCaptureService.hpp; sourceTree = "<group>"; };
 		49272738AA5479B3357D6624 /* ASFWDriver.iig */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.iig; path = ASFWDriver.iig; sourceTree = "<group>"; };
+		49872410194E6435530559A9 /* LogLevels.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = LogLevels.cpp; sourceTree = "<group>"; };
 		4A29B65AFF65A07671ACC9BB /* InterruptDispatcher.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = InterruptDispatcher.cpp; sourceTree = "<group>"; };
 		4A31981D5A750F1E32361F70 /* OnceCompletion.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = OnceCompletion.hpp; sourceTree = "<group>"; };
 		4A89236ABF709F1C06A46D40 /* RoleCoordinator.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RoleCoordinator.hpp; sourceTree = "<group>"; };
@@ -2567,6 +2570,8 @@
 				70353FE22B6FC379ACA5F0D5 /* LogConfig.hpp */,
 				0BB2655AA61DF8D0D37E22FA /* Logging.cpp */,
 				90F7CC3CA3623E1DA8D4D98A /* Logging.hpp */,
+				49872410194E6435530559A9 /* LogLevels.cpp */,
+				2BF862691F861BF5E367D30F /* LogLevels.hpp */,
 				003D261C038E0434E7A8B214 /* LogRing.cpp */,
 				327B8204F97F18D01DAC98E3 /* LogRing.hpp */,
 			);
@@ -4235,6 +4240,7 @@
 				C21E6722E21042051434C9C5 /* LocalRequestWiring.cpp in Sources */,
 				9939EA3C38D005D2B1706109 /* LockCommand.cpp in Sources */,
 				8B607C4A33AB6AFB5F584B30 /* LogConfig.cpp in Sources */,
+				3FDEC56535C974185BB745F2 /* LogLevels.cpp in Sources */,
 				87061D381FC697598C58D9DE /* LogRing.cpp in Sources */,
 				C383A0E2BE9823CD5804D60A /* Logging.cpp in Sources */,
 				A1B3ABBBA299FFB8E0D40229 /* LoginSession.cpp in Sources */,

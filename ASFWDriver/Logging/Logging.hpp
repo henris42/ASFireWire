@@ -10,6 +10,7 @@
 
 #include "LogConfig.hpp"
 #include "IOReturnName.hpp"
+#include "LogLevels.hpp"
 #include "LogRing.hpp"
 
 #ifndef OS_LOG_TYPE_DEFAULT
@@ -128,68 +129,103 @@ struct RlState {
 };
 } // namespace ASFW::LogDetail
 
-// ----- Plain logging (category-stable prefixes via your cpp) -----
+// ----- Leveled logging -----
 //
-// Every macro emits into the driver-owned LogRing (queryable via the user
-// client / MCP with category+level+substring filters) and, while the os_log
-// mirror is enabled, also to os_log for unified-log continuity. The ring is
-// the cheap path (one atomic claim + vsnprintf into driver memory); the
-// mirror is the expensive one and can be silenced at runtime per
-// LogConfig::SetOsLogMirrorEnabled once ring-based debugging is trusted.
-#define ASFW_LOG_RING_ONLY(cat, level, fmt, ...) \
-    ::ASFW::Logging::RingLog(::ASFW::Logging::LogCategory::cat, (level), \
-                             "[" #cat "] " fmt, ##__VA_ARGS__)
+// Every line has a severity and logs only when the log level of its category
+// admits it (LogLevels.hpp). The check comes first, so the arguments of a line
+// that does not log are neither evaluated nor formatted. A line that logs is
+// formatted once and goes to the driver's LogRing (queryable through the user
+// client) and to os_log.
+//
+//   ASFW_LOG_ERROR    a failure: the driver, a device or a stream stops working
+//   ASFW_LOG_WARNING  a refusal or an anomaly the user should see
+//   ASFW_LOG, _INFO   a state change: start, stop, device found, rate set
+//   ASFW_LOG_DEBUG    detail, and heartbeats (at most about one per second)
+//   ASFW_LOG_TRACE    per-packet and per-transaction lines, dumps
+//
+// The default level, warn, logs errors, warnings and milestones only.
+#define ASFW_LOG_ENABLED(cat, level)                                              \
+    ::ASFW::Logging::Allows(::ASFW::Logging::LogCategory::cat,                    \
+                            ::ASFW::Logging::LogLevel::level)
 
-#define ASFW_LOG_LEVELED(cat, level, fmt, ...)                                    \
+// The macros' own test: logging is the rare path, so the compiler moves the
+// call and its argument set-up out of line.
+#define ASFW_LOG_LIKELY_OFF(cat, level) __builtin_expect(ASFW_LOG_ENABLED(cat, level), 0)
+
+// The pragmas make a format mismatch an error, as os_log itself does.
+#define ASFW_LOG_AT(cat, level, fmt, ...)                                         \
     do {                                                                          \
-        ASFW_LOG_RING_ONLY(cat, level, fmt, ##__VA_ARGS__);                       \
-        if (::ASFW::LogConfig::Shared().IsOsLogMirrorEnabled()) {                 \
-            os_log(::ASFW::Driver::Logging::cat(), "[%{public}s] " fmt, #cat,     \
-                   ##__VA_ARGS__);                                                \
+        if (ASFW_LOG_LIKELY_OFF(cat, level)) {                                    \
+            _Pragma("clang diagnostic push")                                      \
+            _Pragma("clang diagnostic error \"-Wformat\"")                        \
+            ::ASFW::Logging::EmitLine(::ASFW::Logging::LogCategory::cat,          \
+                                      ::ASFW::Logging::LogLevel::level,           \
+                                      "[" #cat "] " fmt, ##__VA_ARGS__);          \
+            _Pragma("clang diagnostic pop")                                       \
         }                                                                         \
     } while (0)
 
-#define ASFW_LOG(cat, fmt, ...) \
-    ASFW_LOG_LEVELED(cat, ::ASFW::Logging::LogLevel::Notice, fmt, ##__VA_ARGS__)
+#define ASFW_LOG_ERROR(cat, fmt, ...)   ASFW_LOG_AT(cat, Error, fmt, ##__VA_ARGS__)
+#define ASFW_LOG_FAULT(cat, fmt, ...)   ASFW_LOG_AT(cat, Error, fmt, ##__VA_ARGS__)
+#define ASFW_LOG_WARNING(cat, fmt, ...) ASFW_LOG_AT(cat, Warning, fmt, ##__VA_ARGS__)
+#define ASFW_LOG(cat, fmt, ...)         ASFW_LOG_AT(cat, Notice, fmt, ##__VA_ARGS__)
+#define ASFW_LOG_INFO(cat, fmt, ...)    ASFW_LOG_AT(cat, Info, fmt, ##__VA_ARGS__)
+#define ASFW_LOG_DEBUG(cat, fmt, ...)   ASFW_LOG_AT(cat, Debug, fmt, ##__VA_ARGS__)
+#define ASFW_LOG_TRACE(cat, fmt, ...)   ASFW_LOG_AT(cat, Trace, fmt, ##__VA_ARGS__)
 
-#define ASFW_LOG_TYPE(cat, os_type, fmt, ...)                                     \
-    ASFW_LOG_LEVELED(cat,                                                         \
-                     ::ASFW::Logging::RingLevelForOsType(                         \
-                         static_cast<uint8_t>(os_type)),                          \
-                     fmt, ##__VA_ARGS__)
+// A line that every level from warn up records, so a default log still shows
+// it: the numbered bring-up steps and the log level in force. It is stored as
+// a notice, not a warning.
+#define ASFW_LOG_MILESTONE(cat, fmt, ...)                                         \
+    do {                                                                          \
+        if (ASFW_LOG_LIKELY_OFF(cat, Warning)) {                                  \
+            _Pragma("clang diagnostic push")                                      \
+            _Pragma("clang diagnostic error \"-Wformat\"")                        \
+            ::ASFW::Logging::EmitLine(::ASFW::Logging::LogCategory::cat,          \
+                                      ::ASFW::Logging::LogLevel::Notice,          \
+                                      "[" #cat "] " fmt, ##__VA_ARGS__);          \
+            _Pragma("clang diagnostic pop")                                       \
+        }                                                                         \
+    } while (0)
+
+// Ring only: never reaches os_log. For real-time paths.
+#define ASFW_LOG_RING_ONLY(cat, level, fmt, ...)                                  \
+    do {                                                                          \
+        if (ASFW_LOG_LIKELY_OFF(cat, level)) {                                    \
+            ::ASFW::Logging::RingLog(::ASFW::Logging::LogCategory::cat,           \
+                                     ::ASFW::Logging::LogLevel::level,            \
+                                     "[" #cat "] " fmt, ##__VA_ARGS__);           \
+        }                                                                         \
+    } while (0)
 
 // ----- Rate-limited logging -----
-// key: per-callsite stable string (e.g. "tx/ack_tardy"); interval_ms: throttle window
-#define ASFW_LOG_RL(cat, key, interval_ms, os_type, fmt, ...)                                  \
+// key: per-callsite stable string (e.g. "tx/ack_tardy"); interval_ms: throttle
+// window; level: a LogLevel name (Error, Warning, Notice, Info, Debug, Trace).
+#define ASFW_LOG_RL(cat, key, interval_ms, level, fmt, ...)                                    \
     do {                                                                                        \
-        static ASFW::LogDetail::RlState _s;                                                     \
-        const uint64_t _now = ASFW::LogDetail::NowNs();                                         \
-        const uint64_t _intv = (uint64_t)(interval_ms) * 1000000ull;                            \
-        uint64_t _last = _s.last_ns.load(std::memory_order_relaxed);                            \
-        if (_now - _last >= _intv || _last==0) {                                                \
-            const auto _lvl = ::ASFW::Logging::RingLevelForOsType(                              \
-                static_cast<uint8_t>(os_type));                                                 \
-            const bool _mirror = ::ASFW::LogConfig::Shared().IsOsLogMirrorEnabled();            \
-            if (_s.last_ns.exchange(_now, std::memory_order_relaxed) != 0) {                    \
-                uint64_t _lost = _s.suppressed.exchange(0, std::memory_order_relaxed);          \
-                if (_lost) {                                                                    \
-                    ::ASFW::Logging::RingLog(::ASFW::Logging::LogCategory::cat, _lvl,           \
-                        "[" #cat "][%s] (suppressed=%llu prior)", key, _lost);                  \
-                    if (_mirror) {                                                              \
-                        os_log(ASFW::Driver::Logging::cat(),                                    \
-                            "[%{public}s][%{public}s] (suppressed=%llu prior)",                 \
-                            #cat, key, _lost);                                                  \
+        if (ASFW_LOG_LIKELY_OFF(cat, level)) {                                                  \
+            static ASFW::LogDetail::RlState _s;                                                 \
+            const uint64_t _now = ASFW::LogDetail::NowNs();                                     \
+            const uint64_t _intv = (uint64_t)(interval_ms) * 1000000ull;                        \
+            const uint64_t _last = _s.last_ns.load(std::memory_order_relaxed);                  \
+            if (_now - _last >= _intv || _last == 0) {                                          \
+                if (_s.last_ns.exchange(_now, std::memory_order_relaxed) != 0) {                \
+                    const uint64_t _lost = _s.suppressed.exchange(0, std::memory_order_relaxed);\
+                    if (_lost) {                                                                \
+                        ::ASFW::Logging::EmitLine(::ASFW::Logging::LogCategory::cat,            \
+                            ::ASFW::Logging::LogLevel::level,                                   \
+                            "[" #cat "][%{public}s] (suppressed=%llu prior)", key, _lost);      \
                     }                                                                           \
                 }                                                                               \
+                _Pragma("clang diagnostic push")                                                \
+                _Pragma("clang diagnostic error \"-Wformat\"")                                  \
+                ::ASFW::Logging::EmitLine(::ASFW::Logging::LogCategory::cat,                    \
+                    ::ASFW::Logging::LogLevel::level, "[" #cat "][%{public}s] " fmt, key,       \
+                    ##__VA_ARGS__);                                                             \
+                _Pragma("clang diagnostic pop")                                                 \
+            } else {                                                                            \
+                _s.suppressed.fetch_add(1, std::memory_order_relaxed);                          \
             }                                                                                   \
-            ::ASFW::Logging::RingLog(::ASFW::Logging::LogCategory::cat, _lvl,                   \
-                "[" #cat "][%s] " fmt, key, ##__VA_ARGS__);                                     \
-            if (_mirror) {                                                                      \
-                os_log(ASFW::Driver::Logging::cat(),                                            \
-                    "[%{public}s][%{public}s] " fmt, #cat, key, ##__VA_ARGS__);                 \
-            }                                                                                   \
-        } else {                                                                                \
-            _s.suppressed.fetch_add(1, std::memory_order_relaxed);                              \
         }                                                                                       \
     } while (0)
 
@@ -197,31 +233,28 @@ struct RlState {
 // enough chronology for MCP while never trapping out to the unified-log path.
 #define ASFW_LOG_RING_ONLY_RL(cat, key, interval_ms, level, fmt, ...)                          \
     do {                                                                                        \
-        static ASFW::LogDetail::RlState _s;                                                     \
-        const uint64_t _now = ASFW::LogDetail::NowNs();                                         \
-        const uint64_t _intv = (uint64_t)(interval_ms) * 1000000ull;                            \
-        const uint64_t _last = _s.last_ns.load(std::memory_order_relaxed);                      \
-        if (_now - _last >= _intv || _last == 0) {                                              \
-            if (_s.last_ns.exchange(_now, std::memory_order_relaxed) != 0) {                   \
-                const uint64_t _lost = _s.suppressed.exchange(0, std::memory_order_relaxed);   \
-                if (_lost) {                                                                    \
-                    ::ASFW::Logging::RingLog(::ASFW::Logging::LogCategory::cat, (level),       \
-                        "[" #cat "][%s] (suppressed=%llu prior)", key, _lost);               \
+        if (ASFW_LOG_LIKELY_OFF(cat, level)) {                                                  \
+            static ASFW::LogDetail::RlState _s;                                                 \
+            const uint64_t _now = ASFW::LogDetail::NowNs();                                     \
+            const uint64_t _intv = (uint64_t)(interval_ms) * 1000000ull;                        \
+            const uint64_t _last = _s.last_ns.load(std::memory_order_relaxed);                  \
+            if (_now - _last >= _intv || _last == 0) {                                          \
+                if (_s.last_ns.exchange(_now, std::memory_order_relaxed) != 0) {                \
+                    const uint64_t _lost = _s.suppressed.exchange(0, std::memory_order_relaxed);\
+                    if (_lost) {                                                                \
+                        ::ASFW::Logging::RingLog(::ASFW::Logging::LogCategory::cat,             \
+                            ::ASFW::Logging::LogLevel::level,                                   \
+                            "[" #cat "][%s] (suppressed=%llu prior)", key, _lost);              \
+                    }                                                                           \
                 }                                                                               \
+                ::ASFW::Logging::RingLog(::ASFW::Logging::LogCategory::cat,                     \
+                    ::ASFW::Logging::LogLevel::level, "[" #cat "][%s] " fmt, key,               \
+                    ##__VA_ARGS__);                                                             \
+            } else {                                                                            \
+                _s.suppressed.fetch_add(1, std::memory_order_relaxed);                          \
             }                                                                                   \
-            ::ASFW::Logging::RingLog(::ASFW::Logging::LogCategory::cat, (level),               \
-                "[" #cat "][%s] " fmt, key, ##__VA_ARGS__);                                  \
-        } else {                                                                                \
-            _s.suppressed.fetch_add(1, std::memory_order_relaxed);                             \
         }                                                                                       \
     } while (0)
-
-// Convenience shorthands
-#define ASFW_LOG_INFO(cat, fmt, ...)    ASFW_LOG_TYPE(cat, OS_LOG_TYPE_INFO,    fmt, ##__VA_ARGS__)
-#define ASFW_LOG_ERROR(cat, fmt, ...)   ASFW_LOG_TYPE(cat, OS_LOG_TYPE_ERROR,   fmt, ##__VA_ARGS__)
-#define ASFW_LOG_DEBUG(cat, fmt, ...)   ASFW_LOG_TYPE(cat, OS_LOG_TYPE_DEFAULT, fmt, ##__VA_ARGS__)
-#define ASFW_LOG_FAULT(cat, fmt, ...)   ASFW_LOG_TYPE(cat, OS_LOG_TYPE_FAULT,   fmt, ##__VA_ARGS__)
-#define ASFW_LOG_WARNING(cat, fmt, ...) ASFW_LOG_TYPE(cat, OS_LOG_TYPE_DEFAULT, fmt, ##__VA_ARGS__)
 
 // ----- Site-aware structured logging (for AT state correlation) -----
 // Adds source file/line/function for debugging
@@ -230,16 +263,8 @@ struct RlState {
 #endif
 
 #define ASFW_LOG_SITE(cat, fmt, ...)                                                     \
-    do {                                                                                 \
-        ::ASFW::Logging::RingLog(::ASFW::Logging::LogCategory::cat,                      \
-            ::ASFW::Logging::LogLevel::Notice, "[" #cat "] %s:%d %s | " fmt,             \
-            __FILE_NAME__, __LINE__, __func__, ##__VA_ARGS__);                           \
-        if (::ASFW::LogConfig::Shared().IsOsLogMirrorEnabled()) {                        \
-            os_log(ASFW::Driver::Logging::cat(),                                         \
-                   "[%{public}s] %{public}s:%d %{public}s | " fmt,                       \
-                   #cat, __FILE_NAME__, __LINE__, __func__, ##__VA_ARGS__);              \
-        }                                                                                \
-    } while (0)
+    ASFW_LOG(cat, "%{public}s:%d %{public}s | " fmt, __FILE_NAME__, __LINE__, __func__,  \
+             ##__VA_ARGS__)
 
 // ----- Correlated logging with txid/gen (parseable k=v format) -----
 #define ASFW_LOG_KV(cat, ctxName, txid, gen, fmt, ...) \
@@ -281,76 +306,14 @@ struct RlState {
 #define ASFW_LOG_PHY(fmt, ...)
 #endif
 
-// ============================================================================
-// Runtime Verbosity-Aware Logging Macros
-// ============================================================================
+// ----- Verbosity-numbered logging -----
 //
-// These macros check runtime verbosity levels before logging.
-// They work with any category (Async, Controller, Hardware, etc.)
-//
-// Usage:
-//   ASFW_LOG_V0(Async, "Critical error");      // Level 0+ (always logs errors)
-//   ASFW_LOG_V1(Async, "TX t5 OK");            // Level 1+ (compact summaries)
-//   ASFW_LOG_V2(Async, "State transition");   // Level 2+ (key transitions)
-//   ASFW_LOG_V3(Async, "Detailed flow");      // Level 3+ (verbose)
-//   ASFW_LOG_V4(Async, "Debug dump");         // Level 4+ (full diagnostics)
-//   ASFW_LOG_HEX(Async, "Packet: %02x", b);   // Hex dumps (respects flag + level)
-//
-// Verbosity levels are configured via Info.plist properties:
-//   ASFWAsyncVerbosity, ASFWControllerVerbosity, ASFWHardwareVerbosity
-//
-
-// Helper macro to get verbosity for a specific category
-// This uses token concatenation to call Get##category##Verbosity()
-#define ASFW_GET_VERBOSITY(category) \
-    (::ASFW::LogConfig::Shared().Get##category##Verbosity())
-
-// Level 0: Critical (errors, failures, timeouts - always logged at this level)
-#define ASFW_LOG_V0(category, fmt, ...) \
-    do { \
-        if (ASFW_GET_VERBOSITY(category) >= 0) { \
-            ASFW_LOG(category, fmt, ##__VA_ARGS__); \
-        } \
-    } while (0)
-
-// Level 1: Compact (one-line summaries, aggregate stats)
-#define ASFW_LOG_V1(category, fmt, ...) \
-    do { \
-        if (ASFW_GET_VERBOSITY(category) >= 1) { \
-            ASFW_LOG(category, fmt, ##__VA_ARGS__); \
-        } \
-    } while (0)
-
-// Level 2: Transitions (key state changes only)
-#define ASFW_LOG_V2(category, fmt, ...) \
-    do { \
-        if (ASFW_GET_VERBOSITY(category) >= 2) { \
-            ASFW_LOG(category, fmt, ##__VA_ARGS__); \
-        } \
-    } while (0)
-
-// Level 3: Verbose (all transitions, detailed flow)
-#define ASFW_LOG_V3(category, fmt, ...) \
-    do { \
-        if (ASFW_GET_VERBOSITY(category) >= 3) { \
-            ASFW_LOG(category, fmt, ##__VA_ARGS__); \
-        } \
-    } while (0)
-
-// Level 4: Debug (hex dumps, buffer dumps, full diagnostics)
-#define ASFW_LOG_V4(category, fmt, ...) \
-    do { \
-        if (ASFW_GET_VERBOSITY(category) >= 4) { \
-            ASFW_LOG(category, fmt, ##__VA_ARGS__); \
-        } \
-    } while (0)
-
-// Hex dumps: respects both explicit flag and verbosity level 4
-// This allows forcing hex dumps on/off independent of verbosity level
-#define ASFW_LOG_HEX(category, fmt, ...) \
-    do { \
-        if (::ASFW::LogConfig::Shared().IsHexDumpsEnabled() || \
-            ASFW_GET_VERBOSITY(category) >= 4) { \
-            ASFW_LOG(category, fmt, ##__VA_ARGS__); \
-        } \
-    } while (0)
+// The older numbered macros, mapped onto the severities above: V0 failures
+// and refusals (warning), V1 compact summaries (notice), V2 transitions
+// (debug), V3/V4 detailed flow and dumps (trace). Hex dumps are trace.
+#define ASFW_LOG_V0(category, fmt, ...) ASFW_LOG_AT(category, Warning, fmt, ##__VA_ARGS__)
+#define ASFW_LOG_V1(category, fmt, ...) ASFW_LOG_AT(category, Notice, fmt, ##__VA_ARGS__)
+#define ASFW_LOG_V2(category, fmt, ...) ASFW_LOG_AT(category, Debug, fmt, ##__VA_ARGS__)
+#define ASFW_LOG_V3(category, fmt, ...) ASFW_LOG_AT(category, Trace, fmt, ##__VA_ARGS__)
+#define ASFW_LOG_V4(category, fmt, ...) ASFW_LOG_AT(category, Trace, fmt, ##__VA_ARGS__)
+#define ASFW_LOG_HEX(category, fmt, ...) ASFW_LOG_AT(category, Trace, fmt, ##__VA_ARGS__)

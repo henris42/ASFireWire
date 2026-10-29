@@ -199,6 +199,12 @@ add_core_test(BringUpTraceTests
     BringUpTraceTests.cpp
 )
 
+# Log level: spec parser, per-category check, change line, user-client wire
+# (LogLevels.cpp comes from asfw_test_support)
+add_core_test(LogLevelsTests
+    LogLevelsTests.cpp
+)
+
 # Self-ID derived path speed for isochronous traffic
 add_core_test(TopologySpeedTests
     TopologySpeedTests.cpp

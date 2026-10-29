@@ -94,7 +94,7 @@ void SpeedPolicy::RecordSuccess(uint8_t nodeId, FwSpeed speed) {
     // Logging stays outside the lock (DeviceRegistry does the same). ObservedSpeed()
     // is now called from other queues on the transaction path, so the hold time
     // here is somebody else's latency.
-    ASFW_LOG_RL(Discovery, "speed_success", 5000, OS_LOG_TYPE_DEBUG,
+    ASFW_LOG_RL(Discovery, "speed_success", 5000, Debug,
                 "Node %u: Success at S%u (total=%u)",
                 nodeId, SpeedMbps(speed), successCount);
 }

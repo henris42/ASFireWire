@@ -117,6 +117,41 @@ void LogRing::Append(LogCategory category, LogLevel level, const char* format,
     }
 }
 
+void LogRing::AppendText(LogCategory category, LogLevel level,
+                         const char* text) noexcept {
+    LogSlot* slots = slots_.load(std::memory_order_acquire);
+    if (slots == nullptr || text == nullptr) {
+        return;
+    }
+
+    const uint64_t sequence =
+        nextSequence_.fetch_add(1, std::memory_order_relaxed) + 1;
+    LogSlot& slot = slots[(sequence - 1) % capacity_];
+    if (slot.gate.test_and_set(std::memory_order_acquire)) {
+        droppedRecords_.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+
+    LogRecord& record = slot.record;
+    record.timestampNs = NowNs();
+    record.category = static_cast<uint8_t>(category);
+    record.level = static_cast<uint8_t>(level);
+    size_t length = 0;
+    while (text[length] != '\0' && length + 1 < sizeof(record.message)) {
+        record.message[length] = text[length];
+        ++length;
+    }
+    record.message[length] = '\0';
+    record.messageLength = static_cast<uint16_t>(length);
+    record.sequence = sequence;
+    slot.gate.clear(std::memory_order_release);
+
+    const auto categoryIndex = static_cast<uint32_t>(category);
+    if (categoryIndex < kLogRingCategoryCount) {
+        perCategory_[categoryIndex].fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
 LogRingQueryResult LogRing::Query(const LogRingQuery& query,
                                   LogRecord* outRecords, uint32_t maxRecords,
                                   uint32_t scanBudget) const noexcept {
@@ -214,7 +249,7 @@ size_t PackLogRecords(const LogRing& ring, const LogRingQueryRequestWire& reques
     query.afterSequence = request.afterSequence;
     query.categoryMask = request.categoryMask;
     query.maxLevel = request.maxLevel > 255U
-        ? static_cast<uint8_t>(LogLevel::Debug)
+        ? static_cast<uint8_t>(LogLevel::Trace)
         : static_cast<uint8_t>(request.maxLevel);
     memcpy(query.contains, request.contains, sizeof(query.contains));
     query.contains[sizeof(query.contains) - 1] = '\0';

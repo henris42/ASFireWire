@@ -5,8 +5,9 @@
 // Numbered bring-up steps, "[StartStep] #NN <text>": one line per stage of a
 // driver start (PCI open, interrupts, DMA buffers, controller reset, link
 // enable, first interrupts, self-IDs, first ROM scan), so a start that stalls
-// or fails can be read step by step. The login agent saves each boot's steps
-// to ~/Library/Logs/ASFW.
+// or fails can be read step by step. They are milestones, logged at every
+// level from warn up, and asfw-config-agent saves each boot's steps to
+// ~/Library/Logs/ASFW.
 //
 // Steps from paths that recur after bring-up (interrupts, self-ID decode, DMA
 // allocations) are added only while the trace is active: from Begin() at the

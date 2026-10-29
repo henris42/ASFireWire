@@ -417,7 +417,7 @@ void AsyncSubsystem::FinalizeStart() {
     // controller programs the interrupt mask and kDefaultLinkControl
     // (rcvPhyPkt included) once the link is powered.
 
-    ASFW_LOG_TYPE(Async, OS_LOG_TYPE_INFO, "AsyncSubsystem::Start complete (DMA mapping %{public}s)",
+    ASFW_LOG_INFO(Async, "AsyncSubsystem::Start complete (DMA mapping %{public}s)",
                   ASFW::Shared::kDMAMappingIsUncached ? "uncached" : "cached, coherent");
 
     ResetWatchdogCounters();
@@ -427,7 +427,7 @@ void AsyncSubsystem::FinalizeStart() {
 }
 
 kern_return_t AsyncSubsystem::FailStart(const char* failureStage, kern_return_t kr) {
-    ASFW_LOG_TYPE(Async, OS_LOG_TYPE_ERROR,
+    ASFW_LOG_ERROR(Async,
                   "AsyncSubsystem::Start failed at stage %{public}s (kr=0x%08x)",
                   failureStage ? failureStage : "unknown", kr);
     Teardown(false);

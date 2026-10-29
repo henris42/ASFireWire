@@ -167,7 +167,7 @@ public:
         char notifyStr[96];
         ASFW::Audio::DICE::FormatNotification(bits, notifyStr, sizeof(notifyStr));
         if (guid == 0) {
-            ASFW_LOG_RL(DICE, "dice/notify-unknown-source", 1000, OS_LOG_TYPE_DEFAULT,
+            ASFW_LOG_RL(DICE, "dice/notify-unknown-source", 1000, Warning,
                         "DICE notification from unknown node 0x%04x gen=%u bits=0x%08x "
                         "meaning=%{public}s: dropped",
                         ctx.sourceID, ctx.generation, bits, notifyStr);

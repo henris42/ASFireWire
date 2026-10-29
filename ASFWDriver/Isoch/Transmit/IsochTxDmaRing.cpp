@@ -718,7 +718,7 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
                 1, std::memory_order_relaxed);
             ASFW_LOG_RING_ONLY(
                 Isoch,
-                ::ASFW::Logging::LogLevel::Notice,
+                Debug,
                 "IT completion delta high-water=%u",
                 observedCompleted);
         }

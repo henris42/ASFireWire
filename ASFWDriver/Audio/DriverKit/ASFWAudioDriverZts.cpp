@@ -53,7 +53,7 @@ ASFW::Audio::Runtime::ZtsMirrorPublishResult PublishSharedZeroTimestampToHAL(
     if (anchor.timelineEpoch != 0 && anchor.timelineEpoch != liveEpoch) {
         ivars.runtime.lastHalZeroTimestampGeneration.store(
             anchor.generation, std::memory_order_release);
-        ASFW_LOG_RL(DirectAudio, "zts/stale-epoch", 1000, OS_LOG_TYPE_DEFAULT,
+        ASFW_LOG_RL(DirectAudio, "zts/stale-epoch", 1000, Warning,
                     "[Zts] stale anchor refused epoch=%llu live=%llu frame=%llu",
                     anchor.timelineEpoch, liveEpoch, anchor.sampleFrame);
         return ASFW::Audio::Runtime::ZtsMirrorPublishResult::StaleEpoch;

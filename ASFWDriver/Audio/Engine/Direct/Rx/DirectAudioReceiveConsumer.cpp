@@ -806,7 +806,7 @@ void DirectAudioReceiveConsumer::ResetReplayEpochForDiscontinuity(
                 timeline.SampleRateHz(), absoluteFrameCursor_);
             // Once per loss, capped: a device that keeps losing presentation
             // restarts each time and would otherwise log every cycle of it.
-            ASFW_LOG_RL(DirectAudio, "zts/loss-epoch", 1000, OS_LOG_TYPE_DEFAULT,
+            ASFW_LOG_RL(DirectAudio, "zts/loss-epoch", 1000, Warning,
                         "[Zts] epoch=%llu source=receive reason=presentation-loss frame=%llu",
                         epoch, absoluteFrameCursor_);
         }
