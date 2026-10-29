@@ -62,17 +62,6 @@ final class ASFWDiagnosticsClient {
         try loadDiagStruct(selector: 1001, expectedSize: MemoryLayout<ASFWDiagTopology>.size)
     }
 
-    /// Clears the async transaction trace ring buffer on the driver.
-    func clearAsyncTrace() throws {
-        guard connector.isConnected else {
-            throw DiagnosticsError.notConnected
-        }
-        
-        guard let _ = connector.transport.callStruct(selector: 1008, input: nil, initialCap: 64) else {
-            throw DiagnosticsError.callFailed(selector: 1008)
-        }
-    }
-    
     // MARK: - Private Collection Methods
     
     private func fetchSnapshotOnce() throws -> ASFWDiagnosticsSnapshot {

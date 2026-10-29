@@ -255,29 +255,4 @@ kern_return_t DiagnosticsHandler::GetAudioTelemetry(
     return kIOReturnSuccess;
 }
 
-kern_return_t DiagnosticsHandler::ClearAsyncTrace(IOUserClientMethodArguments* args) {
-    if (!driver_) {
-        return kIOReturnNotReady;
-    }
-    
-    auto* controller = GetControllerCorePtr(driver_);
-    if (!controller) {
-        return kIOReturnNotReady;
-    }
-    
-    auto* trace = controller->AsyncSubsystem().GetAsyncTraceCapture();
-    if (trace) {
-        trace->Clear();
-    }
-    
-    // Return empty status payload
-    OSData* data = OSData::withCapacity(0);
-    if (!data) {
-        return kIOReturnNoMemory;
-    }
-    args->structureOutput = data;
-    args->structureOutputDescriptor = nullptr;
-    return kIOReturnSuccess;
-}
-
 } // namespace ASFW::UserClient

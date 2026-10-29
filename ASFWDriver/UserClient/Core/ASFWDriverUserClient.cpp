@@ -345,7 +345,7 @@ constexpr uint64_t kMethodDiagGetPHY              = 1004;
 constexpr uint64_t kMethodDiagGetCSRContract      = 1005;
 constexpr uint64_t kMethodDiagGetAsyncTrace       = 1006;
 constexpr uint64_t kMethodDiagGetInboundCSRStats  = 1007;
-constexpr uint64_t kMethodDiagClearAsyncTrace     = 1008;
+// 1008 retired (was the app's Clear Trace button).
 constexpr uint64_t kMethodDiagGetBusManager       = 1009;
 constexpr uint64_t kMethodDiagGetPostResetTiming  = 1010;
 constexpr uint64_t kMethodDiagGetLogRecords       = 1011;
@@ -373,8 +373,6 @@ MethodDispatchResult DispatchDiagnosticsMethods(
         return runtimeState.Diagnostics().GetAsyncTrace(arguments);
     case kMethodDiagGetInboundCSRStats:
         return runtimeState.Diagnostics().GetInboundCSRStats(arguments);
-    case kMethodDiagClearAsyncTrace:
-        return runtimeState.Diagnostics().ClearAsyncTrace(arguments);
     case kMethodDiagGetBusManager:
         return runtimeState.Diagnostics().GetBusManager(arguments);
     case kMethodDiagGetPostResetTiming:

@@ -45,7 +45,6 @@ public:
     kern_return_t GetInboundCSRStats(IOUserClientMethodArguments* args);
     
     // Selector 1008: Clear Async Trace
-    kern_return_t ClearAsyncTrace(IOUserClientMethodArguments* args);
 
     // Selector 1009: Bus Manager Info
     kern_return_t GetBusManager(IOUserClientMethodArguments* args);

@@ -13,7 +13,6 @@ final class DiagnosticsStore: ObservableObject {
     @Published var error: String?
     @Published var reportText: String = "No diagnostics report loaded yet. Click Refresh to query the driver."
     @Published var lastSnapshot: ASFWDiagnosticsSnapshot?
-    @Published var isClearingTrace = false
     
     private let client: ASFWDiagnosticsClient
     private let connector: ASFWDriverConnector
@@ -68,36 +67,6 @@ final class DiagnosticsStore: ObservableObject {
                     self.error = errorDescription
                     self.reportText = "ERROR: Failed to fetch diagnostics.\n\nDetails: \(errorDescription)"
                     self.isRefreshing = false
-                }
-            }
-        }
-    }
-    
-    func clearTrace() {
-        guard connector.isConnected else { return }
-        guard !isClearingTrace else { return }
-        isClearingTrace = true
-        
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
-            
-            do {
-                print("[DiagStore] 🧹 Clearing async transactions trace...")
-                try self.client.clearAsyncTrace()
-                print("[DiagStore] ✅ Cleared async transactions trace.")
-                
-                DispatchQueue.main.async {
-                    self.isClearingTrace = false
-                    // Re-fetch snapshot immediately to show the cleared trace state
-                    self.refresh()
-                }
-            } catch {
-                print("[DiagStore] ❌ Failed to clear async trace: \(error)")
-                let errorDescription = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-                
-                DispatchQueue.main.async {
-                    self.error = "Failed to clear trace: \(errorDescription)"
-                    self.isClearingTrace = false
                 }
             }
         }

@@ -11,7 +11,6 @@ import UniformTypeIdentifiers
 struct DiagnosticsView: View {
     @ObservedObject var store: DiagnosticsStore
     var showAdvancedTools = false
-    @State private var showingClearConfirmation = false
     @State private var copyFeedbackText = "Copy Report"
     @State private var copyFeedbackIcon = "doc.on.doc"
     
@@ -29,7 +28,7 @@ struct DiagnosticsView: View {
                 
                 Spacer()
                 
-                if store.isRefreshing || store.isClearingTrace {
+                if store.isRefreshing {
                     ProgressView()
                         .controlSize(.small)
                         .frame(width: 16, height: 16)
@@ -39,16 +38,7 @@ struct DiagnosticsView: View {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(store.isRefreshing || store.isClearingTrace)
-                
-                if showAdvancedTools {
-                    Button(action: { showingClearConfirmation = true }) {
-                        Label("Clear Trace", systemImage: "trash")
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(store.isRefreshing || store.isClearingTrace)
-                    .tint(.red)
-                }
+                .disabled(store.isRefreshing)
 
                 Button(action: copyReportToPasteboard) {
                     Label(copyFeedbackText, systemImage: copyFeedbackIcon)
@@ -94,15 +84,6 @@ struct DiagnosticsView: View {
                 }
             }
             .background(Color(NSColor.textBackgroundColor))
-        }
-        .confirmationDialog(
-            "Are you sure you want to clear the async transaction trace ring buffer on the driver?",
-            isPresented: $showingClearConfirmation
-        ) {
-            Button("Clear Trace", role: .destructive) {
-                store.clearTrace()
-            }
-            Button("Cancel", role: .cancel) {}
         }
         .onAppear {
             store.refresh()
