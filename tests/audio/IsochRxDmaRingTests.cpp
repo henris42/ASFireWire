@@ -86,3 +86,20 @@ TEST(IsochRxDmaRingTests, DrainCompleted_ProcessesOneDescriptorAndRearms) {
     EXPECT_EQ(ASFW::Async::HW::AR_xferStatus(*d0), 0u);
     EXPECT_EQ(ASFW::Async::HW::AR_resCount(*d0), reqCount);
 }
+
+namespace {
+// The receive program the controller runs checks out through the DMA map's
+// reverse translation: data addresses lead back to their buffers, buffers are
+// one physical run, branches lead to the next descriptor.
+TEST(IsochRxDmaRingTests, SetupRingsLeavesAVerifiedProgram) {
+    ASFW::Driver::HardwareInterface hw;
+    auto mem = MakeTestIsochMemory(hw, 32, 4096);
+    ASSERT_TRUE(mem);
+    ASFW::Isoch::Rx::IsochRxDmaRing ring;
+    ASSERT_EQ(ring.SetupRings(*mem, 32, 4096), kIOReturnSuccess);
+    EXPECT_EQ(ring.ProgramMismatches(), 0u);
+    // The reuse path checks again.
+    ASSERT_EQ(ring.SetupRings(*mem, 32, 4096), kIOReturnSuccess);
+    EXPECT_EQ(ring.ProgramMismatches(), 0u);
+}
+} // namespace

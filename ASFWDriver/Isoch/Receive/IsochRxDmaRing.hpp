@@ -103,8 +103,20 @@ public:
 
     [[nodiscard]] uint32_t Descriptor0IOVA() const noexcept;
 
+    // Descriptors whose program failed the check at the last SetupRings.
+    [[nodiscard]] uint32_t ProgramMismatches() const noexcept { return programMismatches_; }
+
 private:
+    // Check the receive program the controller will run, through the DMA
+    // map's reverse translation: each data address leads back to its buffer,
+    // each buffer is one physical run (the controller writes linearly from
+    // the data address), and each branch leads to the next descriptor. A
+    // packet lost once per lap at one descriptor (2026-10-28, on some boots
+    // only) made the program itself the first suspect.
+    uint32_t VerifyProgram(Memory::IIsochDMAMemory& dma) noexcept;
+
     Shared::BufferRing bufferRing_{};
+    uint32_t programMismatches_{0};
     size_t maxPacketSizeBytes_{0};
     uint32_t lastProcessedIndex_{0};
 };

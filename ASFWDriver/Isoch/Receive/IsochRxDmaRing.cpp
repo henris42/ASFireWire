@@ -81,6 +81,7 @@ kern_return_t IsochRxDmaRing::SetupRings(Memory::IIsochDMAMemory& dma,
 
         maxPacketSizeBytes_ = maxPacketSizeBytes;
         lastProcessedIndex_ = 0;
+        programMismatches_ = VerifyProgram(dma);
 
         return kIOReturnSuccess;
     }
@@ -154,8 +155,45 @@ kern_return_t IsochRxDmaRing::SetupRings(Memory::IIsochDMAMemory& dma,
 
     maxPacketSizeBytes_ = maxPacketSizeBytes;
     lastProcessedIndex_ = 0;
+    programMismatches_ = VerifyProgram(dma);
 
     return kIOReturnSuccess;
+}
+
+uint32_t IsochRxDmaRing::VerifyProgram(Memory::IIsochDMAMemory& dma) noexcept {
+    const uint32_t count = static_cast<uint32_t>(bufferRing_.Capacity());
+    const size_t bufferBytes = bufferRing_.BufferSize();
+    uint32_t mismatches = 0;
+    for (uint32_t i = 0; i < count && bufferBytes != 0; ++i) {
+        const auto* desc = bufferRing_.GetDescriptor(i);
+        const uint8_t* buffer = bufferRing_.GetElementVA(i);
+        const auto* nextDesc = bufferRing_.GetDescriptor((i + 1) % count);
+        if (desc == nullptr || buffer == nullptr || nextDesc == nullptr) {
+            ++mismatches;
+            continue;
+        }
+        const uint32_t data = desc->dataAddress;
+        const uint32_t branch = desc->branchWord & ~uint32_t{0xF};
+        const auto* dataBack = reinterpret_cast<const uint8_t*>(dma.IOVAToVirt(data));
+        const uint64_t lastIOVA =
+            dma.VirtToIOVA(reinterpret_cast<const std::byte*>(buffer + bufferBytes - 1));
+        const auto* branchBack = reinterpret_cast<const void*>(dma.IOVAToVirt(branch));
+        const bool dataOk = dataBack == buffer && lastIOVA == static_cast<uint64_t>(data) + bufferBytes - 1;
+        const bool branchOk = branchBack == static_cast<const void*>(nextDesc);
+        if (dataOk && branchOk) {
+            continue;
+        }
+        if (++mismatches <= 4) {
+            ASFW_LOG_ERROR(Isoch,
+                           "IR: descriptor %u program mismatch: data=0x%08x buffer=%p back=%p lastIOVA=0x%llx "
+                           "branch=0x%08x next=%p back=%p",
+                           i, data, static_cast<const void*>(buffer), static_cast<const void*>(dataBack),
+                           lastIOVA, desc->branchWord, static_cast<const void*>(nextDesc), branchBack);
+        }
+    }
+    ASFW_LOG(Isoch, "IR: descriptor program checked: %u descriptors, %zu-byte buffers, %u mismatches",
+             count, bufferBytes, mismatches);
+    return mismatches;
 }
 
 uint32_t IsochRxDmaRing::Descriptor0IOVA() const noexcept {
