@@ -11,9 +11,9 @@
 //   owner), copies each written frame once from that ring into the armed
 //   packet that carries it, if the packet is still ahead of the hardware.
 //   RT-safe: no locks, no allocation; the timeline and the clock pair are
-//   read through their seqlocks. The whole ring is cleared at every start
-//   (ClearPlaybackRing), so a frame CoreAudio never wrote in this session is
-//   silence rather than the previous session's output.
+//   read through their seqlocks. A frame is cleared in the ring once it has
+//   been copied, and the whole ring at every start (ClearPlaybackRing), so a
+//   frame CoreAudio never wrote is silence rather than an older write.
 //
 // Both are called unchanged from the host TX tests.
 //
@@ -223,6 +223,10 @@ void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars) noexcept {
     while (fillDuration > observed &&
            !maxDuration.compare_exchange_weak(observed, fillDuration,
                                              std::memory_order_relaxed)) {}
+    // Clear what was just copied. The ring keeps a frame until CoreAudio
+    // writes that slot again a ring later; a slot it skips, or a frame it
+    // reported without writing, must then read as silence, not as this one.
+    ClearRingFrames(memory, filled, hostBuffer.frameCount);
     filled += hostBuffer.frameCount;
     control->playbackRingReadFrame.store(filled, std::memory_order_release);
 }

@@ -323,6 +323,8 @@ public:
     // Every sample of CoreAudio's output ring set to `value`: what the
     // previous session left there.
     void FillOutputRing(float value) { std::fill(outputRing_.begin(), outputRing_.end(), value); }
+    [[nodiscard]] const std::vector<float>& OutputRing() const { return outputRing_; }
+    [[nodiscard]] uint32_t RingFrames() const { return ringFrames_; }
 
     [[nodiscard]] uint32_t SampleRate() const { return sampleRate_; }
     [[nodiscard]] uint32_t PcmChannels() const { return pcmChannels_; }
@@ -1819,6 +1821,41 @@ TEST(TxOwnershipLifecycle, ArmingTheProducerClearsThePlaybackRing) {
     memory.outputChannels = 8;
     ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::FocusriteSPro24Dsp, 48000));
     EXPECT_TRUE(std::all_of(ring.begin(), ring.end(), [](float v) { return v == 0.0f; }));
+}
+
+// The fill clears each frame it copied, so a slot CoreAudio skips, or a frame
+// it reports without writing, reads as silence a ring later.
+TEST(TxOwnershipLifecycle, TheFillClearsTheFramesItCopied) {
+    const ASFW::Isoch::Audio::DICE::DiceProfile profile{{.name = "Focusrite Saffire (DICE)"}};
+    TxProducerRig rig;
+    rig.SetResolvedPlayback({.pcmChannels = 8, .am824Slots = 9, .midiPorts = 1});
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::FocusriteSPro24Dsp, 48000));
+    rig.FeedBlockingRx(8);
+    rig.EnableHostOutput({.ioFrames = 512, .leadFrames = 560});
+    ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets)) << rig.DescribeFault();
+
+    const auto& control = rig.Control();
+    const uint64_t read = control.playbackRingReadFrame.load();
+    const uint64_t written = control.playbackRingWriteFrame.load();
+    const uint32_t ringFrames = rig.RingFrames();
+    const uint32_t channels = rig.PcmChannels();
+    ASSERT_GT(read, static_cast<uint64_t>(ringFrames));
+    ASSERT_GE(written, read);
+    const auto& ring = rig.OutputRing();
+    const auto frameIsSilent = [&](uint64_t frame) {
+        const size_t at = static_cast<size_t>(frame % ringFrames) * channels;
+        return std::all_of(ring.begin() + static_cast<std::ptrdiff_t>(at),
+                           ring.begin() + static_cast<std::ptrdiff_t>(at + channels),
+                           [](float v) { return v == 0.0f; });
+    };
+    // Copied frames whose slots CoreAudio has not written again: silent.
+    for (uint64_t frame = written - ringFrames; frame < read; ++frame) {
+        ASSERT_TRUE(frameIsSilent(frame)) << "frame " << frame << " kept after the fill copied it";
+    }
+    // Written but not yet copied: CoreAudio's samples are still there.
+    for (uint64_t frame = read; frame < written; ++frame) {
+        ASSERT_FALSE(frameIsSilent(frame)) << "frame " << frame << " cleared before it was copied";
+    }
 }
 
 TEST(AudioDriverTxProducerTests, SyntheticHeaderlessBootstrapTransitionsAtWritableBoundary) {
