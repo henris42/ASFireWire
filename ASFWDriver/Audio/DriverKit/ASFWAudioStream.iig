@@ -1,0 +1,34 @@
+//
+// ASFWAudioStream.iig
+// ASFWDriver
+//
+// The graph's IOUserAudioStream: reads of the stream's name are answered from
+// a cache, without the page AudioDriverKit 21 leaks on each
+// (AdkPropertySerialization.hpp). ASFWAvcAudioStream builds on it.
+//
+
+#ifndef ASFWAudioStream_h
+#define ASFWAudioStream_h
+
+#include <AudioDriverKit/IOUserAudioStream.iig>
+
+using namespace AudioDriverKit;
+
+class ASFWAudioStream : public IOUserAudioStream
+{
+public:
+    static OSSharedPtr<ASFWAudioStream> Create(IOUserAudioDriver* in_driver,
+                                               IOUserAudioStreamDirection in_direction,
+                                               IOMemoryDescriptor* in_io_memory_descriptor) LOCALONLY;
+
+    // No 'override': IIG keeps AudioDriverKit's private class extension apart
+    // from the class (IOUserAudioStream.iig redeclares these the same way).
+    virtual kern_return_t _GetPropertySize(const IOUserAudioObjectPropertyAddress* in_prop_addr,
+                                           OSData* in_qualifier_data,
+                                           size_t* out_size) LOCALONLY;
+    virtual kern_return_t _GetPropertyData(const IOUserAudioObjectPropertyAddress* in_prop_addr,
+                                           OSData* in_qualifier_data,
+                                           OSData** out_data) LOCALONLY;
+};
+
+#endif /* ASFWAudioStream_h */

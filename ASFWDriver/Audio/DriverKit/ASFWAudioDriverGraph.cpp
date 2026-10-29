@@ -9,6 +9,7 @@
 
 #include "ASFWAudioDevice.h"
 #include "ASFWAudioDriverPrivate.hpp"
+#include "ASFWAudioStream.h"
 #include "UnitSerialLabel.hpp"
 #include "ASFWAvcLevelControl.h"
 #include "Config/AudioProfileRegistry.hpp"
@@ -624,7 +625,7 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
 
     if (hasInputStream) {
         if (ivars.device.rateFormationCandidates.empty()) {
-            ivars.inputStream = IOUserAudioStream::Create(&driver, IOUserAudioStreamDirection::Input, ivars.inputBuffer.get());
+            ivars.inputStream = ASFWAudioStream::Create(&driver, IOUserAudioStreamDirection::Input, ivars.inputBuffer.get());
         } else {
             auto stream = OSSharedPtr(OSTypeAlloc(ASFWAvcAudioStream), OSNoRetain);
             if (!stream || !stream->init(&driver, IOUserAudioStreamDirection::Input, ivars.inputBuffer.get()))
@@ -691,7 +692,7 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
 
     if (hasOutputStream) {
         if (ivars.device.rateFormationCandidates.empty()) {
-            ivars.outputStream = IOUserAudioStream::Create(&driver, IOUserAudioStreamDirection::Output, ivars.outputBuffer.get());
+            ivars.outputStream = ASFWAudioStream::Create(&driver, IOUserAudioStreamDirection::Output, ivars.outputBuffer.get());
         } else {
             auto stream = OSSharedPtr(OSTypeAlloc(ASFWAvcAudioStream), OSNoRetain);
             if (!stream || !stream->init(&driver, IOUserAudioStreamDirection::Output, ivars.outputBuffer.get()))

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 #ifndef ASFWAvcAudioStream_h
 #define ASFWAvcAudioStream_h
-#include <AudioDriverKit/IOUserAudioStream.iig>
+#include "ASFWAudioStream.iig"
 using namespace AudioDriverKit;
 class ASFWAudioDevice;
-class ASFWAvcAudioStream : public IOUserAudioStream {
+class ASFWAvcAudioStream : public ASFWAudioStream {
 public:
     virtual bool init(IOUserAudioDriver* driver, IOUserAudioStreamDirection direction,
                       IOMemoryDescriptor* memory) override LOCALONLY;
