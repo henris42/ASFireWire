@@ -27,6 +27,8 @@
 #include "Discovery/DiscoveryOwner.hpp"
 #include "../../Scheduling/ITimerScheduler.hpp"
 
+class IOService;
+
 
 // Forward declarations
 namespace ASFW::Discovery { class DeviceRegistry; struct DeviceRecord; }

@@ -1,6 +1,5 @@
 #include "Transaction.hpp"
 #include "../../Logging/Logging.hpp"
-#include "../../Logging/LogConfig.hpp"
 #include <cassert>
 
 namespace ASFW::Async {

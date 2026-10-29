@@ -3,7 +3,6 @@
 #include <bit>
 #include "../../Common/FWCommon.hpp"
 #include "../../Logging/Logging.hpp"
-#include "../../Logging/LogConfig.hpp"
 
 namespace ASFW::Async {
 

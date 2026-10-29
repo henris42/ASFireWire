@@ -6,7 +6,6 @@
 #include "DescriptorBuilder.hpp"
 #include "../Contexts/ATRequestContext.hpp"
 #include "../../Logging/Logging.hpp"
-#include "../../Logging/LogConfig.hpp"
 #include "../../Hardware/OHCIDescriptors.hpp"
 #include "../../Debug/AsyncTraceCapture.hpp"
 #include "../../Shared/ASFWDiagnosticsABI.h"

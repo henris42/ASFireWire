@@ -1,7 +1,6 @@
 #include "ConfigROMParser.hpp"
 
 #include "../../Common/FWCommon.hpp"
-#include "../../Logging/LogConfig.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../Common/ConfigROMConstants.hpp"
 

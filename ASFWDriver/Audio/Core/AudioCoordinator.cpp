@@ -433,8 +433,8 @@ void AudioCoordinator::HandleCycleInconsistent() noexcept {
         // (AUDIO_DEVICE_HOST.md §6 E5).
         if (ServedByHost(guid)) host_.OnRuntimeFault(guid, DuplexRestartReason::kRecoverAfterCycleInconsistent);
     }
-    if (!any && ::ASFW::LogConfig::Shared().GetIsochVerbosity() >= 3) {
-        ASFW_LOG(Audio, "AudioCoordinator: Ignoring cycleInconsistent with no active audio GUID");
+    if (!any) {
+        ASFW_LOG_TRACE(Audio, "AudioCoordinator: Ignoring cycleInconsistent with no active audio GUID");
     }
 }
 

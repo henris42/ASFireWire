@@ -1,7 +1,6 @@
 #include "../ROMScanner.hpp"
 #include "../ROMReader.hpp"
 
-#include "../../Logging/LogConfig.hpp"
 #include "../../Logging/Logging.hpp"
 #include "ROMScanSession.hpp"
 

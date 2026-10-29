@@ -8,7 +8,7 @@
 #include "../../Hardware/HardwareInterface.hpp"
 #include "../../Hardware/OHCIConstants.hpp"
 #include "../Core/LockPolicy.hpp"  // Phase 1.2: Fine-grained locking
-#include "../../Logging/LogConfig.hpp"  // For ASFW_LOG_V1 macro
+#include "../../Logging/Logging.hpp"
 
 using ASFW::Driver::kContextControlRunBit;
 using ASFW::Driver::kContextControlWakeBit;

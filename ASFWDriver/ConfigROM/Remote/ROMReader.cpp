@@ -2,7 +2,6 @@
 
 #include "../../Async/Interfaces/IFireWireBus.hpp"
 #include "../../Common/FWCommon.hpp" // For FW:: strong types
-#include "../../Logging/LogConfig.hpp"
 #include "../../Logging/Logging.hpp"
 
 #include <DriverKit/IOLib.h>

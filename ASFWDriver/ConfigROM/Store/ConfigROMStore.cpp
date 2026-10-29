@@ -1,6 +1,5 @@
 #include "../ConfigROMStore.hpp"
 
-#include "../../Logging/LogConfig.hpp"
 #include "../../Logging/Logging.hpp"
 
 #include <DriverKit/IOLib.h>

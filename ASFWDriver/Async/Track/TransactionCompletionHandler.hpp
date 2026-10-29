@@ -6,7 +6,6 @@
 #include "LabelAllocator.hpp"
 #include "../Engine/ATTrace.hpp"  // For NowUs()
 #include "../../Logging/Logging.hpp"
-#include "../../Logging/LogConfig.hpp"
 
 #include <DriverKit/IOReturn.h>
 #include <span>

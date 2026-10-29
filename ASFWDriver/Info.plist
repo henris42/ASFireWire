@@ -12,8 +12,6 @@
 	<dict>
 		<key>ASFWAudioDriverService</key>
 		<dict>
-			<key>ASFWDirectAudioVerbosity</key>
-			<integer>1</integer>
 			<key>CFBundleIdentifier</key>
 			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 			<key>IOClass</key>
@@ -41,8 +39,6 @@
 		</dict>
 		<key>ASFWDriverService</key>
 		<dict>
-			<key>ASFWAsyncVerbosity</key>
-			<integer>1</integer>
 			<key>ASFWAudioNubProperties</key>
 			<dict>
 				<key>ASFWNubType</key>
@@ -52,14 +48,6 @@
 				<key>IOUserClass</key>
 				<string>ASFWAudioNub</string>
 			</dict>
-			<key>ASFWAutoStartAudioStreams</key>
-			<true/>
-			<key>ASFWControllerVerbosity</key>
-			<integer>1</integer>
-			<key>ASFWDICEVerbosity</key>
-			<integer>1</integer>
-			<key>ASFWDirectAudioVerbosity</key>
-			<integer>1</integer>
 			<key>ASFWDriverUserClientProperties</key>
 			<dict>
 				<key>IOClass</key>
@@ -67,12 +55,6 @@
 				<key>IOUserClass</key>
 				<string>ASFWDriverUserClient</string>
 			</dict>
-			<key>ASFWEnableHexDumps</key>
-			<false/>
-			<key>ASFWHardwareVerbosity</key>
-			<integer>1</integer>
-			<key>ASFWLogStatistics</key>
-			<true/>
 			<key>ASFWSBP2NubProperties</key>
 			<dict>
 				<key>ASFWNubType</key>

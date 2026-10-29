@@ -1,6 +1,5 @@
 #include "ARPacketParser.hpp"
 #include "../../Hardware/IEEE1394.hpp"
-#include "../../Logging/LogConfig.hpp"
 #include "../../Logging/Logging.hpp"
 
 #ifdef ASFW_HOST_TEST

@@ -2,7 +2,6 @@
 
 #include "ARPacketParser.hpp"
 #include "../../Logging/Logging.hpp"
-#include "../../Logging/LogConfig.hpp"
 
 #include <DriverKit/IOLib.h>
 

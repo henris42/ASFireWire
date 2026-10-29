@@ -1,6 +1,5 @@
 #include "ROMScanSession.hpp"
 
-#include "../../Logging/LogConfig.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Bus/TopologySpeed.hpp"
 #include "../Common/ConfigROMConstants.hpp"

@@ -11,7 +11,6 @@
 #include "../../Controller/ControllerCore.hpp"
 #include "../../Bus/IRM/IRMClient.hpp"
 #include "../../Isoch/IsochReceiveContext.hpp"
-#include "../../Logging/LogConfig.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Protocols/AVC/AVCDiscovery.hpp"
 #include "../../Protocols/AVC/CMP/CMPClient.hpp"

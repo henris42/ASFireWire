@@ -20,7 +20,6 @@
 #include "PayloadRegistry.hpp"
 #include "../Engine/ContextManager.hpp"
 #include "../../Logging/Logging.hpp"
-#include "../../Logging/LogConfig.hpp"
 
 // Phase 2.0: Transaction infrastructure (sole source of truth)
 #include "../Core/Transaction.hpp"

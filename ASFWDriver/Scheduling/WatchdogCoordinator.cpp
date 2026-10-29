@@ -10,7 +10,6 @@
 #include "../Diagnostics/StatusPublisher.hpp"
 #include "../Isoch/IsochReceiveContext.hpp"
 #include "../Isoch/Transmit/IsochTransmitContext.hpp"
-#include "../Logging/LogConfig.hpp"
 
 namespace ASFW::Driver {
 namespace {
@@ -166,22 +165,18 @@ void WatchdogCoordinator::TickIsochReceive(
     }
 
     // ZTS clock telemetry is captured lock-free inside Poll() (which runs in
-    // the interrupt hot path); format it here, off the hot path, on a ~100 ms
-    // cadence (tick = 1 ms). Gated by the DirectAudio verbosity so it shares
-    // the direct-audio diagnostics kill switch (default on). Draining remains
-    // frequent; the receive-side log gate controls the much lower print rate.
-    // 951abcc7 made these drains conditional on IsochReceiveContext's
-    // receiveConsumer_ (they used to drain a context-owned ring
-    // unconditionally). Zts was silent for a whole hardware session after
-    // that, and its silence could not be told from a healthy stream. Report the two
-    // preconditions once per transition so the dead precondition is named
-    // rather than inferred.
-    const bool drainEligible =
-        isRunning && ::ASFW::LogConfig::Shared().GetDirectAudioVerbosity() >= 1;
+    // the interrupt hot path); drain it here, off the hot path, on a ~100 ms
+    // cadence (tick = 1 ms), whenever receive runs. The drain does more than
+    // log: it feeds the MOTU relative-phase publish, so it does not depend on
+    // the log level. 951abcc7 made these drains conditional on
+    // IsochReceiveContext's receiveConsumer_ (they used to drain a
+    // context-owned ring unconditionally). Zts was silent for a whole hardware
+    // session after that, and its silence could not be told from a healthy
+    // stream, so each transition is logged.
+    const bool drainEligible = isRunning;
     if (drainEligible != lastDrainEligible_) {
         lastDrainEligible_ = drainEligible;
-        ASFW_LOG(Isoch, "[RxDrain] eligible=%d running=%d verbosity=%u", drainEligible,
-                 isRunning, ::ASFW::LogConfig::Shared().GetDirectAudioVerbosity());
+        ASFW_LOG_DEBUG(Isoch, "[RxDrain] running=%d", isRunning);
     }
 
     // Consumer diagnostics maintain state the telemetry contract depends on

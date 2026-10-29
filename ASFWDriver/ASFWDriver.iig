@@ -104,16 +104,6 @@ public:
     kern_return_t CopySharedStatusMemory(uint64_t* options,
                                          IOMemoryDescriptor** memory) const LOCALONLY;
 
-    // Runtime logging configuration
-    kern_return_t SetAsyncVerbosity(uint32_t level) const LOCALONLY;
-    kern_return_t SetIsochVerbosity(uint32_t level) const LOCALONLY;
-    kern_return_t SetHexDumps(uint32_t enabled) const LOCALONLY;
-    kern_return_t SetAudioAutoStart(uint32_t enabled) const LOCALONLY;
-    kern_return_t GetLogConfig(uint32_t* asyncVerbosity,
-                              uint32_t* hexDumpsEnabled,
-                              uint32_t* isochVerbosity) const LOCALONLY;
-    kern_return_t GetAudioAutoStart(uint32_t* enabled) const LOCALONLY;
-
     // Developer control-plane entry points. They use the complete audio
     // lifecycle rather than exposing individual CMP/isoch primitives.
     kern_return_t StartAudioStreaming(uint64_t guid) LOCALONLY;

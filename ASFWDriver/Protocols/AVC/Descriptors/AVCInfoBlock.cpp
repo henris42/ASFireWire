@@ -7,7 +7,6 @@
 
 #include "AVCInfoBlock.hpp"
 #include "../../../Logging/Logging.hpp"
-#include "../../../Logging/LogConfig.hpp"
 #include <algorithm>
 #include <numeric>
 

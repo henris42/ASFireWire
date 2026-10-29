@@ -11,7 +11,6 @@
 #include "../../Shared/Memory/PayloadHandle.hpp"  // Required for UniquePayload<PayloadHandle> instantiation
 #include "CompletionStrategy.hpp"  // Explicit two-path completion model
 #include "../../Logging/Logging.hpp"  // For ASFW_LOG
-#include "../../Logging/LogConfig.hpp"  // For V0-V4 macros
 
 namespace ASFW::Async {
 

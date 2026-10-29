@@ -345,6 +345,10 @@ kern_return_t IMPL(ASFWDriver, Start) {
     auto kr = Start(provider, SUPERDISPATCH);
     if (kr != kIOReturnSuccess)
         return kr;
+    // The log ring and the log level first, so that every start step is
+    // logged, at the level the asfw-log-level property asks for.
+    ASFW::Logging::LogRing::Shared().Initialize();
+    ASFW::Logging::InitializeLogConfig(provider);
 #if ASFW_REQUIRE_ARMING
     if (!ProviderIsArmed(provider)) {
         ASFW_LOG(Controller, "ASFWDriver::Start(): no asfw-armed property on the controller; not starting");
@@ -642,12 +646,6 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
         ctx.audioCoordinator->SetCMPClient(ctx.deps.cmpClient.get());
         ctx.audioCoordinator->SetIRMClient(ctx.deps.irmClient.get());
     }
-
-    // Allocate the queryable log ring before configuration so its
-    // initialization trace (and everything after) is captured. Appends
-    // before this point are silent no-ops by design.
-    ASFW::Logging::LogRing::Shared().Initialize();
-    ASFW::LogConfig::Shared().Initialize(this);
 
     ctx.statusPublisher.Publish(ctx.controller.get(), ctx.deps.asyncController.get(),
                                 SharedStatusReason::Boot);
@@ -1333,56 +1331,6 @@ kern_return_t ASFWDriver::CopySharedStatusMemory(uint64_t* options,
     }
 
     return ivars->context->statusPublisher.CopySharedMemory(options, memory);
-}
-
-// Runtime logging configuration methods
-kern_return_t ASFWDriver::SetAsyncVerbosity(uint32_t level) const {
-    ASFW_LOG_INFO(Controller, "UserClient: Setting async verbosity to %u", level);
-    ASFW::LogConfig::Shared().SetAsyncVerbosity(static_cast<uint8_t>(level));
-    return kIOReturnSuccess;
-}
-
-kern_return_t ASFWDriver::SetIsochVerbosity(uint32_t level) const {
-    ASFW_LOG_INFO(Controller, "UserClient: Setting isoch verbosity to %u", level);
-    ASFW::LogConfig::Shared().SetIsochVerbosity(static_cast<uint8_t>(level));
-    return kIOReturnSuccess;
-}
-
-kern_return_t ASFWDriver::SetHexDumps(uint32_t enabled) const {
-    ASFW_LOG_INFO(Controller, "UserClient: Setting hex dumps to %{public}s",
-                  enabled ? "enabled" : "disabled");
-    ASFW::LogConfig::Shared().SetHexDumps(enabled != 0);
-    return kIOReturnSuccess;
-}
-
-kern_return_t ASFWDriver::SetAudioAutoStart(uint32_t enabled) const {
-    ASFW_LOG_INFO(Controller, "UserClient: Setting audio auto-start to %{public}s",
-                  enabled ? "enabled" : "disabled");
-    ASFW::LogConfig::Shared().SetAudioAutoStartEnabled(enabled != 0);
-    return kIOReturnSuccess;
-}
-
-kern_return_t ASFWDriver::GetLogConfig(uint32_t* asyncVerbosity, uint32_t* hexDumpsEnabled,
-                                       uint32_t* isochVerbosity) const {
-    if (!asyncVerbosity || !hexDumpsEnabled || !isochVerbosity) {
-        return kIOReturnBadArgument;
-    }
-    *asyncVerbosity = ASFW::LogConfig::Shared().GetAsyncVerbosity();
-    *hexDumpsEnabled = ASFW::LogConfig::Shared().IsHexDumpsEnabled() ? 1 : 0;
-    *isochVerbosity = ASFW::LogConfig::Shared().GetIsochVerbosity();
-    ASFW_LOG_INFO(Controller,
-                  "UserClient: Reading log configuration (Async=%u, Isoch=%u, HexDumps=%d)",
-                  *asyncVerbosity, *isochVerbosity, *hexDumpsEnabled);
-    return kIOReturnSuccess;
-}
-
-kern_return_t ASFWDriver::GetAudioAutoStart(uint32_t* enabled) const {
-    if (!enabled) {
-        return kIOReturnBadArgument;
-    }
-    *enabled = ASFW::LogConfig::Shared().IsAudioAutoStartEnabled() ? 1u : 0u;
-    ASFW_LOG_INFO(Controller, "UserClient: Reading audio auto-start (enabled=%u)", *enabled);
-    return kIOReturnSuccess;
 }
 
 kern_return_t ASFWDriver::StartAudioStreaming(uint64_t guid) {

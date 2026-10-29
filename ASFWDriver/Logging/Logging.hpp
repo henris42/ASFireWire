@@ -8,7 +8,6 @@
 #include <DriverKit/IOLib.h> // mach_time
 #endif
 
-#include "LogConfig.hpp"
 #include "IOReturnName.hpp"
 #include "LogLevels.hpp"
 #include "LogRing.hpp"

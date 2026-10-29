@@ -9,7 +9,7 @@
 #include "../../Hardware/HardwareInterface.hpp"
 #include "../../Common/DriverKitOwnership.hpp"
 #include "../../Hardware/OHCIConstants.hpp"
-#include "../../Logging/LogConfig.hpp"
+#include "../../Logging/Logging.hpp"
 #include "../../Common/TimingUtils.hpp"
 
 #include <algorithm>

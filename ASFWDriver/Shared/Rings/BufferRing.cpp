@@ -9,7 +9,6 @@
 #include "../Memory/DMAMemoryManager.hpp"
 #include "../Memory/IDMAMemory.hpp"
 #include "../../Logging/Logging.hpp"
-#include "../../Logging/LogConfig.hpp"
 
 namespace ASFW::Shared {
 

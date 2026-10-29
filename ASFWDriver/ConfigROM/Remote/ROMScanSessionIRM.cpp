@@ -3,7 +3,6 @@
 #include "../../Async/Interfaces/IFireWireBus.hpp"
 #include "../../Bus/TopologyManager.hpp"
 #include "../../Bus/IRM/IRMTypes.hpp"
-#include "../../Logging/LogConfig.hpp"
 #include "../../Logging/Logging.hpp"
 
 #include <DriverKit/IOLib.h>

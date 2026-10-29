@@ -10,7 +10,6 @@
 #include "ASFWAudioDevice.h"
 #include "ASFWAudioDriverPrivate.hpp"
 #include "Config/AudioProfileRegistry.hpp"
-#include "../../Logging/LogConfig.hpp"
 #include "../../Logging/Logging.hpp"
 
 #include <DriverKit/DriverKit.h>

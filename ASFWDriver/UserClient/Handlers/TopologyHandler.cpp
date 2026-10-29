@@ -7,7 +7,6 @@
 
 #include "TopologyHandler.hpp"
 #include "../../Controller/ControllerCore.hpp"
-#include "../../Logging/LogConfig.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../WireFormats/TopologyWireFormats.hpp"
 #include "ASFWDriver.h"

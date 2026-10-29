@@ -5,7 +5,6 @@
 #include <DriverKit/IOReturn.h>
 #include <DriverKit/IOLib.h>
 #include "../../Logging/Logging.hpp"
-#include "../../Logging/LogConfig.hpp"
 #include "../../Common/BarrierUtils.hpp"
 
 namespace ASFW::Shared {

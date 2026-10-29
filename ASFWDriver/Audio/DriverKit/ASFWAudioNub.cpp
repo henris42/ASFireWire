@@ -16,7 +16,6 @@
 #include "../../Discovery/DeviceRegistry.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Common/TimingUtils.hpp"
-#include "../../Logging/LogConfig.hpp"
 #include "../Core/AudioCoordinator.hpp"
 #include "../Protocols/AVCStartReadiness.hpp"
 #include "../Protocols/DeviceProtocolChoice.hpp"
@@ -575,14 +574,6 @@ kern_return_t IMPL(ASFWAudioNub, StartAudioStreaming)
                  "ADK FATAL StartAudioStreaming direct memory not ready guid=0x%016llx",
                  ivars->guid);
         return kIOReturnNotReady;
-    }
-
-    // Auto-start gating (Info.plist + runtime), useful for debugging discovery without streams.
-    if (!ASFW::LogConfig::Shared().IsAudioAutoStartEnabled()) {
-        ASFW_LOG(Audio,
-                 "ASFWAudioNub: StartAudioStreaming skipped (auto-start disabled) GUID=0x%016llx",
-                 ivars->guid);
-        return kIOReturnSuccess;
     }
 
     // A bus reset invalidates the registry node mapping before its delayed ROM

@@ -7,7 +7,6 @@
 //
 
 #include "ASFWDriverUserClient.h"
-#include "../../Logging/LogConfig.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Shared/DriverVersionInfo.hpp"
 #include "../../Version/DriverVersion.hpp"
@@ -42,19 +41,16 @@ enum {
     kMethodGetDiscoveredDevices = 16,
     kMethodAsyncCompareSwap = 17,
     kMethodGetDriverVersion = 18,
-    kMethodSetAsyncVerbosity = 19,
-    kMethodSetHexDumps = 20,
-    kMethodGetLogConfig = 21,
+    // 19-21 retired (were the async verbosity, hex dumps and log config; see 72/73).
     kMethodGetAVCUnits = 22,
     kMethodGetSubunitCapabilities = 23,
     kMethodGetSubunitDescriptor = 24,
     kMethodReScanAVCUnits = 25,
     kMethodSendRawFCPCommand = 38,
     kMethodGetRawFCPCommandResult = 39,
-    kMethodSetIsochVerbosity = 40,
+    // 40 retired (was the isoch verbosity; see 72/73).
     // 41 retired (was the dev TX-verifier toggle)
-    kMethodSetAudioAutoStart = 42,
-    kMethodGetAudioAutoStart = 43,
+    // 42/43 retired (were the audio auto-start switch, which had no client).
     kMethodAsyncBlockRead = 44,
     kMethodAsyncBlockWrite = 45,
     // SBP2 address space management
@@ -84,6 +80,9 @@ enum {
     kMethodRequestDeviceSettings = 69,
     kMethodGetDeviceSettingsResult = 70,
     // 71 retired (was the MOTU stream-start experiments, b92-b110).
+    // The log level (Logging/LogLevels.hpp): set from a spec, and read back.
+    kMethodSetLogLevel = 72,
+    kMethodGetLogLevel = 73,
     // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
     kMethodTestIRMAllocation = 26,
     kMethodTestIRMRelease = 27,
@@ -257,72 +256,28 @@ kern_return_t HandleGetDriverVersion(IOUserClientMethodArguments* arguments) {
     return kIOReturnSuccess;
 }
 
-MethodDispatchResult DispatchDriverScalarSetters(ASFWDriver& driver,
-                                                 IOUserClientMethodArguments* arguments,
-                                                 uint64_t selector) {
-    const auto value = GetFirstScalarInput(arguments);
-    switch (selector) {
-    case kMethodSetAsyncVerbosity:
-        return value ? MethodDispatchResult{driver.SetAsyncVerbosity(*value)}
-                     : MethodDispatchResult{kIOReturnBadArgument};
-    case kMethodSetIsochVerbosity:
-        return value ? MethodDispatchResult{driver.SetIsochVerbosity(*value)}
-                     : MethodDispatchResult{kIOReturnBadArgument};
-    case kMethodSetHexDumps:
-        return value ? MethodDispatchResult{driver.SetHexDumps(*value)}
-                     : MethodDispatchResult{kIOReturnBadArgument};
-    case kMethodSetAudioAutoStart:
-        return value ? MethodDispatchResult{driver.SetAudioAutoStart(*value)}
-                     : MethodDispatchResult{kIOReturnBadArgument};
-    default:
-        return std::nullopt;
+// Selectors 72 and 73: both answer with the level in force (LogLevelWire).
+kern_return_t HandleLogLevel(IOUserClientMethodArguments* arguments, bool set) {
+    if (set) {
+#ifdef ASFW_HOST_TEST
+        auto* input = static_cast<OSData*>(arguments->structureInput);
+#else
+        auto* input = OSDynamicCast(OSData, arguments->structureInput);
+#endif
+        if (input == nullptr ||
+            !ASFW::Logging::ApplyLogLevelRequest(input->getBytesNoCopy(), input->getLength())) {
+            return kIOReturnBadArgument;
+        }
     }
-}
-
-kern_return_t HandleGetAudioAutoStart(ASFWDriver& driver,
-                                      IOUserClientMethodArguments* arguments) {
-    if (!arguments->scalarOutput || arguments->scalarOutputCount < 1) {
-        return kIOReturnBadArgument;
+    ASFW::Logging::LogLevelWire state{};
+    ASFW::Logging::CopyLogLevelState(state);
+    OSData* data = OSData::withBytes(&state, sizeof(state));
+    if (data == nullptr) {
+        return kIOReturnNoMemory;
     }
-
-    uint32_t enabled = 0;
-    const kern_return_t kr = driver.GetAudioAutoStart(&enabled);
-    if (kr == kIOReturnSuccess) {
-        arguments->scalarOutput[0] = enabled;
-        arguments->scalarOutputCount = 1;
-    }
-    return kr;
-}
-
-kern_return_t HandleGetLogConfig(ASFWDriver& driver,
-                                 IOUserClientMethodArguments* arguments) {
-    if (!arguments->scalarOutput || arguments->scalarOutputCount < 2) {
-        return kIOReturnBadArgument;
-    }
-
-    uint32_t asyncVerbosity = 0;
-    uint32_t hexDumpsEnabled = 0;
-    uint32_t isochVerbosity = 0;
-    const kern_return_t kr =
-        driver.GetLogConfig(&asyncVerbosity, &hexDumpsEnabled, &isochVerbosity);
-    if (kr != kIOReturnSuccess) {
-        return kr;
-    }
-
-    arguments->scalarOutput[0] = asyncVerbosity;
-    arguments->scalarOutput[1] = hexDumpsEnabled;
-    if (arguments->scalarOutputCount >= 4) {
-        arguments->scalarOutput[2] = isochVerbosity;
-        arguments->scalarOutput[3] = 0;  // reserved (was the removed dev TX-verifier flag)
-        arguments->scalarOutputCount = 4;
-    } else if (arguments->scalarOutputCount >= 3) {
-        arguments->scalarOutput[2] = isochVerbosity;
-        arguments->scalarOutputCount = 3;
-    } else {
-        arguments->scalarOutputCount = 2;
-    }
-
-    return kr;
+    arguments->structureOutput = data;
+    arguments->structureOutputDescriptor = nullptr;
+    return kIOReturnSuccess;
 }
 
 MethodDispatchResult DispatchDriverControlMethods(ASFWDriver& driver,
@@ -330,12 +285,6 @@ MethodDispatchResult DispatchDriverControlMethods(ASFWDriver& driver,
                                                   uint64_t selector) {
     if (selector == kMethodGetDriverVersion) {
         return HandleGetDriverVersion(arguments);
-    }
-
-    if (const auto setterResult =
-            DispatchDriverScalarSetters(driver, arguments, selector);
-        setterResult.has_value()) {
-        return setterResult;
     }
 
     switch (selector) {
@@ -349,10 +298,9 @@ MethodDispatchResult DispatchDriverControlMethods(ASFWDriver& driver,
                                         ? driver.StartAudioStreaming(*guid)
                                         : driver.StopAudioStreaming(*guid)};
     }
-    case kMethodGetAudioAutoStart:
-        return HandleGetAudioAutoStart(driver, arguments);
-    case kMethodGetLogConfig:
-        return HandleGetLogConfig(driver, arguments);
+    case kMethodSetLogLevel:
+    case kMethodGetLogLevel:
+        return HandleLogLevel(arguments, selector == kMethodSetLogLevel);
     default:
         return std::nullopt;
     }

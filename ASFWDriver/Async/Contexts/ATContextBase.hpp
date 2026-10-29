@@ -20,7 +20,6 @@
 #include "../Track/TxCompletion.hpp"
 #include "../../Hardware/OHCIConstants.hpp"
 #include "../../Logging/Logging.hpp"
-#include "../../Logging/LogConfig.hpp"
 #include "../Engine/ATTrace.hpp"
 
 namespace ASFW::Async {

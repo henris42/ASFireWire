@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <DriverKit/DriverKit.h>
 #include "../Logging/Logging.hpp"
-#include "../Logging/LogConfig.hpp"
 
 namespace ASFW::Discovery {
 

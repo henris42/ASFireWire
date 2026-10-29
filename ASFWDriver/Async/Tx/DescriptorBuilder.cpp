@@ -11,7 +11,6 @@
 #include "../../Shared/Rings/DescriptorRing.hpp"
 #include "../../Hardware/OHCIDescriptors.hpp"
 #include "../../Logging/Logging.hpp"
-#include "../../Logging/LogConfig.hpp"
 
 namespace ASFW::Async {
 

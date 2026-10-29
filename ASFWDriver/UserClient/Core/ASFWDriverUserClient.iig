@@ -41,17 +41,14 @@ public:
         kMethodGetDiscoveredDevices    = 16,
         kMethodAsyncCompareSwap        = 17,
         kMethodGetDriverVersion        = 18,
-        kMethodSetAsyncVerbosity       = 19,
-        kMethodSetHexDumps             = 20,
-        kMethodGetLogConfig            = 21,
+        // 19-21 retired (were the async verbosity, hex dumps and log config; see 72/73).
         kMethodGetAVCUnits             = 22,
         // Note: 23, 24, 25 defined in .cpp only (GetSubunitCapabilities, GetSubunitDescriptor, ReScanAVCUnits)
         kMethodSendRawFCPCommand       = 38,
         kMethodGetRawFCPCommandResult  = 39,
-        kMethodSetIsochVerbosity       = 40,
+        // 40 retired (was the isoch verbosity; see 72/73).
         // 41 retired (was the dev TX-verifier toggle)
-        kMethodSetAudioAutoStart       = 42,
-        kMethodGetAudioAutoStart       = 43,
+        // 42/43 retired (were the audio auto-start switch).
         kMethodAsyncBlockRead          = 44,
         kMethodAsyncBlockWrite         = 45,
         // SBP2 address space management
@@ -81,6 +78,9 @@ public:
         kMethodGetAudioObserverState = 67,
         // One page of a unit's versioned discovery document (AVCDiscoveryDocument.hpp).
         kMethodGetAVCDiscoveryDocument = 68,
+        // The log level (Logging/LogLevels.hpp, LogLevelWire): set, and read back.
+        kMethodSetLogLevel             = 72,
+        kMethodGetLogLevel             = 73,
         // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
         kMethodTestIRMAllocation       = 26,
         kMethodTestIRMRelease          = 27,

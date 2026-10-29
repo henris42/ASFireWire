@@ -6,7 +6,7 @@
 #include "../../Hardware/IEEE1394.hpp"
 #include "../../Debug/BusResetPacketCapture.hpp"
 #include "../../Phy/PhyPackets.hpp"
-#include "../../Logging/LogConfig.hpp"
+#include "../../Logging/Logging.hpp"
 #include "../../Common/DMASafeCopy.hpp"
 #include "../../Common/FWCommon.hpp"
 #include "../ResponseCode.hpp"
