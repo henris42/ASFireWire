@@ -506,6 +506,40 @@ struct AudioTransportControlBlock final {
     std::atomic<uint64_t> playbackRingDiscontinuityGeneration{0};
     std::atomic<uint64_t> playbackRingUnderruns{0};
     std::atomic<uint64_t> playbackRingOverruns{0};
+    // The first CoreAudio writes of a start as the IO handler received them,
+    // and the largest span any write reported. Logged when the wire stops, so
+    // a start can be checked for a first write that claims more than one IO
+    // buffer (b146: a cold start replayed the previous session's output).
+    static constexpr uint32_t kOutputWriteLogDepth = 4;
+    std::array<std::atomic<uint64_t>, kOutputWriteLogDepth> outputWriteLogSample{};
+    std::array<std::atomic<uint32_t>, kOutputWriteLogDepth> outputWriteLogFrames{};
+    std::atomic<uint32_t> outputWriteLogCount{0};
+    std::atomic<uint32_t> outputWriteMaxFrames{0};
+
+    // IO thread only (the IO handler's WriteEnd).
+    void RecordOutputWrite(uint64_t sampleFrame, uint32_t frameCount) noexcept {
+        const uint32_t logged = outputWriteLogCount.load(std::memory_order_relaxed);
+        if (logged < kOutputWriteLogDepth) {
+            outputWriteLogSample[logged].store(sampleFrame, std::memory_order_relaxed);
+            outputWriteLogFrames[logged].store(frameCount, std::memory_order_relaxed);
+            outputWriteLogCount.store(logged + 1, std::memory_order_release);
+        }
+        if (frameCount > outputWriteMaxFrames.load(std::memory_order_relaxed)) {
+            outputWriteMaxFrames.store(frameCount, std::memory_order_relaxed);
+        }
+    }
+
+    void ResetOutputWriteLog() noexcept {
+        for (auto& sample : outputWriteLogSample) {
+            sample.store(0, std::memory_order_relaxed);
+        }
+        for (auto& frames : outputWriteLogFrames) {
+            frames.store(0, std::memory_order_relaxed);
+        }
+        outputWriteMaxFrames.store(0, std::memory_order_relaxed);
+        outputWriteLogCount.store(0, std::memory_order_release);
+    }
+
     std::atomic<uint32_t> txCurrentCommittedMarginPackets{0};
     std::atomic<uint32_t> txMinimumPreparationDistance{UINT32_MAX};
     std::atomic<uint32_t> txMinimumCommittedMarginPackets{UINT32_MAX};
@@ -676,6 +710,7 @@ struct AudioTransportControlBlock final {
         playbackRingDiscontinuityGeneration.store(0, std::memory_order_relaxed);
         playbackRingUnderruns.store(0, std::memory_order_relaxed);
         playbackRingOverruns.store(0, std::memory_order_relaxed);
+        ResetOutputWriteLog();
         txCurrentCommittedMarginPackets.store(0, std::memory_order_relaxed);
         txMinimumPreparationDistance.store(UINT32_MAX, std::memory_order_relaxed);
         txMinimumCommittedMarginPackets.store(

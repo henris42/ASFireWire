@@ -68,6 +68,7 @@ bool HandleOutputWriteEnd(ASFWAudioDriver_IVars& ivars,
     if (ioBufferFrameSize > ivars.runtime.directAudioGraph.memory.outputFrameCapacity) {
         return false;
     }
+    control.RecordOutputWrite(sampleTime, ioBufferFrameSize);
     control.client.PublishWriteEnd(sampleTime, hostTime, ioBufferFrameSize);
     PublishPlaybackRingWriteEnd(ivars.runtime.directAudioGraph, control);
 

@@ -129,6 +129,33 @@ void RunOnWorkQueue(ASFWAudioDriver_IVars& ivars, IODispatchBlock block) noexcep
            ivars.runtime.txSlotProvider.queueControl != nullptr;
 }
 
+// The first CoreAudio writes of this IO session and the playback range's
+// discontinuities, on every HAL StopIO. b146: a cold start replayed the
+// previous session's output for about one ring after CoreAudio's first write,
+// as if that write had claimed the whole ring.
+void LogOutputWrites(const ASFWAudioDriver_IVars& ivars) noexcept {
+    const auto* control = ivars.runtime.directAudioGraph.control;
+    if (control == nullptr) {
+        return;
+    }
+    constexpr uint32_t kDepth = ASFW::Audio::Runtime::AudioTransportControlBlock::kOutputWriteLogDepth;
+    static_assert(kDepth == 4, "the log line prints four writes");
+    const uint32_t logged = control->outputWriteLogCount.load(std::memory_order_acquire);
+    uint64_t sample[kDepth]{};
+    uint32_t frames[kDepth]{};
+    for (uint32_t i = 0; i < logged && i < kDepth; ++i) {
+        sample[i] = control->outputWriteLogSample[i].load(std::memory_order_relaxed);
+        frames[i] = control->outputWriteLogFrames[i].load(std::memory_order_relaxed);
+    }
+    ASFW_LOG(DirectAudio,
+             "[OutputWrites] guid=0x%016llx first=%llu/%u %llu/%u %llu/%u %llu/%u maxFrames=%u "
+             "discont=%llu overruns=%llu",
+             ivars.device.guid, sample[0], frames[0], sample[1], frames[1], sample[2], frames[2],
+             sample[3], frames[3], control->outputWriteMaxFrames.load(std::memory_order_relaxed),
+             control->playbackRingDiscontinuityGeneration.load(std::memory_order_relaxed),
+             control->playbackRingOverruns.load(std::memory_order_relaxed));
+}
+
 // Stop the wire and release the audio-owned TX slabs. The body StopIO always
 // had, minus the HAL's own StopIO: also used to drop a kept wire nobody else
 // will stop (rate change, IO restart, fault, driver stop). On a failed remote
@@ -268,6 +295,7 @@ void ResetClientWriteSide(ASFWAudioDriver_IVars& ivars,
     control.playbackRingWriteFrame.store(0, std::memory_order_relaxed);
     control.playbackRingReadFrame.store(0, std::memory_order_relaxed);
     control.playbackRingOldestValidFrame.store(0, std::memory_order_release);
+    control.ResetOutputWriteLog();
     ivars.runtime.txFilledFrameEnd = 0;
     ivars.runtime.txPlacementLogged = false;
     ivars.runtime.ioDebugCallbacks.store(0, std::memory_order_relaxed);
@@ -999,6 +1027,7 @@ kern_return_t ASFWAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags) {
         using ASFW::Audio::Runtime::WireState;
         using ASFW::Audio::Runtime::WireStopPlan;
         ivars.runtime.isRunning.store(false, std::memory_order_release);
+        LogOutputWrites(ivars);
 
         // Keep the wire when the profile opts in and it is sound
         // (Runtime/WireRetention.hpp; AppleFWAudio's engine stop leaves the
