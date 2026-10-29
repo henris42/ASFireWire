@@ -13,6 +13,7 @@
 
 #include "ASFWAudioDevice.h"
 #include "ASFWAudioDriverPrivate.hpp"
+#include "AdkPropertySerialization.hpp"
 #include "../../Logging/Logging.hpp"
 #include "Config/AudioProfileRegistry.hpp"
 #include "Config/ResolvedStreamConfig.hpp"
@@ -44,6 +45,11 @@ struct ASFWAudioDevice_IVars {
     // Whether the wire outlives CoreAudio IO (Runtime/WireRetention.hpp).
     // Touched only on the driver's work queue (RunOnWorkQueue).
     ASFW::Audio::Runtime::WireRetention wire{};
+    // The UIDs given to init, which AudioDriverKit keeps but has no getter
+    // for: the model and manufacturer reads are answered from these
+    // (AdkPropertySerialization.hpp).
+    OSSharedPtr<OSString> modelUid;
+    OSSharedPtr<OSString> manufacturerUid;
 };
 
 bool ASFWAudioDevice::init(IOUserAudioDriver* in_driver,
@@ -63,6 +69,8 @@ bool ASFWAudioDevice::init(IOUserAudioDriver* in_driver,
         ASFW_LOG(Audio, "ASFWAudioDevice::init - failed to allocate ivars");
         return false;
     }
+    ivars->modelUid = OSSharedPtr(in_model_uid, OSRetain);
+    ivars->manufacturerUid = OSSharedPtr(in_manufacturer_uid, OSRetain);
     ivars->rateLock = IOLockAlloc();
     return ivars->rateLock != nullptr;
 }
@@ -82,6 +90,52 @@ void ASFWAudioDevice::SetDriverIvars(ASFWAudioDriver_IVars* ivars) {
         this->ivars->driverIvars = ivars;
         if (!ivars) this->ivars->rateUnavailable.store(true, std::memory_order_release);
     }
+}
+
+namespace {
+
+// The string AudioDriverKit would serialize for `address` when this build
+// answers the read itself: the object and element names, and the device's
+// UIDs (AdkPropertySerialization.hpp). Null leaves the read to super.
+OSSharedPtr<OSString> LeakProneDeviceString(ASFWAudioDevice& device, const ASFWAudioDevice_IVars* ivars,
+                                            const IOUserAudioObjectPropertyAddress* address) {
+    namespace Adk = ASFW::Audio::DriverKit;
+    if (auto value = Adk::LeakProneObjectString(device, address)) {
+        return value;
+    }
+    if (!Adk::kAnswerSerializedProperties || address == nullptr || ivars == nullptr) {
+        return nullptr;
+    }
+    switch (address->mSelector) {
+    case Adk::kAdkSelectorDeviceUID:
+        return device.GetUID();
+    case Adk::kAdkSelectorModelUID:
+        return ivars->modelUid;
+    case Adk::kAdkSelectorManufacturer:
+        return ivars->manufacturerUid;
+    default:
+        return nullptr;
+    }
+}
+
+} // namespace
+
+kern_return_t ASFWAudioDevice::_GetPropertySize(const IOUserAudioObjectPropertyAddress* in_prop_addr,
+                                                OSData* in_qualifier_data,
+                                                size_t* out_size) {
+    if (const auto value = LeakProneDeviceString(*this, ivars, in_prop_addr)) {
+        return ASFW::Audio::DriverKit::AnswerPropertySize(value.get(), out_size);
+    }
+    return super::_GetPropertySize(in_prop_addr, in_qualifier_data, out_size);
+}
+
+kern_return_t ASFWAudioDevice::_GetPropertyData(const IOUserAudioObjectPropertyAddress* in_prop_addr,
+                                                OSData* in_qualifier_data,
+                                                OSData** out_data) {
+    if (const auto value = LeakProneDeviceString(*this, ivars, in_prop_addr)) {
+        return ASFW::Audio::DriverKit::AnswerPropertyData(value.get(), out_data);
+    }
+    return super::_GetPropertyData(in_prop_addr, in_qualifier_data, out_data);
 }
 
 namespace {

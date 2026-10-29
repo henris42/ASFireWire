@@ -24,3 +24,10 @@
 #define ASFW_HAS_ADK_RESTORE_AND_LATENCY (ASFW_DRIVERKIT_MIN >= 250000)
 //   IOUserSCSIParallelInterfaceController bundled-task dispatch
 #define ASFW_HAS_SCSI_BUNDLED_TASKS (ASFW_DRIVERKIT_MIN >= 250000)
+
+// AudioDriverKit serializes an object-valued property (a name, an element
+// name, a UID) with OSSerialization and keeps the buffer finalizeBuffer()
+// hands to its caller: one leaked page or more per read in DriverKit 21
+// (macOS 12.7.6). DriverKit 25 frees it (OSSerialization::freeBuffer); 22-24
+// unchecked, so assume the leak until 25 (Audio/DriverKit/AdkPropertySerialization.hpp).
+#define ASFW_ADK_LEAKS_SERIALIZED_PROPERTIES (ASFW_DRIVERKIT_MIN < 250000)
