@@ -1754,6 +1754,23 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                          ivars->runtime.txReplayReader.IsActive() ? 1U : 0U,
                          directControl->rxSequenceReplay.IsEstablished() ? 1U : 0U);
             }
+            // Whether CoreAudio runs IO on the started device at all, beside
+            // the zero timestamps handed to it: callbacks stuck at 0 while zts
+            // climbs and ztsAgeMs stays under a period is the HAL not cycling
+            // (b152: f717 at 96 kHz after refused 44.1/88.2 kHz starts).
+            {
+                const uint64_t ztsHost =
+                    ivars->runtime.lastHalZeroTimestampHostTicks.load(std::memory_order_relaxed);
+                ASFW_LOG(DirectAudio,
+                         "[HalIo] callbacks=%llu outsideRun=%llu zts=%llu ztsFrame=%llu ztsAgeMs=%llu",
+                         ivars->runtime.ioDebugCallbacks.load(std::memory_order_relaxed),
+                         ivars->runtime.ioCallbacksOutsideRun.load(std::memory_order_relaxed),
+                         directControl->hostClockAnchor.mirrorPublications.load(std::memory_order_relaxed),
+                         ivars->runtime.lastHalZeroTimestampSampleFrame.load(std::memory_order_relaxed),
+                         ztsHost != 0 && now > ztsHost
+                             ? ASFW::Timing::hostTicksToNanos(now - ztsHost) / 1000000
+                             : 0ULL);
+            }
             // Cadence per interval: at 48 kHz blocking the device-replayed
             // pattern is 6 DATA : 2 NO-DATA per 8 cycles (6000 data packets/s
             // of 8 frames); 8:0 would push 64 000 frames/s (b92 report §2).
