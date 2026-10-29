@@ -17,9 +17,7 @@
 namespace ASFW::Shared {
 
 namespace {
-// Smallest page size of any supported Mac; a region at most this large that
-// is aligned to its own size is physically contiguous on 4 KiB and 16 KiB pages.
-constexpr size_t kPageGranule = 4096;
+constexpr size_t kPageGranule = DMAMemoryManager::kPageGranule;
 } // namespace
 
 DMAMemoryManager::~DMAMemoryManager() { Reset(); }
@@ -253,7 +251,7 @@ std::optional<DMAMemoryManager::Region> DMAMemoryManager::AllocateRegion(size_t 
     // its own size so it cannot straddle one and stays physically contiguous;
     // a larger region starts on a page and is contiguous per page only.
     const bool paged = alignedSize > kPageGranule;
-    alignment = std::max(alignment, paged ? kPageGranule : std::bit_ceil(alignedSize));
+    alignment = RegionAlignment(alignedSize, alignment);
 
     // Align cursor to requested alignment
     size_t alignedCursor = (cursor_ + (alignment - 1)) & ~(alignment - 1);

@@ -71,6 +71,13 @@ add_async_test(ATManagerHotAppendTests
     "${ASFW_DRIVER_DIR}/Shared/Rings/DescriptorRing.cpp"
 )
 
+# DMA slab layout: a slab sized with LayoutSize holds every region and its padding
+add_async_test(DMASlabLayoutTests
+    DMASlabLayoutTests.cpp
+    "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
+    "${ASFW_DRIVER_DIR}/Shared/Memory/DMAMemoryManager.cpp"
+)
+
 add_async_test(ATCompletionScanTests
     ATCompletionScanTests.cpp
     "${ASFW_DRIVER_DIR}/Async/Engine/ATTrace.cpp"

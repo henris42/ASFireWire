@@ -142,8 +142,13 @@ kern_return_t ContextManager::provision(ASFW::Driver::HardwareInterface& hw,
     const size_t arRspDataBytes = align16(spec.arRespBufCount  * spec.arRespBufSize);
     const size_t atRspScratchBytes = align16(spec.atRespScratchBytes);
 
-    const size_t totalSize = atReqBytes + atRspBytes + arReqBytes + arRspBytes
-                           + arReqDataBytes + arRspDataBytes + atRspScratchBytes;
+    // In allocation order, with the padding AllocateRegion() puts before each
+    // region. The plain sum came up 1024 bytes short with the default spec, so
+    // ResponseSender's lock scratch (allocated last) never fit, and every lock
+    // response the host sends went out as Busy.
+    const size_t totalSize = DMAMemoryManager::LayoutSize(
+        {atReqBytes, atRspBytes, arReqBytes, arRspBytes, arReqDataBytes, arRspDataBytes,
+         atRspScratchBytes});
 
     if (totalSize == 0) {
         ASFW_LOG_ERROR(Async, "ContextManager::provision: totalSize computed as 0 – refusing to init DMA slab");

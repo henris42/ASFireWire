@@ -1,7 +1,10 @@
 #pragma once
 
+#include <algorithm>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -115,6 +118,34 @@ public:
      *          The entire slab is released on destruction.
      */
     [[nodiscard]] std::optional<Region> AllocateRegion(size_t size, size_t alignment = 16);
+
+    /// Smallest page size of any supported Mac. A region at most this large
+    /// that is aligned to its own size is physically contiguous on 4 KiB and
+    /// 16 KiB pages.
+    static constexpr size_t kPageGranule = 4096;
+
+    /// The start alignment AllocateRegion() gives a region of `alignedSize`
+    /// bytes: its own size rounded up to a power of two when it fits in a page
+    /// (so it cannot straddle one), otherwise a page; at least `requested`.
+    [[nodiscard]] static constexpr size_t RegionAlignment(size_t alignedSize,
+                                                          size_t requested = 16) noexcept {
+        const size_t natural = alignedSize > kPageGranule ? kPageGranule : std::bit_ceil(alignedSize);
+        return std::max({requested, natural, size_t{16}});
+    }
+
+    /// The slab bytes that AllocateRegion() calls for `sizes`, in that order,
+    /// take with their alignment padding. A slab sized as the plain sum of the
+    /// regions comes up short by that padding.
+    [[nodiscard]] static constexpr size_t LayoutSize(std::initializer_list<size_t> sizes) noexcept {
+        size_t cursor = 0;
+        for (const size_t size : sizes) {
+            const size_t alignedSize = AlignSize(size);
+            const size_t alignment = RegionAlignment(alignedSize);
+            cursor = (cursor + alignment - 1) & ~(alignment - 1);
+            cursor += alignedSize;
+        }
+        return cursor;
+    }
 
     /**
      * \brief Align the current cursor to a boundary.
