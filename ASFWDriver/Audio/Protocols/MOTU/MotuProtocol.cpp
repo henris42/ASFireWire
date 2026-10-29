@@ -421,9 +421,11 @@ void MotuProtocol::ReadOpticalGeometry(CompletionCallback callback) {
             }
             opticalSnapshot_.store((uint64_t{1} << 32) | optRaw, std::memory_order_release);
             // Optical modes: 0 off, 1 ADAT, 2 S/PDIF. Reserved encodings refuse publication.
+            // This is a register read, not a publication of the device: the
+            // b146 report took "published" for a re-publish at the first IO.
             ASFW_LOG(Audio,
                      "[MotuGeometry] optical config opt=0x%08x in=%u out=%u decoded=%u -> "
-                     "published txChunks=%u rxChunks=%u (rate mode %u)",
+                     "txChunks=%u rxChunks=%u at the device's current rate (mode %u)",
                      optRaw, static_cast<unsigned>(chunks.inputMode),
                      static_cast<unsigned>(chunks.outputMode), chunks.opticalDecoded ? 1U : 0U,
                      chunks.tx, chunks.rx, mode);
