@@ -150,6 +150,12 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     uint32_t bootstrapResetLogBudget_{kBootstrapResetLogBudget};
     bool replayCycleInitialized_{false};
     uint32_t lastReplayCycleOrdinal_{0};
+    // The previous packet's CIP data block counter and block count: across a
+    // receive cycle gap, a continuous counter means the device lost no data
+    // (the gap is in the timing), a jump means blocks were lost on the wire.
+    uint8_t lastDbc_{0};
+    uint32_t lastBlocks_{0};
+    bool lastDbcValid_{false};
     uint32_t headerlessContinuousCycles_{0};
     ::ASFW::Isoch::Rx::ZtsTelemetryLogGate ztsTelemetryLogGate_{};
     uint64_t prevLoggedAnchorFrame_{0};

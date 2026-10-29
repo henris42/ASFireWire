@@ -85,6 +85,7 @@ uint64_t DirectAudioReceiveConsumer::UnwrapDrainBusTicks(uint32_t drainCycleTime
 }
 
 void DirectAudioReceiveConsumer::OnReceiveActivated() noexcept {
+    lastDbcValid_ = false;
     secondaryAnchored_ = false;
     secondaryAnchorEpoch_ = 0;
     absoluteFrameCursor_ = 0;
@@ -113,6 +114,7 @@ void DirectAudioReceiveConsumer::OnReceiveActivated() noexcept {
 }
 
 void DirectAudioReceiveConsumer::OnReceiveQuiesced() noexcept {
+    lastDbcValid_ = false;
     // The transport has observed OHCI ACTIVE clear before this callback. It is
     // now safe to release views into the audio-owned binding on a later rebind.
     if (timingObserver_ != nullptr) {
@@ -463,13 +465,17 @@ void DirectAudioReceiveConsumer::ConsumePacket(
                     // ring's wrap, txPackets mod 504 reads the same every time.
                     const uint64_t txPackets =
                         inputView_.control->counters.txPackets.load(std::memory_order_relaxed);
+                    const uint8_t dbcExpected = static_cast<uint8_t>(lastDbc_ + lastBlocks_);
+                    const bool dbcKnown = lastDbcValid_ && result.hasValidCip;
                     ASFW_LOG(DirectAudio,
                              "[RxCycleGap] count=%llu cycles=%u desc=%u bytes=%zu expected=%u observed=%u "
-                             "frame=%llu txPackets=%llu txSlot=%llu rawTs=0x%04x; re-anchored, not restarted",
+                             "frame=%llu txPackets=%llu txSlot=%llu rawTs=0x%04x dbcPrev=0x%02x "
+                             "blocksPrev=%u dbcNow=0x%02x lostBlocks=%d; re-anchored, not restarted",
                              gaps, cycleDelta - 1U, packet.descriptorIndex, packet.payload.size(),
                              (lastReplayCycleOrdinal_ + 1) % kCycleDomain, cycleOrdinal,
                              absoluteFrameCursor_, txPackets, txPackets % 504ULL,
-                             result.receiveCycleTimestamp);
+                             result.receiveCycleTimestamp, lastDbc_, lastBlocks_, result.dbc,
+                             dbcKnown ? static_cast<int>(static_cast<uint8_t>(result.dbc - dbcExpected)) : -1);
                 }
             }
             ResetReplayEpochForDiscontinuity(
@@ -492,6 +498,11 @@ void DirectAudioReceiveConsumer::ConsumePacket(
     }
     lastReplayCycleOrdinal_ = cycleOrdinal;
     replayCycleInitialized_ = true;
+    if (result.hasValidCip) {
+        lastDbc_ = result.dbc;
+        lastBlocks_ = result.framesDecoded;
+        lastDbcValid_ = true;
+    }
 
     if (inputView_.control == nullptr) {
         return;
