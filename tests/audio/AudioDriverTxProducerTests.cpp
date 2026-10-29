@@ -39,6 +39,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -325,6 +326,10 @@ public:
     void FillOutputRing(float value) { std::fill(outputRing_.begin(), outputRing_.end(), value); }
     [[nodiscard]] const std::vector<float>& OutputRing() const { return outputRing_; }
     [[nodiscard]] uint32_t RingFrames() const { return ringFrames_; }
+    // StopIO: CoreAudio writes no more, and the transport keeps sending.
+    void StopHostOutput() { hostPlan_.reset(); }
+    // Packets the transport has sent; the hardware is on the next one.
+    [[nodiscard]] uint64_t Completed() const { return completed_; }
 
     [[nodiscard]] uint32_t SampleRate() const { return sampleRate_; }
     [[nodiscard]] uint32_t PcmChannels() const { return pcmChannels_; }
@@ -1863,6 +1868,257 @@ TEST(TxOwnershipLifecycle, TheFillClearsTheFramesItCopied) {
     for (uint64_t frame = read; frame < written; ++frame) {
         ASSERT_FALSE(frameIsSilent(frame)) << "frame " << frame << " cleared before it was copied";
     }
+}
+
+// The 24-bit value CoreAudio wrote for `channel` of `frame` (SampleTag).
+double TagValue(uint64_t frame, uint32_t channel) {
+    return 1.0 + static_cast<double>(frame % kTagFrameModulo) * 16.0 + channel;
+}
+
+// The 24-bit PCM value in AM824 slot `slot` of data block `block`.
+int32_t Am824Sample(const WirePacket& packet, uint32_t block, uint32_t dbs, uint32_t slot) {
+    int32_t value = static_cast<int32_t>(
+        packet.Quadlet(8 + (static_cast<size_t>(block) * dbs + slot) * 4) & 0x00FFFFFFu);
+    if (value & 0x00800000) {
+        value -= 0x01000000;
+    }
+    return value;
+}
+
+// The 24-bit PCM value of the MOTU chunk at byte `at`.
+int32_t MotuChunkSample(const WirePacket& packet, size_t at) {
+    int32_t value = (int32_t{packet.bytes[at]} << 16) | (int32_t{packet.bytes[at + 1]} << 8) |
+                    int32_t{packet.bytes[at + 2]};
+    if (value & 0x00800000) {
+        value -= 0x01000000;
+    }
+    return value;
+}
+
+// The frames a stream sent from `fromPacket` on, in frame order, each as the
+// gain its samples carry over what CoreAudio wrote (one gain per frame, the
+// same on every channel).
+struct StopTailTrace final {
+    uint64_t full{0};
+    uint64_t faded{0};
+    uint64_t silent{0};
+    uint64_t lastNonzeroPacket{0};
+    std::string failure;
+};
+
+// `isData` picks the DATA packets; `sample(packet, block, channel)` decodes one
+// sample. Frames from `heldFrom` on (past CoreAudio's last write) are measured
+// against its last frame, which the fade holds. The frames must go out as
+// written, then fading (the gain never rising), then silent for good.
+template <typename IsDataFn, typename SampleFn>
+StopTailTrace TraceStopTail(TxProducerRig& rig, uint64_t fromPacket, uint64_t heldFrom,
+                            IsDataFn&& isData, SampleFn&& sample) {
+    StopTailTrace trace;
+    const auto& timeline = rig.Ivars().runtime.txStreamEngine.Timeline();
+    double previousGain = 1.0;
+    for (const auto& packet : rig.Wire()) {
+        if (packet.index < fromPacket || !isData(packet)) {
+            continue;
+        }
+        const auto* slot = timeline.SlotByIndex(packet.index);
+        if (slot == nullptr || slot->packetIndex != packet.index || !slot->isData) {
+            trace.failure = "no DATA timeline slot for packet " + std::to_string(packet.index);
+            return trace;
+        }
+        for (uint32_t block = 0; block < slot->framesInPacket; ++block) {
+            const uint64_t frame = slot->firstAudioFrame + block;
+            const uint64_t source = frame < heldFrom ? frame : heldFrom - 1;
+            const double tolerance = 1.5 / TagValue(source, 0);
+            double gain = -1.0;
+            for (uint32_t ch = 0; ch < rig.PcmChannels(); ++ch) {
+                const double g = sample(packet, block, ch) / TagValue(source, ch);
+                if (gain < 0.0) {
+                    gain = g;
+                } else if (std::abs(g - gain) > tolerance) {
+                    trace.failure = "frame " + std::to_string(frame) + ": channels carry different gains";
+                    return trace;
+                }
+            }
+            if (gain > previousGain + tolerance) {
+                trace.failure = "frame " + std::to_string(frame) + ": gain rose to " +
+                                std::to_string(gain);
+                return trace;
+            }
+            if (gain <= tolerance) {
+                ++trace.silent;
+            } else if (gain >= 1.0 - tolerance) {
+                if (trace.faded != 0 || trace.silent != 0) {
+                    trace.failure = "frame " + std::to_string(frame) + ": full level after the fade";
+                    return trace;
+                }
+                ++trace.full;
+            } else {
+                if (trace.silent != 0) {
+                    trace.failure = "frame " + std::to_string(frame) + ": sound after silence";
+                    return trace;
+                }
+                ++trace.faded;
+            }
+            if (gain > tolerance) {
+                trace.lastNonzeroPacket = packet.index;
+            }
+            previousGain = gain;
+        }
+    }
+    return trace;
+}
+
+// b155: a stream cut mid-signal ended with CoreAudio's last samples on the
+// wire, and the 828mkII kept playing the last one as DC until the next start,
+// which then thumped. At StopIO the copied frames still ahead of the hardware
+// fade to zero over 2 ms, the rest of the tail is silenced, and every DATA
+// packet after the fade carries silence.
+TEST(TxStopTail, AStopFadesTheUnsentTailAndEndsInSilence) {
+    const ASFW::Isoch::Audio::DICE::DiceProfile profile{{.name = "Focusrite Saffire (DICE)"}};
+    TxProducerRig rig;
+    rig.SetResolvedPlayback({.pcmChannels = 8, .am824Slots = 9, .midiPorts = 1});
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::FocusriteSPro24Dsp, 48000));
+    rig.FeedBlockingRx(8);
+    rig.EnableHostOutput({.ioFrames = 512, .leadFrames = 560});
+    ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets)) << rig.DescribeFault();
+
+    rig.StopHostOutput();
+    const uint64_t stopPacket = rig.Completed();
+    const uint64_t lastWritten = rig.Ivars().runtime.txFilledFrameEnd;
+    const auto tail = ASFW::Audio::DriverKit::FadeTransmitTailToSilence(rig.Ivars());
+    ASSERT_TRUE(tail.audible);
+    EXPECT_EQ(tail.fadedFrames, 96U);  // 2 ms at 48 kHz
+    EXPECT_LE(tail.heldFrames, tail.fadedFrames);
+    EXPECT_EQ(tail.missedFrames, 0U);
+    EXPECT_GT(tail.peakQ24, 0U);
+    EXPECT_GT(tail.lastAudiblePacket, stopPacket);
+    ASSERT_TRUE(rig.RunPackets(400)) << rig.DescribeFault();
+
+    const uint32_t dbs = rig.Dbs();
+    const auto trace = TraceStopTail(
+        rig, stopPacket, lastWritten,
+        [](const WirePacket& packet) { return packet.bytes.size() > 8 && packet.IsData(); },
+        [dbs](const WirePacket& packet, uint32_t block, uint32_t ch) {
+            return Am824Sample(packet, block, dbs, ch);
+        });
+    ASSERT_TRUE(trace.failure.empty()) << trace.failure;
+    EXPECT_GT(trace.full, 0U) << "frames already on their way go out as written";
+    EXPECT_EQ(trace.faded, tail.fadedFrames - 1);  // the fade's last frame is zero
+    EXPECT_GT(trace.silent, tail.silencedFrames);  // then armed silence
+    EXPECT_EQ(trace.lastNonzeroPacket, tail.lastAudiblePacket);
+}
+
+// Right after a write most of CoreAudio's buffer is still ahead of the
+// hardware: the fade runs inside the written frames and the rest is zeroed.
+TEST(TxStopTail, AStopRightAfterAWriteZeroesWhatFollowsTheFade) {
+    const ASFW::Isoch::Audio::DICE::DiceProfile profile{{.name = "Focusrite Saffire (DICE)"}};
+    TxProducerRig rig;
+    rig.SetResolvedPlayback({.pcmChannels = 8, .am824Slots = 9, .midiPorts = 1});
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::FocusriteSPro24Dsp, 48000));
+    rig.FeedBlockingRx(8);
+    rig.EnableHostOutput({.ioFrames = 512, .leadFrames = 560});
+    ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets)) << rig.DescribeFault();
+    const uint64_t writes = rig.WriteEnds();
+    while (rig.WriteEnds() == writes) {
+        ASSERT_TRUE(rig.RunPackets(1)) << rig.DescribeFault();
+    }
+
+    rig.StopHostOutput();
+    const uint64_t stopPacket = rig.Completed();
+    const uint64_t lastWritten = rig.Ivars().runtime.txFilledFrameEnd;
+    const auto tail = ASFW::Audio::DriverKit::FadeTransmitTailToSilence(rig.Ivars());
+    ASSERT_TRUE(tail.audible);
+    EXPECT_EQ(tail.fadedFrames, 96U);
+    EXPECT_EQ(tail.heldFrames, 0U);
+    EXPECT_GT(tail.silencedFrames, 256U);
+    ASSERT_TRUE(rig.RunPackets(400)) << rig.DescribeFault();
+
+    const uint32_t dbs = rig.Dbs();
+    const auto trace = TraceStopTail(
+        rig, stopPacket, lastWritten,
+        [](const WirePacket& packet) { return packet.bytes.size() > 8 && packet.IsData(); },
+        [dbs](const WirePacket& packet, uint32_t block, uint32_t ch) {
+            return Am824Sample(packet, block, dbs, ch);
+        });
+    ASSERT_TRUE(trace.failure.empty()) << trace.failure;
+    EXPECT_GT(trace.full, 0U);
+    EXPECT_EQ(trace.faded, tail.fadedFrames - 1);
+    EXPECT_GT(trace.silent, tail.silencedFrames);
+    EXPECT_EQ(trace.lastNonzeroPacket, tail.lastAudiblePacket);
+}
+
+// The same end for an 828mkII stream, through the MOTU writer's chunks.
+TEST(TxStopTail, AMotuStreamEndsInSilenceToo) {
+    constexpr uint32_t kVersion = 0x3U;
+    const ASFW::Isoch::Audio::MOTU::Profiles::MotuProfile profile{kVersion};
+    TxProducerRig rig;
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::Motu828mk2, 48000));
+    rig.FeedMotuRx(8);
+    rig.EnableHostOutput({});
+    ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets)) << rig.DescribeFault();
+    ASSERT_FALSE(rig.Ivars().runtime.motuPayloadWriter.IsPcmMuted());
+
+    rig.StopHostOutput();
+    const uint64_t stopPacket = rig.Completed();
+    const uint64_t lastWritten = rig.Ivars().runtime.txFilledFrameEnd;
+    const auto tail = ASFW::Audio::DriverKit::FadeTransmitTailToSilence(rig.Ivars());
+    ASSERT_TRUE(tail.audible);
+    EXPECT_EQ(tail.fadedFrames, 96U);
+    EXPECT_EQ(tail.missedFrames, 0U);
+    ASSERT_TRUE(rig.RunPackets(400)) << rig.DescribeFault();
+
+    const uint32_t dbs = rig.Dbs();
+    const size_t dataBytes = 8 + 8 * dbs * 4;
+    const auto ports = ASFW::Encoding::Motu::EffectivePortMap(
+        profile.TxStreamPolicy().motuPlaybackPorts, rig.PcmChannels());
+    const size_t pcmAt = ASFW::Encoding::Motu::PcmByteOffset(kVersion);
+    const auto trace = TraceStopTail(
+        rig, stopPacket, lastWritten,
+        [dataBytes](const WirePacket& packet) { return packet.bytes.size() == dataBytes; },
+        [&](const WirePacket& packet, uint32_t block, uint32_t ch) {
+            return MotuChunkSample(packet, 8 + static_cast<size_t>(block) * dbs * 4 + pcmAt +
+                                               ASFW::Encoding::Motu::ChunkForHostChannel(ports, ch) *
+                                                   ASFW::Encoding::Motu::kBytesPerChunk);
+        });
+    ASSERT_TRUE(trace.failure.empty()) << trace.failure;
+    EXPECT_GT(trace.full, 0U);
+    EXPECT_EQ(trace.faded, tail.fadedFrames - 1);
+    EXPECT_GT(trace.silent, 0U);
+    EXPECT_EQ(trace.lastNonzeroPacket, tail.lastAudiblePacket);
+}
+
+// Once the last copied frame has gone out there is nothing left to fade; the
+// stop has nothing to wait for either.
+TEST(TxStopTail, ATailAlreadyOnTheWireIsLeftAsItIs) {
+    const ASFW::Isoch::Audio::DICE::DiceProfile profile{{.name = "Focusrite Saffire (DICE)"}};
+    TxProducerRig rig;
+    rig.SetResolvedPlayback({.pcmChannels = 8, .am824Slots = 9, .midiPorts = 1});
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::FocusriteSPro24Dsp, 48000));
+    rig.FeedBlockingRx(8);
+    rig.EnableHostOutput({.ioFrames = 512, .leadFrames = 560});
+    ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets)) << rig.DescribeFault();
+    rig.StopHostOutput();
+    ASSERT_TRUE(rig.RunPackets(200)) << rig.DescribeFault();
+
+    const auto tail = ASFW::Audio::DriverKit::FadeTransmitTailToSilence(rig.Ivars());
+    EXPECT_TRUE(tail.audible);
+    EXPECT_EQ(tail.fadedFrames, 0U);
+    EXPECT_EQ(tail.silencedFrames, 0U);
+    EXPECT_LT(tail.lastAudiblePacket, rig.Completed());
+}
+
+// A stream CoreAudio never wrote has no end to fade.
+TEST(TxStopTail, AStreamCoreAudioNeverWroteHasNoTail) {
+    const ASFW::Isoch::Audio::DICE::DiceProfile profile{{.name = "Focusrite Saffire (DICE)"}};
+    TxProducerRig rig;
+    rig.SetResolvedPlayback({.pcmChannels = 8, .am824Slots = 9, .midiPorts = 1});
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::FocusriteSPro24Dsp, 48000));
+    rig.FeedBlockingRx(8);
+    ASSERT_TRUE(rig.RunPackets(1000)) << rig.DescribeFault();
+
+    const auto tail = ASFW::Audio::DriverKit::FadeTransmitTailToSilence(rig.Ivars());
+    EXPECT_FALSE(tail.audible);
+    EXPECT_EQ(tail.fadedFrames + tail.silencedFrames, 0U);
 }
 
 TEST(AudioDriverTxProducerTests, SyntheticHeaderlessBootstrapTransitionsAtWritableBoundary) {

@@ -15,6 +15,9 @@
 //   window after it has been copied, and the whole ring at every start
 //   (ClearPlaybackRing), so a frame CoreAudio never wrote is silence rather
 //   than an older write.
+// - FadeTransmitTailToSilence, at StopIO, fades the copied frames still ahead
+//   of the hardware to zero and rewrites them, so the stream ends in silence
+//   (b155: the 828mkII holds the last sample it received).
 //
 // Both are called unchanged from the host TX tests.
 //
@@ -24,6 +27,7 @@
 #include "../../Common/TimingUtils.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #ifdef ASFW_HOST_TEST
 #include "../../Testing/HostDriverKitStubs.hpp"
@@ -268,6 +272,144 @@ void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars) noexcept {
     filled += hostBuffer.frameCount;
     ClearCopiedFrames(memory, cleared, filled, writtenEnd);
     control->playbackRingReadFrame.store(filled, std::memory_order_release);
+}
+
+namespace {
+
+// The stop's fade: 2 ms (rate / 500), at least 16 frames. Shorter when less
+// of the stream is still ahead of the hardware.
+constexpr uint32_t kStopFadeRateDivisor = 500;
+constexpr uint64_t kMinStopFadeFrames = 16;
+// Packets past the finality frontier where the stop looks for its first
+// frame, so the frontier cannot pass that frame before the rewrite runs.
+constexpr uint64_t kStopMarginPackets = 4;
+
+[[nodiscard]] uint64_t MissedFinalityFrames(const ASFWAudioDriver_IVars& ivars) noexcept {
+    return ivars.runtime.txStreamEngine.PayloadWriterCounters().framesMissedFinality.load(
+               std::memory_order_relaxed) +
+           ivars.runtime.motuPayloadWriter.Counters().framesMissedFinality.load(
+               std::memory_order_relaxed);
+}
+
+} // namespace
+
+uint64_t ProjectedTransmitPacket(const ASFWAudioDriver_IVars& ivars) noexcept {
+    const auto* queue = ivars.runtime.txSlotProvider.queueControl;
+    return queue != nullptr ? ProjectHardwarePacket(*queue, TxHostNow()) : 0;
+}
+
+TransmitTailSilence FadeTransmitTailToSilence(ASFWAudioDriver_IVars& ivars) noexcept {
+    TransmitTailSilence result{};
+    const auto* queue = ivars.runtime.txSlotProvider.queueControl;
+    const auto& memory = ivars.runtime.directAudioGraph.memory;
+    const uint64_t copiedEnd = ivars.runtime.txFilledFrameEnd;
+    const uint32_t channels = memory.outputChannels;
+    if (queue == nullptr || memory.outputBase == nullptr || channels == 0 ||
+        channels > ASFW::Audio::Runtime::kMaxHostPcmChannels ||
+        memory.outputFrameCapacity == 0 || copiedEnd == 0) {
+        return result;  // nothing was ever copied into a packet
+    }
+    auto& engine = ivars.runtime.txStreamEngine;
+    const auto& timeline = engine.Timeline();
+
+    // The last packet that carries a copied frame. Its slot retired means the
+    // stream's end went out long ago.
+    ASFW::Protocols::Audio::AMDTP::PacketSlotSnapshot last{};
+    if (!timeline.SnapshotSlotForAudioFrame(copiedEnd - 1, last)) {
+        return result;
+    }
+    result.audible = true;
+    result.lastAudiblePacket = last.packetIndex;
+
+    // The fade's first frame: the first kept frame whose packet the writer can
+    // still reach, at the latest the frame after the last copied one. Any
+    // later and the stream would drop to silence before the fade began.
+    const uint32_t capacity = memory.outputFrameCapacity;
+    const uint64_t kept = KeptCopiedFrames(capacity);
+    const uint64_t reachable = ProjectHardwarePacket(*queue, TxHostNow()) +
+                               ASFW::IsochTransport::AudioTimingGeometry::kTxFillFinalityGuardPackets +
+                               kStopMarginPackets;
+    uint64_t fadeStart = UINT64_MAX;
+    uint64_t frame = std::max(copiedEnd > kept ? copiedEnd - kept : 0,
+                              ivars.runtime.txClearedFrameEnd);
+    while (frame <= copiedEnd) {
+        ASFW::Protocols::Audio::AMDTP::PacketSlotSnapshot snap{};
+        if (!timeline.SnapshotSlotForAudioFrame(frame, snap) || snap.framesInPacket == 0) {
+            ++frame;
+            continue;
+        }
+        if (static_cast<int64_t>(snap.packetIndex - reachable) >= 0) {
+            fadeStart = frame;
+            break;
+        }
+        frame = snap.firstAudioFrame + snap.framesInPacket;
+    }
+    if (fadeStart == UINT64_MAX) {
+        return result;  // CoreAudio's last frame is already on its way out
+    }
+
+    // The fade always runs its full length: past CoreAudio's last write it
+    // fades that frame's samples, held, so the wave never steps. Copied
+    // frames after the fade are zeroed.
+    std::array<float, ASFW::Audio::Runtime::kMaxHostPcmChannels> held{};
+    const float* const lastWritten = memory.outputBase + ((copiedEnd - 1) % capacity) * channels;
+    std::copy(lastWritten, lastWritten + channels, held.begin());
+    const uint32_t rate = static_cast<uint32_t>(ivars.device.currentSampleRate);
+    const uint64_t fadeFrames = std::max<uint64_t>(rate / kStopFadeRateDivisor, kMinStopFadeFrames);
+    const uint64_t fadeEnd = fadeStart + fadeFrames;
+    const uint64_t end = std::max(copiedEnd, fadeEnd);
+    float peak = 0.0f;
+    for (uint64_t at = fadeStart; at < end; ++at) {
+        float* const samples = memory.outputBase + (at % capacity) * channels;
+        const float gain = at < fadeEnd ? static_cast<float>(fadeEnd - 1 - at) /
+                                              static_cast<float>(fadeFrames)
+                                        : 0.0f;
+        for (uint32_t ch = 0; ch < channels; ++ch) {
+            const float source = at < copiedEnd ? samples[ch] : held[ch];
+            peak = std::max(peak, source < 0.0f ? -source : source);
+            samples[ch] = source * gain;
+        }
+    }
+
+    // Rewrite the tail into its packets through the stream's own writer.
+    ASFW::Protocols::Audio::AMDTP::HostAudioBufferView hostBuffer{};
+    hostBuffer.interleavedFloat32 = memory.outputBase;
+    hostBuffer.firstFrame = fadeStart;
+    hostBuffer.frameCount = static_cast<uint32_t>(end - fadeStart);
+    hostBuffer.frameCapacity = capacity;
+    hostBuffer.channels = channels;
+    const uint64_t missedBefore = MissedFinalityFrames(ivars);
+    const uint64_t firstWritable =
+        ProjectHardwarePacket(*queue, TxHostNow()) +
+        ASFW::IsochTransport::AudioTimingGeometry::kTxFillFinalityGuardPackets;
+    engine.FillFromHostOutput(hostBuffer, firstWritable);
+    if (ivars.runtime.txSecondaryActive) {
+        ivars.runtime.txStreamEngineSecondary.FillFromHostOutput(hostBuffer, firstWritable);
+    }
+    ClearRingFrames(memory, fadeStart, end - fadeStart);
+
+    result.fadedFrames = fadeFrames;
+    result.heldFrames = fadeEnd > copiedEnd ? fadeEnd - std::max(copiedEnd, fadeStart) : 0;
+    result.silencedFrames = copiedEnd > fadeEnd ? copiedEnd - fadeEnd : 0;
+    result.missedFrames = std::min(MissedFinalityFrames(ivars) - missedBefore, end - fadeStart);
+    result.peakQ24 = static_cast<uint32_t>(std::min(peak, 1.0f) * 8388607.0f);
+    // The last frame that can still be nonzero on the wire: the fade's last
+    // nonzero frame, or the last copied frame whose packet the rewrite missed.
+    const uint64_t lastFaded = fadeEnd - 2;  // the fade's last frame is zero
+    uint64_t lastAudible = lastFaded;
+    if (result.missedFrames != 0) {
+        lastAudible = std::max(lastAudible, std::min(fadeStart + result.missedFrames, copiedEnd) - 1);
+    }
+    ASFW::Protocols::Audio::AMDTP::PacketSlotSnapshot audible{};
+    if (timeline.SnapshotSlotForAudioFrame(lastAudible, audible)) {
+        result.lastAudiblePacket = audible.packetIndex;
+    } else {
+        // No packet owns it yet: one bus cycle per rate / 8000 frames.
+        constexpr uint64_t kCyclesPerSecond = 8000;
+        const uint64_t cycles = rate != 0 ? ((end - fadeStart) * kCyclesPerSecond + rate - 1) / rate : 0;
+        result.lastAudiblePacket = std::max(result.lastAudiblePacket, reachable + cycles);
+    }
+    return result;
 }
 
 } // namespace ASFW::Audio::DriverKit

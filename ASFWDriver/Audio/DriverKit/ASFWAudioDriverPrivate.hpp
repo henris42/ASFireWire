@@ -438,6 +438,37 @@ void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars) noexcept;
 // Zeroes CoreAudio's whole output ring. Every start, before CoreAudio's first
 // write: the ring still holds the previous session's output.
 void ClearPlaybackRing(ASFWAudioDriver_IVars& ivars) noexcept;
+
+// What FadeTransmitTailToSilence did to the stream's unsent end.
+struct TransmitTailSilence final {
+    // The fade's frames, from the first frame the writer can still reach.
+    uint64_t fadedFrames{0};
+    // Of those, frames past CoreAudio's last write: its last frame, held.
+    uint64_t heldFrames{0};
+    // Copied frames after the fade, zeroed.
+    uint64_t silencedFrames{0};
+    // Rewritten frames whose packet went out before the rewrite reached it.
+    uint64_t missedFrames{0};
+    // Largest |sample| of the rewritten frames before the fade (24-bit).
+    uint32_t peakQ24{0};
+    // The last packet that can still carry a nonzero sample; the transport
+    // may stop once the hardware is past it. False: nothing was ever copied.
+    bool audible{false};
+    uint64_t lastAudiblePacket{0};
+};
+
+// The end of a stream (b155): the 828mkII keeps playing the last sample it
+// received when the transport stops, so a stream cut mid-signal leaves its
+// output at DC. Fades from the first copied frame still ahead of the finality
+// frontier over 2 ms (past CoreAudio's last write, its last frame held), zeroes
+// the copied frames after the fade, and rewrites them into their packets
+// through the stream's own writer. Packets the producer exposes later carry
+// armed silence. Runs once CoreAudio IO has stopped (StopIO), when the IO
+// thread no longer fills.
+[[nodiscard]] TransmitTailSilence FadeTransmitTailToSilence(ASFWAudioDriver_IVars& ivars) noexcept;
+// The packet the hardware is sending now, projected from the last refill's
+// completion cursor and clock pair. 0 without a transmit queue.
+[[nodiscard]] uint64_t ProjectedTransmitPacket(const ASFWAudioDriver_IVars& ivars) noexcept;
 // Brings the HAL clock source control to the source the device reported at its
 // last clock read (every start reads it). No bus traffic.
 void RefreshClockSourceControl(ASFWAudioDriver_IVars& ivars) noexcept;

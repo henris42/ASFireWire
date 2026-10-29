@@ -99,6 +99,44 @@ void QuiesceTxPreparation(ASFWAudioDriver_IVars& ivars) noexcept {
     }
 }
 
+// A stream must end in silence (b155): the 828mkII keeps playing the last
+// sample it received when the transport stops, so a stream cut mid-signal
+// left its output at DC and the next start thumped. The copied frames still
+// ahead of the hardware are faded and zeroed (FadeTransmitTailToSilence).
+// With `waitForWire` the transport stops next, so this waits until the
+// hardware has sent the last packet that can carry a nonzero sample and
+// kSilentPacketsBeforeStop silent ones after it. The projection runs on host
+// time, so a stalled transport cannot hold the stop past the bound.
+void EndTransmitInSilence(ASFWAudioDriver_IVars& ivars, bool waitForWire) noexcept {
+    // 2 ms of DATA packets of zeros; the device presents each about 0.5 ms
+    // after it arrives (SPH lead).
+    constexpr uint64_t kSilentPacketsBeforeStop = 16;
+    constexpr uint32_t kMaxWaitMs = 50;
+    if (!ivars.runtime.txActive.load(std::memory_order_acquire) ||
+        ivars.runtime.txSlotProvider.queueControl == nullptr) {
+        return;
+    }
+    const auto tail = ASFW::Audio::DriverKit::FadeTransmitTailToSilence(ivars);
+    if (!tail.audible) {
+        return;
+    }
+    uint32_t waitedMs = 0;
+    if (waitForWire) {
+        const uint64_t target = tail.lastAudiblePacket + kSilentPacketsBeforeStop;
+        while (static_cast<int64_t>(ASFW::Audio::DriverKit::ProjectedTransmitPacket(ivars) - target) < 0 &&
+               waitedMs < kMaxWaitMs) {
+            IOSleep(1);
+            ++waitedMs;
+        }
+    }
+    ASFW_LOG(DirectAudio,
+             "[TxEnd] guid=0x%016llx faded=%llu held=%llu silenced=%llu missed=%llu peakQ24=%u "
+             "lastAudiblePacket=%llu waitMs=%u%{public}s",
+             ivars.device.guid, tail.fadedFrames, tail.heldFrames, tail.silencedFrames,
+             tail.missedFrames, tail.peakQ24, tail.lastAudiblePacket, waitedMs,
+             waitForWire ? "" : " (wire kept)");
+}
+
 // The wire state is serialised on the driver's work queue. StartIO/StopIO and
 // the HAL configuration calls arrive off it; the driver's own actions
 // (IoRestartRequired, DeviceClockChanged) and Stop run on it.
@@ -164,6 +202,7 @@ void LogOutputWrites(const ASFWAudioDriver_IVars& ivars) noexcept {
 kern_return_t ReleaseWireTransport(ASFWAudioDriver_IVars& ivars,
                                    std::atomic<kern_return_t>& stopStatus) noexcept {
     ivars.runtime.isRunning.store(false, std::memory_order_release);
+    EndTransmitInSilence(ivars, /*waitForWire=*/true);
     QuiesceTxPreparation(ivars);
     ivars.runtime.mAudioInternalTxTiming.Disarm();
     ivars.runtime.mAudioTxClockBridge.Disarm();
@@ -1050,6 +1089,9 @@ kern_return_t ASFWAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags) {
         if (local.wire.State() == WireState::kLive &&
             local.wire.PlanStop(WireRetainable(ivars), TransportHealthy(ivars, stopStatus),
                                 &reason) == WireStopPlan::kRetain) {
+            // The wire keeps running: what CoreAudio wrote last fades out,
+            // and the packets after it carry armed silence.
+            EndTransmitInSilence(ivars, /*waitForWire=*/false);
             local.wire.OnRetained();
             const auto* control = ivars.runtime.directAudioGraph.control;
             ASFW_LOG(Audio,
