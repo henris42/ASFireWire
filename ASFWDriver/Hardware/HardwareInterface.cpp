@@ -7,6 +7,7 @@
 
 #include "../Async/Interfaces/IAsyncControllerPort.hpp"
 #include "../Bus/IRM/IRMCSRConstants.hpp"
+#include "../Common/DriverKitOwnership.hpp"
 #include "IEEE1394.hpp"
 #include "../Logging/Logging.hpp"
 
@@ -1295,8 +1296,7 @@ void HardwareInterface::FillReachablePages(size_t wanted) {
             ASFW_LOG_V0(Hardware, "DMA pages: the address probe command could not be created: 0x%08x", kr);
             return;
         }
-        OSSharedPtr<IODMACommand> probe(raw, OSNoRetain);
-        reachProbe_ = std::move(probe);
+        reachProbe_ = ASFW::Common::AdoptRetained(raw);
     }
 
     std::vector<OSSharedPtr<IOBufferMemoryDescriptor>> rejected;
