@@ -336,7 +336,7 @@ public:
             !busInfo_.RecordVerifiedSpeed(route_.generation, NodeId(), speed)) {
             return false;
         }
-        return routeRegistry_.LowerVerifiedLinkSpeed(route_, speed);
+        return routeRegistry_.ConfirmVerifiedLinkSpeed(route_, speed);
     }
 
     void UpdateRoute(const Discovery::DeviceRouteToken& route) noexcept {

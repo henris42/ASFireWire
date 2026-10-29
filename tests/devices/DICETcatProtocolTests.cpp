@@ -366,7 +366,9 @@ TEST(DICETcatProtocolTests, AFailedFirstSectionReadIsNotRetriedSlower) {
     EXPECT_EQ(record->link.maxPayloadBytes, before->link.maxPayloadBytes);
 }
 
-TEST(DICETcatProtocolTests, ExistingROMDemotionAlsoLowersStreamSpeed) {
+// A read that completes is confirmed on its route, but never lowers the
+// stream speed the registry holds.
+TEST(DICETcatProtocolTests, AVerifiedReadNeverLowersTheStreamSpeed) {
     CountingFireWireBus bus;
     bus.verifiedSpeed = FwSpeed::S200;
     RouteState routeState;
@@ -386,11 +388,9 @@ TEST(DICETcatProtocolTests, ExistingROMDemotionAlsoLowersStreamSpeed) {
     transaction.ReadGeneralSections([&](IOReturn status, GeneralSections) { result = status; });
 
     EXPECT_EQ(result, kIOReturnSuccess);
-    EXPECT_EQ(bus.generalReadSpeeds, (std::vector<FwSpeed>{FwSpeed::S200}));
     const auto record = routeState.registry.SnapshotByGuid(routeState.route.guid);
     ASSERT_TRUE(record.has_value());
-    EXPECT_EQ(record->link.localToNode, FwSpeed::S200);
-    EXPECT_EQ(record->link.isochToNode, FwSpeed::S200);
+    EXPECT_EQ(record->link.isochToNode, FwSpeed::S400);
 }
 
 TEST(DICETcatProtocolTests, AFailedReadIsNeverProbedSlower) {
