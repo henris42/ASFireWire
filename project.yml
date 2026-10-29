@@ -256,6 +256,7 @@ targets:
       - path: ASFW/DriverConnector+Lifecycle.swift
       - path: ASFW/DriverConnector+Discovery.swift
       - path: ASFW/DriverConnector+DeviceSettings.swift
+      - path: ASFW/DriverConnector+LogLevel.swift
       - path: ASFW/DriverConnectorTransport.swift
       - path: ASFW/DriverConnectorLogStore.swift
       - path: ASFW/DriverModels.swift

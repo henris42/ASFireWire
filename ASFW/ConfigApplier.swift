@@ -2,15 +2,17 @@
 //  ConfigApplier.swift
 //  ASFW
 //
-//  Headless mode behind `ASFW --apply-config`, run by the login agent
-//  install.sh installs (/Library/LaunchAgents/net.asfw.apply-config.plist).
-//  It watches every FireWire controller the driver claims, and whenever a
-//  device with remembered settings (DeviceConfigStore) appears or comes back
-//  with a new bus generation, reads the device's current settings and writes
-//  the ones that differ. The app itself applies a change immediately; this
-//  makes it hold across reboots, re-plugs and power cycles of the device.
+//  The login agent's loop (asfw-config-agent, run from
+//  /Library/LaunchAgents/net.asfw.apply-config.plist). It watches every
+//  FireWire controller the driver claims, and whenever a device with
+//  remembered settings (DeviceConfigStore) appears or comes back with a new
+//  bus generation, reads the device's current settings and writes the ones
+//  that differ. It sets the remembered driver log level on each new driver
+//  instance. The app itself applies a change immediately; this makes it hold
+//  across reboots, re-plugs and power cycles of the device.
 //
 
+import Combine
 import CoreAudio
 import Foundation
 import IOKit
@@ -33,6 +35,13 @@ final class ConfigApplier {
     /// polls this many times before the generation counts as checked.
     private var settleAttempts: [UInt64: Int] = [:]
     private static let maxSettleAttempts = 3
+    /// The remembered log level last handled per controller (registry entry
+    /// ID); "" when nothing is remembered.
+    private var levelHandled: [UInt64: String] = [:]
+    /// IOKit notifications for driver instances coming and going, so a new
+    /// one gets its log level at once rather than at the next poll.
+    private let registry = CardRegistry()
+    private var registryWatch: AnyCancellable?
 
     /// A device's settings are checked once per bus generation, so a slow poll
     /// is enough; each pass is one driver-local call per controller.
@@ -52,6 +61,10 @@ final class ConfigApplier {
         say(remembered.isEmpty
             ? "No remembered device settings yet; waiting for the app to save some."
             : "Remembered settings for \(remembered.count) device(s): \(remembered.map { String(format: "%016llX", $0) }.joined(separator: ", "))")
+        say("Driver log level to set: \(applier.store.logLevel ?? "none remembered (the driver's default, warn)").")
+        applier.registryWatch = applier.registry.$cards.dropFirst().sink { [weak applier] _ in
+            applier?.reconcileControllers()
+        }
         applier.poll()
         while true {
             _ = RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.5))
@@ -60,7 +73,8 @@ final class ConfigApplier {
 
     private func poll() {
         reconcileControllers()
-        for connector in connectors.values where connector.isConnected {
+        for (id, connector) in connectors where connector.isConnected {
+            applyLogLevel(to: connector, id: id)
             checkDevices(on: connector)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.pollInterval) { [weak self] in
@@ -81,6 +95,47 @@ final class ConfigApplier {
             connector.connect(forceAttempt: true)
             connectors[card.registryEntryID] = connector
             Self.say("Watching \(card.displayName).")
+            newDriverInstance(card.registryEntryID, via: connector)
+        }
+    }
+
+    /// A driver instance the agent has not seen: its log level once the
+    /// connection is up.
+    private func newDriverInstance(_ id: UInt64, via connector: ASFWDriverConnector, attempt: Int = 0) {
+        guard connector.isConnected else {
+            if attempt < 20 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                    guard let self, self.connectors[id] === connector else { return }
+                    self.newDriverInstance(id, via: connector, attempt: attempt + 1)
+                }
+            }
+            return
+        }
+        applyLogLevel(to: connector, id: id)
+    }
+
+    /// Sets the remembered log level unless it is in force already, or the
+    /// controller's asfw-log-level property set the level at boot (that one
+    /// stays until the app or the command line sets another).
+    private func applyLogLevel(to connector: ASFWDriverConnector, id: UInt64) {
+        let wanted = store.logLevel ?? ""
+        guard levelHandled[id] != wanted else { return }
+        guard !wanted.isEmpty else {
+            levelHandled[id] = wanted
+            return
+        }
+        guard let current = connector.logLevel() else { return }
+        levelHandled[id] = wanted
+        if current.source == .bootProperty {
+            Self.say("Log level \(current.spec) was set at boot by asfw-log-level; not setting \(wanted).")
+            return
+        }
+        guard let applied = connector.setLogLevel(wanted, source: .agent) else {
+            Self.say("The driver did not take the remembered log level '\(wanted)'.")
+            return
+        }
+        if applied.spec != current.spec {
+            Self.say("Log level \(current.spec) -> \(applied.spec).")
         }
     }
 
@@ -206,7 +261,7 @@ final class ConfigApplier {
         }
     }
 
-    private static func say(_ line: String) {
+    nonisolated static func say(_ line: String) {
         FileHandle.standardOutput.write(Data("[ASFW] \(line)\n".utf8))
     }
 }
