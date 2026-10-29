@@ -54,20 +54,6 @@ extension ASFWDriverConnector {
         return .ready(snapshot)
     }
 
-    /// MOTU stream-start experiments (driver: MotuExperiments.hpp). Process-wide in
-    /// the driver, not persisted, applied at the next playback start.
-    func setMotuExperiment(_ experiment: MotuExperiment) -> kern_return_t {
-        guard isConnected, connection != 0 else { return kIOReturnNotReady }
-        var input: [UInt64] = [UInt64(experiment.flags), UInt64(experiment.extraNoDataPackets),
-                               UInt64(experiment.presentationLeadTicks)]
-        let kr = IOConnectCallScalarMethod(connection, Method.setMotuExperiment.rawValue,
-                                           &input, UInt32(input.count), nil, nil)
-        if kr != KERN_SUCCESS {
-            log("setMotuExperiment failed: \(interpretIOReturn(kr))", level: .error)
-        }
-        return kr
-    }
-
     /// Request, then poll until the transaction completes or `timeout` passes.
     func performDeviceSettings(guid: UInt64, set setting: DeviceSetting? = nil, value: UInt32 = 0,
                                timeout: TimeInterval = 4) async -> DeviceSettingsOutcome {

@@ -33,9 +33,9 @@ final class DeviceSettingsViewModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     /// What the login agent re-applies for the selected device.
     @Published private(set) var remembered: [DeviceSetting: UInt32] = [:]
-    /// Stream-start experiments, as last sent to the driver (driver-wide, reset by a driver restart).
-    @Published var experiment = MotuExperiment()
-    @Published private(set) var experimentMessage: String?
+    /// The driver's log level (one for all controllers) and the last change's outcome.
+    @Published private(set) var logLevel: DriverLogLevel?
+    @Published private(set) var logLevelMessage: String?
 
     init(connector: ASFWDriverConnector, debugVM: DebugViewModel) {
         self.connector = connector
@@ -57,11 +57,21 @@ final class DeviceSettingsViewModel: ObservableObject {
         selectedGUID = newDevices.first?.guid
     }
 
-    func applyExperiment() {
-        let kr = connector.setMotuExperiment(experiment)
-        experimentMessage = kr == KERN_SUCCESS
-            ? (experiment.isDefault ? "Experiments off. Stop and start playback to apply." : "Sent. Stop and start playback to apply.")
-            : "Not sent: \(connector.interpretIOReturn(kr))"
+    func reloadLogLevel() {
+        logLevel = connector.logLevel()
+    }
+
+    /// Sets the level at once and remembers it, so the login agent sets it
+    /// again after each driver start.
+    func setLogLevel(_ level: String) {
+        guard let applied = connector.setLogLevel(level, source: .app) else {
+            logLevelMessage = "The driver did not take the log level \(level)."
+            reloadLogLevel()
+            return
+        }
+        logLevel = applied
+        store.rememberLogLevel(applied.spec)
+        logLevelMessage = nil
     }
 
     func forgetRemembered() {

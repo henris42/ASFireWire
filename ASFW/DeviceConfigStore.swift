@@ -3,7 +3,7 @@
 //  ASFW
 //
 //  Remembered device settings (clock source, optical modes, analog input
-//  switches) per device GUID.
+//  switches) per device GUID, and the driver log level.
 //  Kept in the app's UserDefaults, which the sandbox allows and which the
 //  login agent (`ASFW --apply-config`, same bundle) shares, so a choice made in
 //  the app is applied again after every login and whenever the device
@@ -20,12 +20,15 @@ struct DeviceConfigStore {
     /// The sandboxed app keeps its defaults in its container; a process outside
     /// the sandbox (asfw-config-agent) reads that file directly.
     private let fileURL: URL?
+    /// Both of the app's preference files, for the log level (see logLevel).
+    private let candidateURLs: [URL]
 
     static let appBundleID = "net.asfw.app"
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         self.fileURL = nil
+        self.candidateURLs = []
     }
 
     /// Read-only view of the app's preferences from another process. A
@@ -38,15 +41,16 @@ struct DeviceConfigStore {
             home.appendingPathComponent("Library/Preferences/\(appBundleID).plist"),
             home.appendingPathComponent("Library/Containers/\(appBundleID)/Data/Library/Preferences/\(appBundleID).plist"),
         ]
-        for url in candidates where !DeviceConfigStore(fileURL: url).table().isEmpty {
-            return DeviceConfigStore(fileURL: url)
+        for url in candidates where !DeviceConfigStore(fileURL: url, candidates: []).table().isEmpty {
+            return DeviceConfigStore(fileURL: url, candidates: candidates)
         }
-        return DeviceConfigStore(fileURL: candidates[0])
+        return DeviceConfigStore(fileURL: candidates[0], candidates: candidates)
     }
 
-    private init(fileURL: URL) {
+    private init(fileURL: URL, candidates: [URL]) {
         self.defaults = .standard
         self.fileURL = fileURL
+        self.candidateURLs = candidates
     }
 
     var location: String { fileURL?.path ?? "UserDefaults \(Bundle.main.bundleIdentifier ?? "?")" }
@@ -111,5 +115,44 @@ struct DeviceConfigStore {
     /// Every device with remembered settings.
     func rememberedGUIDs() -> [UInt64] {
         table().keys.compactMap { UInt64($0, radix: 16) }.sorted()
+    }
+
+    /// The driver log level the login agent sets after each driver start: a
+    /// spec such as "debug" or "info irm=debug", saved by the app, by
+    /// `asfw-config-agent --log-level`, or by
+    /// `defaults write net.asfw.app logLevel -string debug`. nil: the driver's
+    /// default. From another process both preference files are read and the
+    /// newer one that has the key wins, since `defaults write` and the agent
+    /// write ~/Library/Preferences while a sandboxed app writes its container.
+    static let logLevelKey = "logLevel"
+    var logLevel: String? {
+        guard fileURL != nil else {
+            return defaults.string(forKey: Self.logLevelKey)
+        }
+        var newest: (date: Date, spec: String)?
+        for url in candidateURLs {
+            guard let data = try? Data(contentsOf: url),
+                  let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+                  let spec = plist[Self.logLevelKey] as? String, !spec.isEmpty else { continue }
+            let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate ?? .distantPast
+            if newest == nil || modified > newest!.date {
+                newest = (modified, spec)
+            }
+        }
+        return newest?.spec
+    }
+
+    /// The app saves the level it set (nil forgets it).
+    func rememberLogLevel(_ spec: String?) {
+        guard fileURL == nil else { return }
+        defaults.set(spec, forKey: Self.logLevelKey)
+    }
+
+    /// The agent's command line saves to the app's domain in
+    /// ~/Library/Preferences, which it reads back as one of its candidates.
+    static func saveLogLevelForApp(_ spec: String?) {
+        CFPreferencesSetAppValue(logLevelKey as CFString, spec as CFString?, appBundleID as CFString)
+        CFPreferencesAppSynchronize(appBundleID as CFString)
     }
 }

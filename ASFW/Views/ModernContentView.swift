@@ -37,7 +37,6 @@ struct ModernContentView: View {
 #endif
         case busReset = "Bus Reset History"
         case logs = "System Logs"
-        case loggingSettings = "Logging Settings"
 #if !ASFW_LITE
         case mcpSettings = "MCP Control"
 #endif
@@ -64,7 +63,6 @@ struct ModernContentView: View {
             case .audioGeometry: return "slider.horizontal.3"
             case .busReset: return "bolt.horizontal.circle"
             case .logs: return "doc.text"
-            case .loggingSettings: return "slider.horizontal.3"
             case .audio: return "hifispeaker.fill"
             case .duet: return "slider.horizontal.below.square.filled.and.square"
 #if !ASFW_LITE
@@ -89,7 +87,6 @@ struct ModernContentView: View {
             case .dvCapture: .video
 #endif
             case .diagnostics, .diceReport, .avcReport: .reports
-            case .logs, .loggingSettings: .support
             default: .advanced
             }
         }
@@ -163,7 +160,7 @@ struct ModernContentView: View {
                     .padding()
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(.bar)
-                    .help("Show technical inspection and command tools. Logging is configured separately.")
+                    .help("Show technical inspection and command tools, and the live driver log. The log level is in Device Settings.")
             }
         } detail: {
             Group {
@@ -299,8 +296,6 @@ struct ModernContentView: View {
             BusResetHistoryView(viewModel: session.debugVM)
         case .logs:
             SystemLogsView(connector: session.connector)
-        case .loggingSettings:
-            LoggingSettingsView(connector: session.connector, showAdvancedControls: showAdvancedTools)
 #if !ASFW_LITE
         case .mcpSettings:
             MCPSettingsView(viewModel: session.mcpVM)

@@ -26,9 +26,11 @@ struct BusInspectorTests {
     @Test func everydayFeaturesAndReportsStayOutsideAdvancedTools() {
         let sections: [ModernContentView.SidebarSection] = [
             .dvCapture, .busInspector, .avcUnits, .duet, .audioAnalyzer,
-            .diagnostics, .diceReport, .avcReport, .logs, .loggingSettings
+            .diagnostics, .diceReport, .avcReport
         ]
         #expect(sections.allSatisfy { !$0.requiresAdvancedTools })
+        // The live driver log is a developer view; the log level is in Device Settings.
+        #expect(ModernContentView.SidebarSection.logs.requiresAdvancedTools)
         #expect(ModernContentView.SidebarSection.dvCapture.group == .video)
         #expect(ModernContentView.SidebarSection.avcCommands.requiresAdvancedTools)
         #expect(ModernContentView.SidebarSection.busReset.requiresAdvancedTools)

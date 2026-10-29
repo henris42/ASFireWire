@@ -26,9 +26,6 @@ final class ASFWDriverConnector: ObservableObject {
         case getDiscoveredDevices = 16
         case asyncCompareSwap = 17
         case getDriverVersion = 18
-        case setAsyncVerbosity = 19
-        case setHexDumps = 20
-        case getLogConfig = 21
         case getAVCUnits = 22
         case getSubunitCapabilities = 23
         case getSubunitDescriptor = 24
@@ -41,9 +38,6 @@ final class ASFWDriverConnector: ObservableObject {
         case testCMPDisconnectOPCR = 29
         case testCMPConnectIPCR = 30
         case testCMPDisconnectIPCR = 31
-        // Isoch Stream Control
-        case startIsochReceive = 32
-        case stopIsochReceive = 33
         // 34/35 retired (FW-171): zeroed metrics / no-op reset. Use
         // getAudioTelemetry (1013) for audio receive health.
         // IT DMA Allocation (no CMP)
@@ -52,7 +46,6 @@ final class ASFWDriverConnector: ObservableObject {
         // AV/C raw FCP command (request/response)
         case sendRawFCPCommand = 38
         case getRawFCPCommandResult = 39
-        case setIsochVerbosity = 40
         case asyncBlockRead = 44
         case asyncBlockWrite = 45
         // DV capture (raw DIF stream via shared ring, memory type 1)
@@ -68,7 +61,9 @@ final class ASFWDriverConnector: ObservableObject {
         // Device settings (clock source, optical modes): request/result pair.
         case requestDeviceSettings = 69
         case getDeviceSettingsResult = 70
-        case setMotuExperiment = 71
+        // The driver log level (DriverConnector+LogLevel.swift): set, and read back.
+        case setLogLevel = 72
+        case getLogLevel = 73
         // Read-only audio telemetry diagnostics.
         case getAudioTelemetry = 1013
         // Driver-owned LogRing category names and named filter presets.

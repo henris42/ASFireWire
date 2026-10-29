@@ -52,12 +52,55 @@ struct DeviceSettingsView: View {
                     }
                     .disabled(viewModel.isBusy)
                 }
+
+                diagnostics
             }
             .padding()
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .navigationTitle("Device Settings")
-        .task { await viewModel.reload() }
+        .task {
+            viewModel.reloadLogLevel()
+            await viewModel.reload()
+        }
+    }
+
+    /// The driver's log level: for every controller, not only this device.
+    private var diagnostics: some View {
+        GroupBox("Diagnostics") {
+            VStack(alignment: .leading, spacing: 8) {
+                if let current = viewModel.logLevel {
+                    Picker("Log level", selection: Binding(
+                        get: { current.level },
+                        set: { level in viewModel.setLogLevel(level) }
+                    )) {
+                        ForEach(ASFWDriverConnector.logLevels, id: \.self) { level in
+                            Text(level == ASFWDriverConnector.defaultLogLevel ? "\(level) (default)" : level).tag(level)
+                        }
+                    }
+                    .frame(maxWidth: 320)
+                    Text("warn keeps errors, refusals and the numbered start steps. info adds one line per stream start and stop; debug adds heartbeats and per-step detail, trace every transaction. Raise it to reproduce a problem for a report, then set it back: debug and trace cost CPU while streaming.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    if current.hasOverrides || current.source == .bootProperty || current.source == .commandLine {
+                        Text("In force: \(current.spec), set by \(current.source.title).")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                } else {
+                    Text("The log level is shown while the driver is connected.")
+                        .font(.callout)
+                        .foregroundColor(.secondary)
+                }
+                if let message = viewModel.logLevelMessage {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(6)
+            .frame(maxWidth: 520, alignment: .leading)
+        }
     }
 
     private func rememberedTitle(_ setting: DeviceSetting, _ value: UInt32) -> String {
@@ -201,43 +244,5 @@ struct DeviceSettingsView: View {
                 String(format: " · level 0x%08X · boost 0x%08X", snapshot.inputLevelRaw, snapshot.inputBoostRaw)))
             .font(.system(.caption, design: .monospaced))
             .foregroundColor(.secondary)
-
-        GroupBox("Diagnostics: stream start") {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("For finding out why the 828mkII resets the bus when playback starts. Each setting changes the next playback start only; the driver logs what it did. Turn everything off when done.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                Toggle("Write fetch-enable before the start (Linux skips it on the 828mkII)",
-                       isOn: $viewModel.experiment.forceFetchEnable)
-                Toggle("Capture only: do not send any packets to the device",
-                       isOn: $viewModel.experiment.captureOnly)
-                Toggle("Transmit only: send data but do not receive (SPH free-runs, audio muted)",
-                       isOn: $viewModel.experiment.transmitOnly)
-                Toggle("Prime with empty CIP packets as before b110 (the default is now skip cycles, like Linux)",
-                       isOn: $viewModel.experiment.emptyCipPrefill)
-                Toggle("Count DBC like the 828mkII does (data: first block, empty: next packet)",
-                       isOn: $viewModel.experiment.startEventDbc)
-                Picker("Hold data back after the start", selection: $viewModel.experiment.extraNoDataPackets) {
-                    ForEach(MotuExperiment.dataDelayChoices, id: \.packets) { choice in
-                        Text(choice.title).tag(choice.packets)
-                    }
-                }
-                Picker("SPH presentation lead", selection: $viewModel.experiment.presentationLeadCycles) {
-                    ForEach(MotuExperiment.leadChoices, id: \.cycles) { choice in
-                        Text(choice.title).tag(choice.cycles)
-                    }
-                }
-                Toggle("Hold absolute SPH phase at the 828mk3 setpoint (pre-b98 behaviour)",
-                       isOn: $viewModel.experiment.holdAbsolutePhase)
-                HStack {
-                    Button("Send to driver") { viewModel.applyExperiment() }
-                    if let message = viewModel.experimentMessage {
-                        Text(message).font(.caption).foregroundColor(.secondary)
-                    }
-                }
-            }
-            .padding(6)
-            .frame(maxWidth: 520, alignment: .leading)
-        }
     }
 }
