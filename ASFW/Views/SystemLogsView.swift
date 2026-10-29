@@ -139,7 +139,7 @@ struct SystemLogsView: View {
     private var logToolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .automatic) {
             Menu {
-                ForEach(0...4, id: \.self) { level in
+                ForEach(0...5, id: \.self) { level in
                     Button {
                         viewModel.setMaximumLevel(UInt8(level))
                     } label: {

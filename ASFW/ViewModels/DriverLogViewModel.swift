@@ -10,7 +10,7 @@ final class DriverLogViewModel: ObservableObject {
     @Published private(set) var categories: [ASFWLogCategoryDescriptor] = []
     @Published private(set) var presets: [ASFWLogCategoryPreset] = []
     @Published var searchText = ""
-    @Published private(set) var maximumLevel: UInt8 = 4
+    @Published private(set) var maximumLevel: UInt8 = 5
     @Published private(set) var selectedCategories: Set<UInt8> = []
     @Published private(set) var capacity: Int
     @Published private(set) var localEvictedCount: UInt64 = 0
@@ -75,7 +75,7 @@ final class DriverLogViewModel: ObservableObject {
     }
 
     func setMaximumLevel(_ level: UInt8) {
-        maximumLevel = min(level, 4)
+        maximumLevel = min(level, 5)
         rebuildFilteredRecords()
     }
 
@@ -302,7 +302,7 @@ final class DriverLogViewModel: ObservableObject {
         let response = await connector.queryLogRecordsAsync(ASFWLogRingQuery(
             afterSequence: cursor,
             categoryMask: 0xFFFF_FFFF,
-            maxLevel: 4,
+            maxLevel: 5,
             contains: "",
             maxRecords: Self.recordsPerPoll
         ))

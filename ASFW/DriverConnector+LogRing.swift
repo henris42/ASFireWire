@@ -95,7 +95,8 @@ enum ASFWLogRingCategories {
         case 1: return "warning"
         case 2: return "notice"
         case 3: return "info"
-        default: return "debug"
+        case 4: return "debug"
+        default: return "trace"
         }
     }
 }

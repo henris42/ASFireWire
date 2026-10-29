@@ -130,8 +130,8 @@ extension ASFWMCPToolDefinition {
                     ]),
                     "maxLevel": .object([
                         "type": .string("string"),
-                        "enum": .array(["error", "warning", "notice", "info", "debug"].map(MCP.Value.string)),
-                        "default": .string("debug"),
+                        "enum": .array(["error", "warning", "notice", "info", "debug", "trace"].map(MCP.Value.string)),
+                        "default": .string("trace"),
                         "description": .string("Include this severity and more severe records.")
                     ]),
                     "contains": .object([

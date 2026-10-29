@@ -324,9 +324,9 @@ extension ASFWMCPCore {
                     reason: "categories must contain only: \(ASFWLogRingCategories.names.joined(separator: ", "))."
                 )
             }
-            let levelName = try decoder.string("maxLevel", default: "debug")
+            let levelName = try decoder.string("maxLevel", default: "trace")
             guard let maxLevel = Self.logLevel(named: levelName) else {
-                return malformedToolResult(name, reason: "maxLevel must be one of: error, warning, notice, info, debug.")
+                return malformedToolResult(name, reason: "maxLevel must be one of: error, warning, notice, info, debug, trace.")
             }
             let contains = try decoder.string("contains", default: "")
             guard contains.utf8.count < 48 else {
@@ -364,6 +364,7 @@ extension ASFWMCPCore {
         case "notice": return 2
         case "info": return 3
         case "debug": return 4
+        case "trace": return 5
         default: return nil
         }
     }
