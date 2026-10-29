@@ -90,7 +90,7 @@ class ROMScanSession final : public std::enable_shared_from_this<ROMScanSession>
     void EnsurePrefix(uint8_t nodeId, ASFW::ConfigROM::QuadletCount requiredTotalQuadlets,
                       std::function<void(bool)> completion);
 
-    void RetryWithFallback(ROMScanNodeStateMachine& node);
+    void RetryAtSameSpeed(ROMScanNodeStateMachine& node);
 
     void DispatchAsync(std::function<void()> work);
     void DispatchDelayed(std::function<void()> work, uint64_t delayNs);

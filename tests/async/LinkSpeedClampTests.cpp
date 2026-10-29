@@ -144,31 +144,32 @@ TEST(SpeedPolicyObservation, UnseenNodeReportsNoObservation) {
     EXPECT_FALSE(policy.ObservedSpeed(NodeId{7}).has_value());
 }
 
-TEST(SpeedPolicyObservation, TimeoutDowngradeBecomesTheObservation) {
+// b152: a unit slow to answer at boot was stepped down to
+// S100 by response timeouts and then streamed at four times the bandwidth.
+// Nothing the policy observes may lower a node's speed.
+TEST(SpeedPolicyObservation, ATimeoutNeverLowersTheSpeed) {
     ASFW::Discovery::SpeedPolicy policy;
+    policy.RecordTimeout(0, FwSpeed::S400);
     policy.RecordTimeout(0, FwSpeed::S400);
     const auto observed = policy.ObservedSpeed(NodeId{0});
     ASSERT_TRUE(observed.has_value());
-    EXPECT_EQ(FwSpeed::S200, *observed);
+    EXPECT_EQ(FwSpeed::S400, *observed);
+    EXPECT_EQ(FwSpeed::S400, policy.ForNode(0).localToNode);
 }
 
-TEST(SpeedPolicyObservation, SuccessRecordsTheSpeedThatWorked) {
+TEST(SpeedPolicyObservation, ASuccessAtALowerSpeedDoesNotLowerTheNode) {
     ASFW::Discovery::SpeedPolicy policy;
     policy.RecordSuccess(0, FwSpeed::S200);
     const auto observed = policy.ObservedSpeed(NodeId{0});
     ASSERT_TRUE(observed.has_value());
-    EXPECT_EQ(FwSpeed::S200, *observed);
+    EXPECT_EQ(FwSpeed::S400, *observed);
 }
 
-TEST(SpeedPolicyObservation, LaterFasterResultCannotEraseLowerGenerationCeiling) {
+TEST(SpeedPolicyObservation, AVerifiedLowerCeilingIsIgnored) {
     ASFW::Discovery::SpeedPolicy policy;
-    policy.RecordTimeout(0, FwSpeed::S400);
-    policy.RecordSuccess(0, FwSpeed::S400);
+    policy.RecordVerifiedCeiling(NodeId{0}, FwSpeed::S100);
     ASSERT_TRUE(policy.ObservedSpeed(NodeId{0}).has_value());
-    EXPECT_EQ(FwSpeed::S200, *policy.ObservedSpeed(NodeId{0}));
-
-    policy.RecordTimeout(0, FwSpeed::S400);
-    EXPECT_EQ(FwSpeed::S200, *policy.ObservedSpeed(NodeId{0}));
+    EXPECT_EQ(FwSpeed::S400, *policy.ObservedSpeed(NodeId{0}));
 }
 
 TEST(SpeedPolicyObservation, ResetClearsObservationsAcrossBusReset) {
@@ -182,8 +183,9 @@ TEST(SpeedPolicyObservation, ResetClearsObservationsAcrossBusReset) {
     EXPECT_FALSE(policy.ObservedSpeed(NodeId{0}).has_value());
 }
 
-// End-to-end: what discovery learns is what the bus facade reports.
-TEST_F(LinkSpeedClamp, PolicyObservationReachesGetSpeed) {
+// End-to-end: whatever discovery observes, the bus facade keeps the path
+// speed for every transaction to the node, stream setup included.
+TEST_F(LinkSpeedClamp, PolicyObservationsNeverLowerGetSpeed) {
     SeedTopology(2 /* S400 */);
     ASFW::Discovery::SpeedPolicy policy;
     ASFW::Async::FireWireBusImpl bus(async, topo, &policy);
@@ -191,10 +193,11 @@ TEST_F(LinkSpeedClamp, PolicyObservationReachesGetSpeed) {
     EXPECT_EQ(FwSpeed::S400, bus.GetSpeed(NodeId{0})) << "before any evidence";
 
     policy.RecordTimeout(0, FwSpeed::S400);  // what the ROM scan does on exhaustion
-    EXPECT_EQ(FwSpeed::S200, bus.GetSpeed(NodeId{0})) << "after the downgrade";
+    policy.RecordVerifiedCeiling(NodeId{0}, FwSpeed::S200);
+    EXPECT_EQ(FwSpeed::S400, bus.GetSpeed(NodeId{0})) << "timeouts never lower the speed";
 
     policy.Reset();  // what the bus-reset hook does
-    EXPECT_EQ(FwSpeed::S400, bus.GetSpeed(NodeId{0})) << "evidence cleared by reset";
+    EXPECT_EQ(FwSpeed::S400, bus.GetSpeed(NodeId{0})) << "after a bus reset";
 }
 
 } // namespace

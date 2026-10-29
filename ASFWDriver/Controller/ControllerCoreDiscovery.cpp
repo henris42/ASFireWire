@@ -567,6 +567,8 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
     //   a failed read; a device driver can separately cap speed via `fMaxSpeed`.
     //
     // Therefore, ResolveIsochSpeed() bounds the topology PHY path speed by policy.localToNode.
+    // ASFW never steps a node's speed down (b152): localToNode keeps its
+    // S400 seed, so the isochronous speed is the topology path speed.
     const auto topologyForSpeed = deps_.topology ? deps_.topology->LatestSnapshot()
                                                  : std::nullopt;
 

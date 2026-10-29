@@ -28,6 +28,7 @@ public:
         ASFW::Async::InterfaceCompletionCallback callback;
         uint32_t handleValue{0};
 
+        ASFW::FW::FwSpeed speed{ASFW::FW::FwSpeed::S100};
         PendingRead() = default;
         PendingRead(const PendingRead&) = default;
         PendingRead& operator=(const PendingRead&) = default;
@@ -54,6 +55,7 @@ public:
         read.nodeId = nodeId;
         read.address = address;
         read.length = length;
+        read.speed = speed;
         read.callback = std::move(callback);
         read.handleValue = nextHandle_++;
         pendingReads_.push_back(std::move(read));
@@ -741,7 +743,9 @@ TEST(ROMScannerCompletion, ManualRead_Timeout_InvokesCallbackAfterRetryExhaustio
     EXPECT_EQ(completedROMs.size(), 0u);
 }
 
-TEST(ROMScannerCompletion, ManualRead_DefaultS400FallbackInvokesCallbackAfterFinalExhaustion) {
+// b152: a node that does not answer is retried at S400 only
+// and then given up, never read at S200 or S100.
+TEST(ROMScannerCompletion, ManualRead_RetriesStayAtS400AndFailWithoutFallback) {
     MockAsyncSubsystem mockAsync;
     SpeedPolicy speedPolicy;
 
@@ -778,14 +782,20 @@ TEST(ROMScannerCompletion, ManualRead_DefaultS400FallbackInvokesCallbackAfterFin
     const bool initiated = scanner.Start(request, onComplete);
     ASSERT_TRUE(initiated);
 
-    constexpr size_t kTimeoutsToExhaustS400S200S100 = 9;
-    for (size_t i = 0; i < kTimeoutsToExhaustS400S200S100; ++i) {
+    // The first attempt and perStepRetries more, all at S400.
+    const size_t timeoutsToExhaust = size_t{params.perStepRetries} + 1;
+    for (size_t i = 0; i < timeoutsToExhaust; ++i) {
         mockAsync.WaitForPendingReads(i + 1);
+        {
+            std::lock_guard lock(mockAsync.readsMtx_);
+            ASSERT_GT(mockAsync.pendingReads_.size(), i);
+            EXPECT_EQ(mockAsync.pendingReads_[i].speed, FwSpeed::S400) << "read " << i;
+        }
         mockAsync.SimulateReadTimeout(i);
-        if (i + 1 < kTimeoutsToExhaustS400S200S100) {
+        if (i + 1 < timeoutsToExhaust) {
             mockAsync.WaitForPendingReads(i + 2);
             std::lock_guard lock(mtx);
-            EXPECT_FALSE(callbackInvoked) << "Callback fired before final speed fallback exhaustion";
+            EXPECT_FALSE(callbackInvoked) << "Callback fired before the retries were spent";
         }
     }
 
@@ -797,6 +807,8 @@ TEST(ROMScannerCompletion, ManualRead_DefaultS400FallbackInvokesCallbackAfterFin
     EXPECT_TRUE(callbackInvoked);
     EXPECT_TRUE(hadBusyNodes);
     EXPECT_EQ(completedROMs.size(), 0u);
+    std::lock_guard lock(mockAsync.readsMtx_);
+    EXPECT_EQ(mockAsync.pendingReads_.size(), timeoutsToExhaust) << "no read at a lower speed";
 }
 
 TEST(ROMScannerCompletion, AutomaticScan_InvokesCallback_ApplePattern) {

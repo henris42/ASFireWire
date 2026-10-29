@@ -12,8 +12,9 @@
 namespace ASFW::Discovery {
 
 // Central authority for link speed and max payload policy.
-// Provides speed fallback sequencing (S400→S200→S100) and per-node adaptation
-// based on observed transaction outcomes.
+// Speeds are never lowered: every node runs at its topology path speed, at most
+// S400, or is not connected at all. Timeouts and verified reads are counted for
+// the log only (b152: a slow unit was stepped to S100 and streamed there).
 //
 // Implements Async::ILinkSpeedSource so that what discovery learns here reaches
 // every other transaction on the bus. Before that seam existed this knowledge
@@ -60,9 +61,6 @@ private:
 
     // Compute max payload based on speed and policy flags
     uint16_t ComputeMaxPayload(FwSpeed speed) const;
-
-    // Downgrade speed to next lower tier
-    FwSpeed DowngradeSpeed(FwSpeed current) const;
 
     // ObservedSpeed() is reachable from every FireWireBusImpl::GetSpeed()
     // caller, which since the single-authority change includes protocol code

@@ -359,12 +359,10 @@ void ROMScanSession::StartBIBRead(ROMScanNodeStateMachine& node) {
     });
 }
 
-void ROMScanSession::RetryWithFallback(ROMScanNodeStateMachine& node) {
-    const auto oldSpeed = node.CurrentSpeed();
-    (void)oldSpeed;
+void ROMScanSession::RetryAtSameSpeed(ROMScanNodeStateMachine& node) {
     const RetryBackoffPolicy retryPolicy{};
     const auto decision = retryPolicy.Apply(
-        node, speedPolicy_, params_.perStepRetries,
+        node, speedPolicy_,
         [](ROMScanNodeStateMachine& nodeStateMachine, ROMScanNodeStateMachine::State next,
            const char* reason) { return TransitionNodeState(nodeStateMachine, next, reason); });
 
@@ -374,16 +372,10 @@ void ROMScanSession::RetryWithFallback(ROMScanNodeStateMachine& node) {
                     node.NodeId(), SpeedMbps(node.CurrentSpeed()),
                     node.RetriesLeft());
         break;
-    case RetryBackoffPolicy::Decision::RetryWithFallback: {
-        const auto newSpeed = node.CurrentSpeed();
-        (void)newSpeed;
-        ASFW_LOG_V2(ConfigROM,
-                    "ROMScanSession: Node %u speed fallback S%u -> S%u, retries reset",
-                    node.NodeId(), SpeedMbps(oldSpeed), SpeedMbps(newSpeed));
-        break;
-    }
     case RetryBackoffPolicy::Decision::FailedExhausted:
-        ASFW_LOG(ConfigROM, "ROMScanSession: Node %u -> Failed (exhausted retries)", node.NodeId());
+        ASFW_LOG(ConfigROM,
+                 "ROMScanSession: Node %u -> Failed (no answer at S%u; never read at a lower speed)",
+                 node.NodeId(), SpeedMbps(node.CurrentSpeed()));
         break;
     }
 }
@@ -494,7 +486,7 @@ void ROMScanSession::HandleBIBComplete(uint8_t nodeId, ROMReader::ReadResult res
             ScheduleConfigROMReadyRetry(node, "BIB read failed");
             return;
         }
-        RetryWithFallback(node);
+        RetryAtSameSpeed(node);
         if (node.CurrentState() == ROMScanNodeStateMachine::State::Failed) {
             NotifyRootBIBFailure(nodeId, MapBIBFailureStatus(result.status));
         }
@@ -510,7 +502,7 @@ void ROMScanSession::HandleBIBComplete(uint8_t nodeId, ROMReader::ReadResult res
             ScheduleConfigROMReadyRetry(node, "BIB q0 booting");
             return;
         }
-        RetryWithFallback(node);
+        RetryAtSameSpeed(node);
         if (node.CurrentState() == ROMScanNodeStateMachine::State::Failed) {
             NotifyRootBIBFailure(nodeId, Driver::Role::RootBibReadStatus::Timeout);
         }
@@ -690,7 +682,7 @@ void ROMScanSession::HandleRootDirComplete(uint8_t nodeId, ROMReader::ReadResult
 
         ASFW_LOG(ConfigROM, "ROMScanSession: Node %u RootDir read failed, retrying scan step",
                  nodeId);
-        RetryWithFallback(node);
+        RetryAtSameSpeed(node);
         Pump();
         return;
     }

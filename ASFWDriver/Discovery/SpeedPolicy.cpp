@@ -72,11 +72,12 @@ std::optional<FW::FwSpeed> SpeedPolicy::ObservedSpeed(FW::NodeId nodeId) const n
 }
 
 void SpeedPolicy::RecordVerifiedCeiling(FW::NodeId nodeId, FW::FwSpeed speed) noexcept {
+    // Speeds are never lowered: a node runs at its path speed or not at all
+    // (b152: a unit slow to answer at boot was read at S100 and then streamed
+    // at S100, four times the bandwidth). The node is only marked as seen.
+    (void)speed;
     LockGuard guard(lock_);
-    auto& state = nodeStates_[nodeId.value];
-    if (static_cast<uint8_t>(speed) < static_cast<uint8_t>(state.currentSpeed)) {
-        state.currentSpeed = speed;
-    }
+    (void)nodeStates_[nodeId.value];
 }
 
 void SpeedPolicy::RecordSuccess(uint8_t nodeId, FwSpeed speed) {
@@ -84,11 +85,6 @@ void SpeedPolicy::RecordSuccess(uint8_t nodeId, FwSpeed speed) {
     {
         LockGuard guard(lock_);
         auto& state = nodeStates_[nodeId];
-        // A later successful read at a faster speed does not erase a lower
-        // ceiling already learned in this bus generation.
-        if (static_cast<uint8_t>(speed) < static_cast<uint8_t>(state.currentSpeed)) {
-            state.currentSpeed = speed;
-        }
         state.successCount++;
         // Reset timeout counter on success
         state.timeoutCount = 0;
@@ -104,30 +100,23 @@ void SpeedPolicy::RecordSuccess(uint8_t nodeId, FwSpeed speed) {
 }
 
 void SpeedPolicy::RecordTimeout(uint8_t nodeId, FwSpeed speed) {
-    // ROMScanSession calls this only after the per-step retry budget is exhausted.
-    // Downgrade one tier immediately so discovery really follows S400→S200→S100.
-    const FwSpeed downgraded = DowngradeSpeed(speed);
+    // ROMScanSession calls this once a node's retries at its speed are spent.
+    // The speed is never lowered: a late or missing answer is not a reason to
+    // drop speed, and a node that cannot be read at its path speed is better
+    // left unconnected than connected at S100 (b152). Only counted, for the log.
     uint8_t timeoutCount = 0;
     {
         LockGuard guard(lock_);
         auto& state = nodeStates_[nodeId];
         state.timeoutCount++;
         timeoutCount = state.timeoutCount;
-        if (static_cast<uint8_t>(downgraded) < static_cast<uint8_t>(state.currentSpeed)) {
-            state.currentSpeed = downgraded;
-            state.timeoutCount = 0;
-        }
     }
 
     // Logging stays outside the lock (DeviceRegistry does the same). ObservedSpeed()
     // is now called from other queues on the transaction path, so the hold time
     // here is somebody else's latency.
-    ASFW_LOG(Discovery, "Node %u: Timeout at S%u (count=%u)",
+    ASFW_LOG(Discovery, "Node %u: Timeout at S%u (count=%u); speed kept",
              nodeId, SpeedMbps(speed), timeoutCount);
-    if (downgraded != speed) {
-        ASFW_LOG(Discovery, "Node %u: Downgraded S%u → S%u",
-                 nodeId, SpeedMbps(speed), SpeedMbps(downgraded));
-    }
 }
 
 void SpeedPolicy::SetHalfSizePackets(bool enabled) {
@@ -155,16 +144,6 @@ uint16_t SpeedPolicy::ComputeMaxPayload(FwSpeed speed) const {
     }
     
     return basePayload;
-}
-
-FwSpeed SpeedPolicy::DowngradeSpeed(FwSpeed current) const {
-    switch (current) {
-        case FwSpeed::S800: return FwSpeed::S400;
-        case FwSpeed::S400: return FwSpeed::S200;
-        case FwSpeed::S200: return FwSpeed::S100;
-        case FwSpeed::S100: return FwSpeed::S100;  // Can't go lower
-    }
-    return FwSpeed::S100;
 }
 
 } // namespace ASFW::Discovery

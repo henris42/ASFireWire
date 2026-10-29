@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "../ASFWDriver/Async/Interfaces/IFireWireBus.hpp"
+#include "../ASFWDriver/ConfigROM/Common/ConfigROMPolicies.hpp"
 #include "../ASFWDriver/ConfigROM/ROMScanner.hpp"
 #include "../ASFWDriver/Controller/ControllerTypes.hpp"
 #include "../ASFWDriver/Discovery/SpeedPolicy.hpp"
@@ -121,6 +122,34 @@ std::vector<uint32_t> CreateBusyBIB() {
 }
 
 } // namespace
+
+// b152: a unit slow to answer at boot was stepped S400 -> S200 -> S100 by
+// response timeouts and then streamed at S100. Retries keep the node's speed,
+// and when they are spent the node fails instead of slowing down.
+TEST(ROMScanRetryPolicy, RetriesKeepTheNodeSpeedAndExhaustionFailsTheNode) {
+    SpeedPolicy speedPolicy;
+    ROMScanNodeStateMachine node(4, Generation{1}, FwSpeed::S400, 2);
+    const RetryBackoffPolicy policy{};
+    std::vector<ROMScanNodeStateMachine::State> transitions;
+    const auto transition = [&](ROMScanNodeStateMachine&, ROMScanNodeStateMachine::State next,
+                                const char*) {
+        transitions.push_back(next);
+        return true;
+    };
+
+    EXPECT_EQ(policy.Apply(node, speedPolicy, transition),
+              RetryBackoffPolicy::Decision::RetrySameSpeed);
+    EXPECT_EQ(policy.Apply(node, speedPolicy, transition),
+              RetryBackoffPolicy::Decision::RetrySameSpeed);
+    EXPECT_EQ(node.CurrentSpeed(), FwSpeed::S400);
+
+    EXPECT_EQ(policy.Apply(node, speedPolicy, transition),
+              RetryBackoffPolicy::Decision::FailedExhausted);
+    EXPECT_EQ(node.CurrentSpeed(), FwSpeed::S400);
+    ASSERT_FALSE(transitions.empty());
+    EXPECT_EQ(transitions.back(), ROMScanNodeStateMachine::State::Failed);
+    EXPECT_EQ(speedPolicy.ForNode(4).localToNode, FwSpeed::S400);
+}
 
 TEST(ROMScannerMultiNodeFSM, InitialBIBReadHonorsSlowPhysicalPath) {
     MockAsyncSubsystem mockAsync;

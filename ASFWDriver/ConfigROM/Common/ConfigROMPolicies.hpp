@@ -59,38 +59,32 @@ class ShortReadResolutionPolicy {
     }
 };
 
+// Retries a failed scan step at the node's own speed, never lower: a node that
+// cannot be read at its path speed is left unconnected (b152: stepping S400 ->
+// S200 -> S100 on response timeouts connected a slow-booting unit at S100,
+// where it streamed at four times the bandwidth). The patience for slow units
+// is the delayed Config ROM readiness retries, not a lower speed.
 class RetryBackoffPolicy {
   public:
     enum class Decision : uint8_t {
         RetrySameSpeed,
-        RetryWithFallback,
         FailedExhausted,
     };
 
     template <typename TransitionFn>
     [[nodiscard]] Decision Apply(ROMScanNodeStateMachine& node, SpeedPolicy& speedPolicy,
-                                 uint8_t perStepRetries, TransitionFn&& transitionNodeState) const {
+                                 TransitionFn&& transitionNodeState) const {
         if (node.RetriesLeft() > 0) {
             node.DecrementRetries();
             transitionNodeState(node, ROMScanNodeStateMachine::State::Idle,
-                                "RetryWithFallback retry same speed");
+                                "RetryAtSameSpeed retry");
             return Decision::RetrySameSpeed;
         }
 
         speedPolicy.RecordTimeout(node.NodeId(), node.CurrentSpeed());
-
-        const FwSpeed newSpeed = speedPolicy.ForNode(node.NodeId()).localToNode;
-        if (newSpeed == node.CurrentSpeed()) {
-            transitionNodeState(node, ROMScanNodeStateMachine::State::Failed,
-                                "RetryWithFallback exhausted retries");
-            return Decision::FailedExhausted;
-        }
-
-        node.SetCurrentSpeed(newSpeed);
-        node.SetRetriesLeft(perStepRetries);
-        transitionNodeState(node, ROMScanNodeStateMachine::State::Idle,
-                            "RetryWithFallback speed fallback");
-        return Decision::RetryWithFallback;
+        transitionNodeState(node, ROMScanNodeStateMachine::State::Failed,
+                            "RetryAtSameSpeed exhausted retries");
+        return Decision::FailedExhausted;
     }
 };
 

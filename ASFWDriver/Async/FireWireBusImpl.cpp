@@ -143,9 +143,9 @@ FW::FwSpeed FireWireBusImpl::GetSpeed(FW::NodeId nodeId) const {
         // No evidence yet is not evidence of a slow link.
         return advertised;
     }
-    // Lower of the two. An observation may only ever slow us down: node IDs are
-    // reassigned across bus resets, so a stale entry must not be able to raise a
-    // node above what the current topology says it supports.
+    // Lower of the two, so a stale entry can never raise a node above what the
+    // current topology supports. The speed policy never lowers a node below its
+    // S400 seed (b152), so this is the path speed in practice.
     return static_cast<uint8_t>(*observed) < static_cast<uint8_t>(advertised) ? *observed
                                                                               : advertised;
 }

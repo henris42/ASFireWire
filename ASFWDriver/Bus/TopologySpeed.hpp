@@ -125,6 +125,11 @@ namespace ASFW::Driver {
  * node and target node, then bounds it by the validated operational link speed
  * (@p operationalLimit, i.e. policy.localToNode).
  *
+ * Since b152 the operational speed is never lowered below its S400 seed (a
+ * unit slow to answer at boot had been stepped to S100 and then streamed at
+ * four times the bandwidth), so for an S400 device this is the topology path
+ * speed. The history below explains the bound itself.
+ *
  * Rationale & Change History:
  * Commit 86324deef previously decoupled isochronous speed from async operational speed,
  * forcing isoch to the raw Self-ID PHY speed (S400) under the assumption that:
