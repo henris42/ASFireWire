@@ -138,22 +138,8 @@ void ReadGeneralSectionsAtSpeed(
                   [&io, speed, callbackState](Async::AsyncStatus status,
                                                        std::span<const uint8_t> payload) {
         if (status != Async::AsyncStatus::kSuccess || payload.size() < GeneralSections::kWireSize) {
-            // A Config ROM quadlet can answer at S400 even when the first DICE
-            // block read cannot. Probe down only on a transport failure, on the
-            // same route, and only for this first read. Apple's special
-            // unknown-speed ROM scan steps down on read failure
-            // (IOFireWireController.cpp:2746-2768); Linux probes ROM speed
-            // (core-device.c:615-640). Joe's F24 exposed this later gap.
-            if ((status == Async::AsyncStatus::kTimeout ||
-                 status == Async::AsyncStatus::kHardwareError) &&
-                speed != FW::FwSpeed::S100 && io.IsRouteCurrent()) {
-                const auto slower = static_cast<FW::FwSpeed>(static_cast<uint8_t>(speed) - 1);
-                ASFW_LOG(DICE, "Section read failed at S%u (%{public}s); retrying at S%u",
-                         100u << static_cast<uint8_t>(speed), Async::ToString(status),
-                         100u << static_cast<uint8_t>(slower));
-                ReadGeneralSectionsAtSpeed(io, slower, callbackState);
-                return;
-            }
+            // No retry at a lower speed: a device that cannot answer at its
+            // path speed is left unconnected rather than run slower (b152).
             ASFW_LOG(DICE,
                      "[SectionReadSpeed] terminal gen=%u node=%u speed=S%u status=%{public}s bytes=%zu",
                      io.Generation().value, io.NodeId().value,

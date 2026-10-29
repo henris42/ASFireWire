@@ -331,13 +331,16 @@ private:
     uint64_t nextHandle_{1};
 };
 
-TEST(DICETcatProtocolTests, FirstSectionReadProbesDownAndRetainsVerifiedSpeed) {
+// b152: a first section read that fails at S400 is not
+// retried at a lower speed; the device is left unconnected and every speed in
+// the registry stays where discovery put it.
+TEST(DICETcatProtocolTests, AFailedFirstSectionReadIsNotRetriedSlower) {
     CountingFireWireBus bus;
     bus.failS400GeneralRead = true;
     RouteState routeState;
     ASFW::Discovery::ConfigROM rom{};
     rom.bib.guid = routeState.route.guid;
-    rom.bib.maxRec = 7;  // Allows 1024-byte async payloads at S200.
+    rom.bib.maxRec = 7;
     rom.gen = routeState.route.generation;
     rom.nodeId = routeState.route.nodeId;
     ASFW::Discovery::LinkPolicy link{};
@@ -345,20 +348,22 @@ TEST(DICETcatProtocolTests, FirstSectionReadProbesDownAndRetainsVerifiedSpeed) {
     link.isochToNode = FwSpeed::S400;
     link.maxPayloadBytes = ASFW::FW::MaxPayload::kS400;
     (void)routeState.registry.UpsertFromROM(rom, link);
+    const auto before = routeState.registry.SnapshotByGuid(routeState.route.guid);
+    ASSERT_TRUE(before.has_value());
 
     ASFW::Protocols::Ports::ProtocolRegisterIO io(bus, bus, routeState.registry, routeState.route);
     ASFW::Audio::DICE::DICETransaction transaction(io);
-    IOReturn result = kIOReturnError;
+    IOReturn result = kIOReturnSuccess;
     transaction.ReadGeneralSections([&](IOReturn status, GeneralSections) { result = status; });
 
-    EXPECT_EQ(result, kIOReturnSuccess);
-    EXPECT_EQ(bus.generalReadSpeeds, (std::vector<FwSpeed>{FwSpeed::S400, FwSpeed::S200}));
-    EXPECT_EQ(bus.GetSpeed(NodeId{2}), FwSpeed::S200);
+    EXPECT_EQ(result, kIOReturnTimeout);
+    EXPECT_EQ(bus.generalReadSpeeds, (std::vector<FwSpeed>{FwSpeed::S400}));
+    EXPECT_EQ(bus.GetSpeed(NodeId{2}), FwSpeed::S400);
     const auto record = routeState.registry.SnapshotByGuid(routeState.route.guid);
     ASSERT_TRUE(record.has_value());
-    EXPECT_EQ(record->link.localToNode, FwSpeed::S200);
-    EXPECT_EQ(record->link.isochToNode, FwSpeed::S200);
-    EXPECT_EQ(record->link.maxPayloadBytes, ASFW::FW::MaxPayload::kS200);
+    EXPECT_EQ(record->link.localToNode, FwSpeed::S400);
+    EXPECT_EQ(record->link.isochToNode, FwSpeed::S400);
+    EXPECT_EQ(record->link.maxPayloadBytes, before->link.maxPayloadBytes);
 }
 
 TEST(DICETcatProtocolTests, ExistingROMDemotionAlsoLowersStreamSpeed) {
@@ -388,7 +393,7 @@ TEST(DICETcatProtocolTests, ExistingROMDemotionAlsoLowersStreamSpeed) {
     EXPECT_EQ(record->link.isochToNode, FwSpeed::S200);
 }
 
-TEST(DICETcatProtocolTests, FailedSlowerProbesDoNotChangeSpeed) {
+TEST(DICETcatProtocolTests, AFailedReadIsNeverProbedSlower) {
     CountingFireWireBus bus;
     bus.failS400GeneralRead = true;
     bus.failS200GeneralRead = true;
@@ -400,8 +405,7 @@ TEST(DICETcatProtocolTests, FailedSlowerProbesDoNotChangeSpeed) {
     transaction.ReadGeneralSections([&](IOReturn status, GeneralSections) { result = status; });
 
     EXPECT_EQ(result, kIOReturnTimeout);
-    EXPECT_EQ(bus.generalReadSpeeds,
-              (std::vector<FwSpeed>{FwSpeed::S400, FwSpeed::S200, FwSpeed::S100}));
+    EXPECT_EQ(bus.generalReadSpeeds, (std::vector<FwSpeed>{FwSpeed::S400}));
     EXPECT_EQ(bus.GetSpeed(NodeId{2}), FwSpeed::S400);
 }
 
