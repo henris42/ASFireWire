@@ -46,6 +46,16 @@ void LogReservationRefusal(const char* direction, uint32_t streamIndex, uint64_t
                    reservation.charge.overheadUnits, reservation.charge.Total(),
                    reservation.availableUnits, reservation.charge.gapCount, allowedChannels,
                    reservation.refusedChannels, guid, generation.value);
+    if (reservation.failure == Backends::IsochReserveFailure::kBandwidthShort) {
+        // The line a user can act on (b146: three duplex 828mkIIs at 96 kHz
+        // need 5496 of 4915 units at S400; the start only failed).
+        ASFW_LOG_ERROR(Audio,
+                       "[Session] not enough FireWire bus bandwidth for this unit's %{public}s stream: "
+                       "it needs %u units and %u of %u are free; the other streams on the bus hold the "
+                       "rest. Stream fewer units at this rate, or a lower rate. guid=0x%016llx",
+                       direction, reservation.charge.Total(), reservation.availableUnits,
+                       static_cast<uint32_t>(IRM::kMaxBandwidthUnitsS400), guid);
+    }
 }
 
 // Isochronous transmit is unacknowledged, so a start that succeeds and carries
