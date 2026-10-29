@@ -59,13 +59,16 @@ constexpr uint16_t kRequiredCommandBits = 0;
 
 HardwareInterface::HardwareInterface() {
     phyLock_ = IOLockAlloc();
+    probeLock_ = IOLockAlloc();
 }
 
 HardwareInterface::~HardwareInterface() {
     Detach();
-    if (phyLock_) {
-        IOLockFree(phyLock_);
-        phyLock_ = nullptr;
+    for (IOLock** lock : {&phyLock_, &probeLock_}) {
+        if (*lock) {
+            IOLockFree(*lock);
+            *lock = nullptr;
+        }
     }
 }
 
@@ -988,6 +991,10 @@ HardwareInterface::AllocateDMAPaged(size_t length, uint64_t options) {
 bool HardwareInterface::VerifyDirectDMA(IODMACommand& command, IOMemoryDescriptor& buffer,
                                         uint64_t preparedOffset, const char* what) {
     constexpr uint64_t kProbeBytes = 16;
+
+    // Probes from different queues (start, async payloads, isoch transmit
+    // setup) share the scratch page and its lazy creation.
+    IOLockGuard probeGuard(probeLock_);
 
     // A probe that cannot run must not stop the driver; it only loses the
     // early diagnosis.

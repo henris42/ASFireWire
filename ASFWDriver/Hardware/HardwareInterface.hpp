@@ -293,9 +293,11 @@ class HardwareInterface {
     mutable HardwareAccessGate accessGate_;
     ASFW::Logging::ConsoleTrace bringUpTrace_;
     OSSharedPtr<IOPCIDevice> device_;
-    // Scratch page VerifyDirectDMA reads the DMA view into (created on first use)
+    // Scratch page VerifyDirectDMA reads the DMA view into (created on first
+    // use); probeLock_ serializes the probes that share it.
     OSSharedPtr<IOBufferMemoryDescriptor> dmaProbeScratch_;
     OSSharedPtr<IOMemoryMap> dmaProbeScratchMap_;
+    IOLock* probeLock_{nullptr};
     IOService* owner_{nullptr};
     uint8_t barIndex_{0};
     uint64_t barSize_{0};
