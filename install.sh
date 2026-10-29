@@ -183,7 +183,9 @@ OPENCORE_ARM_SCRIPT="${SCRIPT_DIR}/asfw-opencore-arm.sh"
 offer_opencore_arming() {
   [[ -f "$OPENCORE_ARM_SCRIPT" ]] || return 0
   nvram 4D1FDA02-38C7-4A6A-9CC6-4BCCA8B30102:opencore-version >/dev/null 2>&1 || return 0
-  if ioreg -rc IOPCIDevice 2>/dev/null | grep -q '"asfw-armed"'; then
+  # Under PIPE_FAIL a `cmd | grep -q` fails when grep stops reading early and cmd
+  # dies of SIGPIPE, so every match below reads a captured string instead.
+  if grep -q '"asfw-armed"' <<< "$(ioreg -rc IOPCIDevice 2>/dev/null)"; then
     info "OpenCore: the FireWire controller is armed."
     return 0
   fi
@@ -208,7 +210,7 @@ offer_opencore_arming() {
 }
 
 developer_mode_on() {
-  systemextensionsctl developer 2>/dev/null | grep -qi 'is on'
+  grep -qi 'is on' <<< "$(systemextensionsctl developer 2>/dev/null)"
 }
 
 # The driver's lines from `systemextensionsctl list` (one per staged version).
@@ -228,16 +230,16 @@ report_driver_state() {
   fi
   info "Driver state (systemextensionsctl list):"
   print -r -- "$lines" | sed 's/^/    /'
-  if print -r -- "$lines" | grep -q 'waiting to uninstall on reboot'; then
+  if grep -q 'waiting to uninstall on reboot' <<< "$lines"; then
     info "NEXT: reboot, then run ./install.sh again. An old build is removed at reboot."
     return 1
   fi
-  if print -r -- "$lines" | grep -q 'activated waiting for user'; then
+  if grep -q 'activated waiting for user' <<< "$lines"; then
     info "NEXT: allow the extension in System Preferences > Security & Privacy > General,"
     info "      then run ./install.sh again."
     return 1
   fi
-  if print -r -- "$lines" | grep -q 'activated enabled'; then
+  if grep -q 'activated enabled' <<< "$lines"; then
     info "The driver is activated and enabled."
     return 0
   fi
@@ -325,7 +327,7 @@ NEW_BUILD="$(read_plist_value "$APP_INFO_PLIST" "CFBundleVersion")"
 
 step "Check macOS security settings"
 SIP_STATUS="$(csrutil status 2>&1 || true)"
-if ! print -r -- "$SIP_STATUS" | grep -qi 'disabled'; then
+if ! grep -qi 'disabled' <<< "$SIP_STATUS"; then
   error "System Integrity Protection is not disabled."
   print -u2 -r -- "Boot into macOS Recovery, open Terminal, run 'csrutil disable', reboot, and run this installer again."
   exit 1
@@ -352,7 +354,7 @@ if [[ "$INSTALLED_BUILD" == "$NEW_BUILD" ]] && codesign --verify --deep --strict
 else
   [[ -n "$INSTALLED_BUILD" ]] && info "Replacing installed build ${INSTALLED_BUILD}."
 
-  if xattr -lr "$APP_PATH" 2>/dev/null | grep -q 'com.apple.quarantine'; then
+  if grep -q 'com.apple.quarantine' <<< "$(xattr -lr "$APP_PATH" 2>/dev/null)"; then
     info "Removing the download quarantine flag."
     xattr -dr com.apple.quarantine "$APP_PATH" || fail "Could not remove the quarantine flag from ASFW.app."
   fi
@@ -368,9 +370,9 @@ else
 
   codesign --verify --deep --strict --verbose=2 "$APP_PATH" \
     || fail "codesign verification failed for the signed ASFW.app."
-  codesign -d --entitlements - --xml "$APP_PATH" 2>&1 | grep -q 'system-extension.install' \
+  grep -q 'system-extension.install' <<< "$(codesign -d --entitlements - --xml "$APP_PATH" 2>&1)" \
     || fail "The signed app is missing com.apple.developer.system-extension.install."
-  codesign -d --entitlements - --xml "$DEXT_PATH" 2>&1 | grep -q 'com.apple.developer.driverkit' \
+  grep -q 'com.apple.developer.driverkit' <<< "$(codesign -d --entitlements - --xml "$DEXT_PATH" 2>&1)" \
     || fail "The signed dext is missing its DriverKit entitlements."
 
   if [[ -e "$INSTALLED_APP" ]]; then
