@@ -119,12 +119,33 @@ void ROMScanSession::Start(ROMScanRequest request, ScanCompletionCallback comple
             return chosen;
         };
 
+        // S400 or nothing: a node behind a path slower than the minimum is not
+        // read at all, so no transaction ever runs below it.
+        const auto belowMinimumPath = [session](uint8_t nodeId) {
+            const auto pathSpeed = Driver::PathSpeedCodeBetween(
+                session->topology_, session->localNodeId_, nodeId);
+            if (!pathSpeed ||
+                static_cast<uint8_t>(*pathSpeed) >=
+                    static_cast<uint8_t>(session->params_.minimumPathSpeed)) {
+                return false;
+            }
+            ASFW_LOG(ConfigROM,
+                     "[ROMScanSpeed] gen=%u node=%u path S%u is below S%u: not scanned, not "
+                     "connected (devices run at S400 or not at all)",
+                     session->gen_.value, nodeId, 100u << static_cast<uint8_t>(*pathSpeed),
+                     100u << static_cast<uint8_t>(session->params_.minimumPathSpeed));
+            return true;
+        };
+
         if (request.targetNodes.empty()) {
             for (const auto& node : session->topology_.physical.nodes) {
                 if (node.physicalId == session->localNodeId_) {
                     continue;
                 }
                 if (!node.linkActive) {
+                    continue;
+                }
+                if (belowMinimumPath(node.physicalId)) {
                     continue;
                 }
                 session->nodeScans_.emplace_back(node.physicalId, session->gen_,
@@ -141,6 +162,9 @@ void ROMScanSession::Start(ROMScanRequest request, ScanCompletionCallback comple
 
             for (const uint8_t nodeId : targets) {
                 if (nodeId == session->localNodeId_) {
+                    continue;
+                }
+                if (belowMinimumPath(nodeId)) {
                     continue;
                 }
                 session->nodeScans_.emplace_back(nodeId, session->gen_, initialSpeedFor(nodeId),

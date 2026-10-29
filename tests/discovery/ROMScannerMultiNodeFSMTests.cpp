@@ -151,7 +151,9 @@ TEST(ROMScanRetryPolicy, RetriesKeepTheNodeSpeedAndExhaustionFailsTheNode) {
     EXPECT_EQ(speedPolicy.ForNode(4).localToNode, FwSpeed::S400);
 }
 
-TEST(ROMScannerMultiNodeFSM, InitialBIBReadHonorsSlowPhysicalPath) {
+// S400 or nothing: a node behind an S200 path is not read at all, so no
+// transaction ever runs below S400 and the node is never connected.
+TEST(ROMScannerMultiNodeFSM, ANodeBehindASlowPathIsNotScanned) {
     MockAsyncSubsystem mockAsync;
     SpeedPolicy speedPolicy;
     ROMScannerParams params{};
@@ -174,16 +176,25 @@ TEST(ROMScannerMultiNodeFSM, InitialBIBReadHonorsSlowPhysicalPath) {
     request.gen = Generation{1};
     request.topology = topology;
     request.localNodeId = 0;
-    ASSERT_TRUE(scanner.Start(request, [](Generation, std::vector<ConfigROM>, bool) {}));
+    std::mutex mtx;
+    std::condition_variable cv;
+    bool completed = false;
+    std::vector<ConfigROM> roms;
+    ASSERT_TRUE(scanner.Start(request, [&](Generation, std::vector<ConfigROM> found, bool) {
+        std::lock_guard lock(mtx);
+        completed = true;
+        roms = std::move(found);
+        cv.notify_one();
+    }));
 
-    mockAsync.WaitForPendingReads(1);
     {
-        std::lock_guard lock(mockAsync.readsMtx_);
-        ASSERT_EQ(mockAsync.pendingReads_.size(), 1u);
-        EXPECT_EQ(mockAsync.pendingReads_[0].nodeId.value, 1);
-        EXPECT_EQ(mockAsync.pendingReads_[0].speed, ASFW::FW::FwSpeed::S200);
+        std::unique_lock lock(mtx);
+        cv.wait_for(lock, std::chrono::seconds(1), [&] { return completed; });
     }
-    scanner.Abort(Generation{1});
+    EXPECT_TRUE(completed);
+    EXPECT_TRUE(roms.empty());
+    std::lock_guard lock(mockAsync.readsMtx_);
+    EXPECT_TRUE(mockAsync.pendingReads_.empty()) << "no read below S400";
 }
 
 TEST(ROMScannerMultiNodeFSM, AutomaticTwoNodesCompletesOnce) {

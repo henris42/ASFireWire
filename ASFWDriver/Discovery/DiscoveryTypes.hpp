@@ -371,6 +371,9 @@ struct DiscoverySnapshot {
 
 struct ROMScannerParams {
     FwSpeed startSpeed{FwSpeed::S400};
+    // A node whose topology path is slower than this is not scanned at all:
+    // devices run at S400 or not at all, and none is ever read at a lower speed.
+    FwSpeed minimumPathSpeed{FwSpeed::S400};
     uint8_t maxInflight{2};
     uint8_t perStepRetries{2};
     // The patience for a unit slow to answer at power-up, at its own speed: a
