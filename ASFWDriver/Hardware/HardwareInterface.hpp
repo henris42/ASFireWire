@@ -22,7 +22,6 @@
 #include "../Common/BarrierUtils.hpp"
 #include "../Controller/ControllerTypes.hpp"
 #include "../Logging/ConsoleTrace.hpp"
-#include "DmaReach.hpp"
 #include "../Phy/PhyPackets.hpp"
 #include "HardwareAccessGate.hpp"
 #include "RegisterMap.hpp"
@@ -148,7 +147,7 @@ class HardwareInterface {
     }
 
     struct DMABuffer {
-        OSSharedPtr<IOMemoryDescriptor> descriptor;
+        OSSharedPtr<IOBufferMemoryDescriptor> descriptor;
         OSSharedPtr<IODMACommand> dmaCommand;
         uint64_t deviceAddress;
         size_t length;
@@ -163,43 +162,22 @@ class HardwareInterface {
     // cannot straddle a page; up to kMaxContiguousDMABytes they are requested
     // contiguous (a few pages, cheap); larger requests are refused because
     // kmem_alloc_contig can stall the kernel for minutes on a long run (b49).
-    // Large rings go through AllocateDMAPaged + DMAMemoryManager instead. While
-    // only reachable pages are used (see CreateDMABuffer) the limit is one page.
+    // Large rings go through AllocateDMAPaged + DMAMemoryManager instead.
     static constexpr size_t kDMAPageGranule = 4096;
     static constexpr size_t kMaxContiguousDMABytes = 64 * 1024;
     [[nodiscard]] std::optional<DMABuffer> AllocateDMA(size_t length, uint64_t options,
                                                        size_t alignment = 64);
     // One virtually contiguous buffer of ordinary (scattered) pages, mapped for
     // DMA page run by page run. Never enters the contiguous allocator.
-    [[nodiscard]] std::optional<DMABuffer> AllocateDMAPaged(size_t length);
-
-    // Memory for DMA buffers, from pages the controller reaches directly
-    // (DmaReach.hpp). Ordinary pages until a 32-bit preparation has bounced
-    // (VerifyDirectDMA: no IOMMU and pages above 4 GiB) or the controller's
-    // provider names ranges to avoid (asfw-dma-exclude, read at Attach). From
-    // then on every page is allocated on its own and kept only when its bus
-    // address passes DmaReach::Reachable(): AllocateDMA and AllocateDMAPaged
-    // retry once when their own preparation is the one that bounced, and
-    // CreateDMAPages composes several pages into one descriptor
-    // (IOMemoryDescriptor::CreateWithMemoryDescriptors) that maps contiguously
-    // for the CPU while each page is a bus run of its own.
-    //
-    // CreateDMABuffer: one physically contiguous buffer (a single page when
-    // reachable pages are required). CreateDMAPages: `length` bytes of pages.
-    [[nodiscard]] OSSharedPtr<IOBufferMemoryDescriptor> CreateDMABuffer(size_t length, size_t alignment,
-                                                                      uint64_t direction);
-    [[nodiscard]] OSSharedPtr<IOMemoryDescriptor> CreateDMAPages(size_t length);
-    [[nodiscard]] bool ReachablePagesOnly() const noexcept {
-        return reachablePagesOnly_.load(std::memory_order_acquire);
-    }
+    [[nodiscard]] std::optional<DMABuffer> AllocateDMAPaged(size_t length, uint64_t options);
 
     // The OHCI controller addresses 32 bits of physical memory. When a buffer's
     // pages lie above 4 GiB and no IOMMU remaps them, xnu silently routes the
     // IODMACommand through a copy buffer: the device reads and writes the copy,
     // the driver its own untouched pages (b55: Self-IDs never arrived). This
     // writes a sentinel through the CPU mapping and reads it back through the
-    // DMA mapping (IODMACommand::PerformOperation); returns false when the two
-    // differ, after switching later allocations to reachable pages. Call it
+    // DMA mapping (IODMACommand::PerformOperation); returns false, after
+    // explaining what to change on the machine, when the two differ. Call it
     // right after PrepareForDMA on every buffer the controller must reach.
     [[nodiscard]] bool VerifyDirectDMA(IODMACommand& command, IOMemoryDescriptor& buffer,
                                        uint64_t preparedOffset, const char* what);
@@ -312,35 +290,12 @@ class HardwareInterface {
     void FlushPostedWritesScoped() const noexcept;
     void LatchHardwareGoneFromPresenceProbe(Register32 reg) const noexcept;
 
-    [[nodiscard]] std::optional<DMABuffer> AllocateDMAOnce(size_t length, uint64_t options,
-                                                           size_t alignment);
-    [[nodiscard]] std::optional<DMABuffer> AllocateDMAPagedOnce(size_t length);
-    void ConfigureDmaReach(IOService* provider);
-    void RequireReachablePages(const char* why);
-    // Checked pages for `count` buffers' worth; empty when not enough were found.
-    [[nodiscard]] std::vector<OSSharedPtr<IOBufferMemoryDescriptor>> TakeReachablePages(size_t count);
-    void FillReachablePages(size_t wanted); // reachLock_ held
-    [[nodiscard]] OSSharedPtr<IOMemoryDescriptor>
-    ComposeDMAPages(std::vector<OSSharedPtr<IOBufferMemoryDescriptor>>& pages);
-
     mutable HardwareAccessGate accessGate_;
     ASFW::Logging::ConsoleTrace bringUpTrace_;
     OSSharedPtr<IOPCIDevice> device_;
-    // Scratch page VerifyDirectDMA reads the DMA view into (created on first
-    // use); probeLock_ serializes the probes that share it.
+    // Scratch page VerifyDirectDMA reads the DMA view into (created on first use)
     OSSharedPtr<IOBufferMemoryDescriptor> dmaProbeScratch_;
     OSSharedPtr<IOMemoryMap> dmaProbeScratchMap_;
-    IOLock* probeLock_{nullptr};
-
-    // Reachable pages (CreateDMABuffer / CreateDMAPages). reachLock_ guards the
-    // reserve, the probe command and the counters.
-    std::atomic<bool> reachablePagesOnly_{false};
-    IOLock* reachLock_{nullptr};
-    std::vector<DmaReach::BusRange> excludedRanges_;
-    std::vector<OSSharedPtr<IOBufferMemoryDescriptor>> reachablePages_;
-    OSSharedPtr<IODMACommand> reachProbe_; // 64 address bits: reports a page's bus address
-    uint64_t reachPagesTried_{0};
-    uint64_t reachPagesRejected_{0};
     IOService* owner_{nullptr};
     uint8_t barIndex_{0};
     uint64_t barSize_{0};

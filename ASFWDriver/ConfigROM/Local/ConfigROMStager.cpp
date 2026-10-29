@@ -22,31 +22,77 @@ kern_return_t ConfigROMStager::Prepare(HardwareInterface& hw, size_t romBytes) {
         return kIOReturnSuccess;
     }
 
-    // One segment at the ROM's 1 KiB alignment, probed for a bounce
-    // (HardwareInterface::AllocateDMA).
-    auto dma = hw.AllocateDMA(romBytes, kIOMemoryDirectionInOut, ASFW::ConfigROM::kRomAlignmentBytes);
-    if (!dma) {
-        return kIOReturnNoMemory;
+    IOBufferMemoryDescriptor* rawBuffer = nullptr;
+    kern_return_t kr = IOBufferMemoryDescriptor::Create(
+        kIOMemoryDirectionInOut, romBytes, ASFW::ConfigROM::kRomAlignmentBytes, &rawBuffer);
+    if (kr != kIOReturnSuccess || rawBuffer == nullptr) {
+        return (kr != kIOReturnSuccess) ? kr : kIOReturnNoMemory;
     }
-    buffer_ = std::move(dma->descriptor);
-    dma_ = std::move(dma->dmaCommand);
-    const IOAddressSegment segment{.address = dma->deviceAddress, .length = romBytes};
+    buffer_ = OSSharedPtr(rawBuffer, OSNoRetain);
+    buffer_->SetLength(romBytes);
 
     IOMemoryMap* rawMap = nullptr;
-    const kern_return_t kr = buffer_->CreateMapping(0, 0, 0, 0, 0, &rawMap);
+    kr = buffer_->CreateMapping(0, 0, 0, 0, 0, &rawMap);
     if (kr != kIOReturnSuccess || rawMap == nullptr) {
-        dma_->CompleteDMA(kIODMACommandCompleteDMANoOptions);
-        dma_.reset();
         buffer_.reset();
         return (kr != kIOReturnSuccess) ? kr : kIOReturnNoMemory;
     }
     map_ = OSSharedPtr(rawMap, OSNoRetain);
+
     ZeroBuffer();
 
+    dma_ = hw.CreateDMACommand();
+    if (!dma_) {
+        map_.reset();
+        buffer_.reset();
+        return kIOReturnNoResources;
+    }
+
+    uint32_t segCount = 1;
+    IOAddressSegment segment{};
+    uint64_t flags = 0;
+    kr = dma_->PrepareForDMA(kIODMACommandPrepareForDMANoOptions, buffer_.get(), 0, romBytes,
+                             &flags, &segCount, &segment);
+    if (kr != kIOReturnSuccess || segCount < 1) {
+        dma_->CompleteDMA(kIODMACommandCompleteDMANoOptions);
+        dma_.reset();
+        map_.reset();
+        buffer_.reset();
+        return (kr != kIOReturnSuccess) ? kr : kIOReturnNoResources;
+    }
+
+    if (!hw.VerifyDirectDMA(*dma_, *buffer_, 0, "the config ROM")) {
+        dma_->CompleteDMA(kIODMACommandCompleteDMANoOptions);
+        dma_.reset();
+        map_.reset();
+        buffer_.reset();
+        return kIOReturnUnsupported;
+    }
+
+    if ((segment.address & (ASFW::ConfigROM::kRomAlignmentBytes - 1)) != 0) {
+        ASFW_LOG(Hardware, "Config ROM DMA address 0x%llx not 1KiB aligned", segment.address);
+        dma_->CompleteDMA(kIODMACommandCompleteDMANoOptions);
+        dma_.reset();
+        map_.reset();
+        buffer_.reset();
+        return kIOReturnNotAligned;
+    }
+
+    if (segment.length < romBytes) {
+        ASFW_LOG(Hardware, "Config ROM DMA segment too small (len=%llu expected>=%zu)",
+                 segment.length, romBytes);
+        dma_->CompleteDMA(kIODMACommandCompleteDMANoOptions);
+        dma_.reset();
+        map_.reset();
+        buffer_.reset();
+        return kIOReturnNoResources;
+    }
+
     segment_ = segment;
-    dmaFlags_ = kIOMemoryDirectionInOut;
+    dmaFlags_ = flags;
     prepared_ = true;
     hw.BringUpTrace().Step("config ROM buffer %zu bytes at 0x%llx", romBytes, segment.address);
+    // ZeroBuffer already called before PrepareForDMA to ensure physical page allocation
     return kIOReturnSuccess;
 }
 

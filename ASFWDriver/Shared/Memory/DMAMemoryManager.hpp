@@ -287,7 +287,7 @@ private:
                          size_t length) const noexcept;
 
     /// DMA buffer (DriverKit-managed memory)
-    OSSharedPtr<IOMemoryDescriptor> dmaBuffer_;
+    OSSharedPtr<IOBufferMemoryDescriptor> dmaBuffer_;
 
     /// DMA commands (CRITICAL: must stay alive to maintain the DMA mappings)
     std::vector<OSSharedPtr<IODMACommand>> dmaCommands_;

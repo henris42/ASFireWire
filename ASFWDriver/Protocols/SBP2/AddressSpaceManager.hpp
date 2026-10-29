@@ -440,7 +440,7 @@ private:
         RemoteWriteCallback onRemoteWrite;
         std::array<char, kDebugLabelCapacity> debugLabel{};
 
-        OSSharedPtr<IOMemoryDescriptor> descriptor{};
+        OSSharedPtr<IOBufferMemoryDescriptor> descriptor{};
         OSSharedPtr<IODMACommand> dmaCommand{};
         IOMemoryMap* mapping{nullptr};
         uint8_t* mappedBytes{nullptr};

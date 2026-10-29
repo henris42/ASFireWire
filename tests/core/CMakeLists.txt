@@ -199,11 +199,6 @@ add_core_test(ConsoleTraceTests
     ConsoleTraceTests.cpp
 )
 
-# Bus addresses the OHCI controller can reach (below 4 GiB, outside excluded ranges)
-add_core_test(DmaReachTests
-    DmaReachTests.cpp
-)
-
 # Self-ID derived path speed for isochronous traffic
 add_core_test(TopologySpeedTests
     TopologySpeedTests.cpp

@@ -769,7 +769,7 @@ kern_return_t IMPL(ASFWAudioNub, AllocateTxIsochResources)
         return kIOReturnNotReady;
     }
     return isoch->AllocateTxIsochResources(
-        ctx->deps.hardware.get(), streamIndex, numSlots, maxPacketBytes, interruptInterval,
+        streamIndex, numSlots, maxPacketBytes, interruptInterval,
         outPayloadSlab, outMetadataRing, outControlBlock);
 }
 
