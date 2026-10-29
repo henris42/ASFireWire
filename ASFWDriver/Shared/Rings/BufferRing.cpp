@@ -137,13 +137,6 @@ std::optional<FilledBufferInfo> BufferRing::Dequeue() noexcept {
     // CRITICAL: Do NOT add ReadBarrier() after FetchRange for uncached device memory!
     // For uncached memory, IoBarrier (DSB) is sufficient. Adding DMB may cause issues.
 
-    #ifndef ASFW_HOST_TEST
-    if (DMAMemoryManager::IsTracingEnabled()) {
-        ASFW_LOG_V4(Async,
-                    "  🔍 BufferRing::Dequeue: ReadBarrier NOT used (uncached device memory, DSB sufficient)");
-    }
-    #endif
-
     // Extract resCount and xferStatus using AR-specific accessors. Descriptor
     // fields are OHCI little-endian (and the supported ARM64 host is little-
     // endian), unlike the big-endian IEEE 1394 packet bytes in the data buffer.
@@ -326,16 +319,6 @@ std::optional<FilledBufferInfo> BufferRing::Dequeue() noexcept {
                  resCount, reqCount, index);
         return std::nullopt;
     }
-
-    #ifndef ASFW_HOST_TEST
-    if (DMAMemoryManager::IsTracingEnabled()) {
-        ASFW_LOG_V4(Async,
-                    "🧭 BufferRing::Dequeue idx=%zu desc=%p reqCount=%u resCount=%u "
-                    "total=%zu last_dequeued=%zu startOffset=%zu newBytes=%zu",
-                    index, &desc, reqCount, resCount,
-                    total_bytes_in_buffer, last_dequeued_bytes_, start_offset, new_bytes);
-    }
-    #endif
 
     // Get virtual address of buffer START (caller will add startOffset)
     uint8_t* bufferAddr = GetBufferAddress(index);
@@ -627,16 +610,6 @@ kern_return_t BufferRing::Recycle(size_t index) noexcept {
                  "⚠️  BufferRing::Recycle[%zu]: UNEXPECTED! resCount=%u after reset, expected %u",
                  index, resCountAfter, reqCount);
     }
-
-    #ifndef ASFW_HOST_TEST
-    if (DMAMemoryManager::IsTracingEnabled()) {
-        ASFW_LOG_V4(Async,
-                    "🧭BufferRing::Recycle idx=%zu desc=%p reqCount=%u",
-                    index,
-                    &desc,
-                    reqCount);
-    }
-    #endif
 
     // Advance head to next buffer (circular)
     head_ = (head_ + 1) % bufferCount_;

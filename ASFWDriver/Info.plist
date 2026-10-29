@@ -82,8 +82,6 @@
 				<key>IOUserClass</key>
 				<string>ASFWSBP2Nub</string>
 			</dict>
-			<key>ASFWTraceDMACoherency</key>
-			<false/>
 			<key>CFBundleIdentifier</key>
 			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 			<key>IOClass</key>

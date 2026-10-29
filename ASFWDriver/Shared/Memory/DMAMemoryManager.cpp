@@ -17,25 +17,10 @@
 namespace ASFW::Shared {
 
 namespace {
-constexpr size_t kTracePreviewBytes = 64;
 // Smallest page size of any supported Mac; a region at most this large that
 // is aligned to its own size is physically contiguous on 4 KiB and 16 KiB pages.
 constexpr size_t kPageGranule = 4096;
-std::atomic<bool> gDMACoherencyTraceEnabled{false};
 } // namespace
-
-void DMAMemoryManager::SetTracingEnabled(bool enabled) noexcept {
-    const bool previous = gDMACoherencyTraceEnabled.exchange(enabled, std::memory_order_acq_rel);
-    if (previous == enabled) {
-        return;
-    }
-    ASFW_LOG(Async, "DMAMemoryManager: coherency tracing %{public}s",
-             enabled ? "ENABLED" : "disabled");
-}
-
-bool DMAMemoryManager::IsTracingEnabled() noexcept {
-    return gDMACoherencyTraceEnabled.load(std::memory_order_acquire);
-}
 
 DMAMemoryManager::~DMAMemoryManager() { Reset(); }
 
@@ -413,90 +398,19 @@ void DMAMemoryManager::ZeroSlab(size_t length) noexcept {
     Shared::FillUncachedDma(slabVirt_, 0, cappedLength);
 }
 
+// The DMA mappings are coherent (cached on x86_64) or cache-inhibited (arm64)
+// (DMACacheMode.hpp), so publishing descriptor writes to the controller and
+// fetching what it wrote need only an ordering barrier.
 void DMAMemoryManager::PublishRange(const std::byte* address, size_t length) const noexcept {
-    if (address == nullptr || length == 0) {
-        ::ASFW::Driver::IoBarrier();
-        return;
-    }
-
-    if (!IsInSlabRange(address)) {
-        if (IsTracingEnabled()) {
-            ASFW_LOG(Async,
-                     "⚠️  PublishRange ignored: address %p (len=%zu) outside DMA slab",
-                     address, length);
-        }
-        ::ASFW::Driver::IoBarrier();
-        return;
-    }
-
-    if (IsTracingEnabled()) {
-        TraceHexPreview("PublishRange", address, length);
-        ASFW_LOG(Async,
-                 "🧭 PublishRange: virt=%p len=%zu (uncached - barrier only)",
-                 address, length);
-    }
-
-    // Uncached mode: CPU writes bypass cache, just need ordering barrier
+    (void)address;
+    (void)length;
     ::ASFW::Driver::IoBarrier();
 }
 
 void DMAMemoryManager::FetchRange(const std::byte* address, size_t length) const noexcept {
-    if (address == nullptr || length == 0) {
-        ::ASFW::Driver::IoBarrier();
-        return;
-    }
-
-    if (!IsInSlabRange(address)) {
-        if (IsTracingEnabled()) {
-            ASFW_LOG(Async,
-                     "⚠️  FetchRange ignored: address %p (len=%zu) outside DMA slab",
-                     address, length);
-        }
-        ::ASFW::Driver::IoBarrier();
-        return;
-    }
-
-    // Uncached mode: CPU reads see latest writes, just need ordering barrier
+    (void)address;
+    (void)length;
     ::ASFW::Driver::IoBarrier();
-
-    if (IsTracingEnabled()) {
-        TraceHexPreview("FetchRange", address, length);
-        ASFW_LOG(Async,
-                 "🧭 FetchRange: virt=%p len=%zu (uncached - barrier only)",
-                 address, length);
-    }
-}
-
-void DMAMemoryManager::TraceHexPreview(const char* tag,
-                                       const std::byte* address,
-                                       size_t length) const noexcept {
-    if (!IsTracingEnabled() || address == nullptr || length == 0) {
-        return;
-    }
-
-    const auto* bytes = reinterpret_cast<const uint8_t*>(address);
-    const size_t preview = std::min(length, kTracePreviewBytes);
-    char line[3 * 16 + 1];
-
-    for (size_t offset = 0; offset < preview; offset += 16) {
-        const size_t chunk = std::min(static_cast<size_t>(16), preview - offset);
-        char* cursor = line;
-        size_t remaining = sizeof(line);
-        for (size_t i = 0; i < chunk && remaining > 3; ++i) {
-            const int written = std::snprintf(cursor, remaining, "%02X ", bytes[offset + i]);
-            if (written <= 0) {
-                break;
-            }
-            cursor += written;
-            remaining -= static_cast<size_t>(written);
-        }
-        *cursor = '\0';
-        ASFW_LOG(Async,
-                 "    %{public}s +0x%02zx: %{public}s",
-                 tag,
-                 offset,
-                 line);
-    }
 }
 
 void DMAMemoryManager::HexDump64(const std::byte* address, const char* tag) const noexcept {

@@ -36,15 +36,6 @@ uint32_t AsyncSubsystem::DrainTxCompletions(const char* reason) {
                  "DrainTxCompletions: reason=%{public}s drained=%u",
                  reason,
                  drained);
-    } else if (reason && DMAMemoryManager::IsTracingEnabled()) {
-        // Log when called but nothing drained (helps diagnose leaks)
-        auto* atReq = ResolveAtRequestContext();
-        if (atReq) {
-            const auto& ring = atReq->Ring();
-            ASFW_LOG(Async,
-                     "DrainTxCompletions: reason=%{public}s drained=0 (ATReq head=%zu tail=%zu)",
-                     reason, ring.Head(), ring.Tail());
-        }
     }
 
     return drained;

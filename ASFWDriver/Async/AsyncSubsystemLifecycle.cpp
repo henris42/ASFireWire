@@ -75,37 +75,6 @@ uint64_t GetCurrentMonotonicTimeUsec() {
 constexpr uint8_t kDefaultAsyncSpeed = 0; // S100 (98.304 Mbps)
 constexpr size_t kDefaultCompletionQueueCapacity = size_t{64} * 1024u;
 
-bool ParseBooleanLikeProperty(OSObject* property) {
-    if (auto booleanProp = OSDynamicCast(OSBoolean, property)) {
-        return booleanProp == kOSBooleanTrue;
-    }
-    if (auto numberProp = OSDynamicCast(OSNumber, property)) {
-        return numberProp->unsigned32BitValue() != 0;
-    }
-    if (auto stringProp = OSDynamicCast(OSString, property)) {
-        return stringProp->isEqualTo("1") || stringProp->isEqualTo("true") ||
-               stringProp->isEqualTo("TRUE");
-    }
-    return false;
-}
-
-bool ShouldEnableCoherencyTrace(OSObject* owner) {
-    auto service = OSDynamicCast(IOService, owner);
-    if (!service) {
-        return false;
-    }
-
-    OSDictionary* properties = nullptr;
-    const kern_return_t kr = service->CopyProperties(&properties);
-    if (kr != kIOReturnSuccess || properties == nullptr) {
-        return false;
-    }
-
-    const bool enabled = ParseBooleanLikeProperty(properties->getObject("ASFWTraceDMACoherency"));
-    properties->release();
-    return enabled;
-}
-
 // Retry state structure (heap-allocated, freed after final completion)
 // Similar to Apple's command object pattern but lighter-weight
 struct RetryState {
@@ -388,11 +357,6 @@ kern_return_t AsyncSubsystem::ProvisionAsyncDataPath(const char*& failureStage) 
         ASFW_LOG(Async, "FAILED: ContextManager::provision (kr=0x%08x)", provisionKr);
         failureStage = "ContextManagerProvision";
         return provisionKr;
-    }
-
-    DMAMemoryManager::SetTracingEnabled(ShouldEnableCoherencyTrace(owner_));
-    if (DMAMemoryManager::IsTracingEnabled()) {
-        ASFW_LOG(Async, "AsyncSubsystem: coherency tracing enabled (ASFWTraceDMACoherency)");
     }
 
     descriptorBuilder_ = contextManager_->GetDescriptorBuilderRequest();

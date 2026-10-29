@@ -845,11 +845,6 @@ void ATContextBase<Derived, Tag>::FetchScanDescriptor(const ScanState& state) no
             dmaManager_->FetchRange(state.desc, sizeof(HW::OHCIDescriptor));
         }
     }
-
-    if (DMAMemoryManager::IsTracingEnabled()) {
-        ASFW_LOG(Async,
-                 "  🔍 ScanCompletion: ReadBarrier DISABLED (uncached device memory, DSB sufficient)");
-    }
 }
 
 template<typename Derived, ContextRole Tag>

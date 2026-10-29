@@ -188,18 +188,6 @@ public:
     }
 
     /**
-     * \brief Enable or disable verbose DMA coherency tracing.
-     *
-     * When enabled, PublishRange/FetchRange emit detailed diagnostics including
-     * offsets, aligned lengths, and hex dumps of the data that is being pushed
-     * to or pulled from device-visible memory.
-     */
-    static void SetTracingEnabled(bool enabled) noexcept;
-
-    /// Query whether coherency tracing is currently active.
-    [[nodiscard]] static bool IsTracingEnabled() noexcept;
-
-    /**
      * \brief Publish CPU descriptor writes to DMA-visible memory.
      *
      * Ensures write ordering before setting hardware RUN/WAKE bits.
@@ -281,10 +269,6 @@ private:
 
     /// Zero the slab using volatile stores (uncached mapping rejects dc zva)
     void ZeroSlab(size_t length) noexcept;
-
-    void TraceHexPreview(const char* tag,
-                         const std::byte* address,
-                         size_t length) const noexcept;
 
     /// DMA buffer (DriverKit-managed memory)
     OSSharedPtr<IOBufferMemoryDescriptor> dmaBuffer_;

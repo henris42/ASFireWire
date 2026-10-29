@@ -25,41 +25,6 @@ namespace {
 constexpr std::size_t kImmediateCapacity = 16;
 constexpr std::size_t kInvalidRingIndex = std::numeric_limits<std::size_t>::max();
 
-inline void TraceBytes(const char* tag, const uint8_t* data, size_t length) {
-    if (!DMAMemoryManager::IsTracingEnabled() || data == nullptr || length == 0) {
-        return;
-    }
-
-    const auto* bytes = data;
-    const size_t preview = std::min(length, static_cast<size_t>(64));
-    char line[3 * 16 + 1];
-
-    for (size_t offset = 0; offset < preview; offset += 16) {
-        const size_t chunk = std::min(static_cast<size_t>(16), preview - offset);
-        char* cursor = line;
-        size_t remaining = sizeof(line);
-        for (size_t i = 0; i < chunk && remaining > 3; ++i) {
-            const int written = std::snprintf(cursor, remaining, "%02X ", bytes[offset + i]);
-            if (written <= 0) {
-                break;
-            }
-            cursor += written;
-            remaining -= static_cast<size_t>(written);
-        }
-        *cursor = '\0';
-        ASFW_LOG(Async,
-                 "    %{public}s +0x%04zx: %{public}s",
-                 tag,
-                 offset,
-                 line);
-    }
-}
-
-template <typename T>
-inline void TraceBytes(const char* tag, const T* data, size_t length) {
-    TraceBytes(tag, reinterpret_cast<const uint8_t*>(data), length);
-}
-
 } // namespace
 
 // Ensure the chain's last descriptor is flushed to memory
@@ -144,18 +109,6 @@ DescriptorBuilder::DescriptorChain DescriptorBuilder::BuildTransactionChain(cons
                                                                             uint16_t atTimeStamp) {
     DescriptorChain chain{};
     chain.needsFlush = needsFlush;  // Set Apple offset +40 pattern flag
-
-    const bool tracing = DMAMemoryManager::IsTracingEnabled();
-    if (tracing) {
-        ASFW_LOG(Async,
-                 "🧭 BuildTransactionChain: header=%zu payload=%zu needsFlush=%u head=%zu tail=%zu prevBlocks=%u",
-                 headerSize,
-                 payloadSize,
-                 needsFlush ? 1u : 0u,
-                 ring_.Head(),
-                 ring_.Tail(),
-                 ring_.PrevLastBlocks());
-    }
 
     // Defensive rebase: sync allocation cursor to the ring tail to avoid
     // rare overlap if the builder instance is reused across submissions.
@@ -248,10 +201,6 @@ DescriptorBuilder::DescriptorChain DescriptorBuilder::BuildTransactionChain(cons
                         0,
                         kImmediateCapacity - headerSize);
         }
-        if (tracing) {
-            TraceBytes("Immediate header payload", headerData, headerSize);
-        }
-
         // Publish non-control fields first, then release fence before setting control
         immDesc->common.branchWord = 0;           // EOL indicated by branchWord=0
         // Split-timeout deadline for AT-response packets (Linux ohci.c:1209);
@@ -303,10 +252,6 @@ DescriptorBuilder::DescriptorChain DescriptorBuilder::BuildTransactionChain(cons
                  "📤 TX Header (host order): destID=0x%04X tLabel=%u retry=%u tCode=0x%X pri=%u",
                  txDestID, txTLabel, txRetry, txTCode, txPriority);
 
-        if (tracing) {
-            TraceBytes("Immediate descriptor (32B)", immDesc, sizeof(OHCIDescriptorImmediate));
-        }
-
         // Assert correct EOL form: b=Always (11), branchWord=0, i=Always (11)
         const uint32_t ctlHi = ctl >> OHCIDescriptor::kControlHighShift;
         const uint8_t bField = (ctlHi >> OHCIDescriptor::kBranchShift) & 0x3;
@@ -355,16 +300,6 @@ DescriptorBuilder::DescriptorChain DescriptorBuilder::BuildTransactionChain(cons
         chain.lastBlocks = chain.firstBlocks;
         chain.firstRingIndex = ringIndex;
         chain.lastRingIndex = AdvanceIndex(ringIndex, kImmediateBlocks - 1, capacity);
-        if (tracing) {
-            ASFW_LOG(Async,
-                     "🧭 Chain summary: txid=%u firstIOVA=0x%08x lastIOVA=0x%08x firstIdx=%zu lastIdx=%zu blocks=%u",
-                     chain.txid,
-                     chain.firstIOVA32,
-                     chain.lastIOVA32,
-                     chain.firstRingIndex,
-                     chain.lastRingIndex,
-                     chain.firstBlocks);
-        }
         // Finalize last descriptor (normalize branch/Z nibble and flush) before returning
         FinalizeChainForSubmit(chain, dmaManager_);
         return chain;
@@ -421,9 +356,6 @@ DescriptorBuilder::DescriptorChain DescriptorBuilder::BuildTransactionChain(cons
     std::memset(payloadDescriptor, 0, sizeof(OHCIDescriptor));
 
     auto* headerImmDesc = reinterpret_cast<OHCIDescriptorImmediate*>(headerDescriptor);
-    if (tracing) {
-        TraceBytes("Immediate header payload", headerData, headerSize);
-    }
 
     // Get device-visible addresses
     const uint64_t headerPhys = dmaManager_.VirtToIOVA(headerDescriptor);
@@ -580,17 +512,6 @@ DescriptorBuilder::DescriptorChain DescriptorBuilder::BuildTransactionChain(cons
     chain.lastBlocks = 1;                  // Standard descriptor = 16 bytes = 1 block
     chain.firstRingIndex = headerRingIndex;
     chain.lastRingIndex = AdvanceIndex(payloadRingIndex, chain.lastBlocks - 1, capacity);
-    if (tracing) {
-        TraceBytes("Immediate descriptor (32B)", headerImmDesc, sizeof(OHCIDescriptorImmediate));
-        TraceBytes("Payload descriptor (16B)", payloadDescriptor, sizeof(OHCIDescriptor));
-        ASFW_LOG(Async,
-                 "🧭 Chain summary: firstIOVA=0x%08x lastIOVA=0x%08x firstIdx=%zu lastIdx=%zu blocks=%u",
-                 chain.firstIOVA32,
-                 chain.lastIOVA32,
-                 chain.firstRingIndex,
-                 chain.lastRingIndex,
-                 chain.TotalBlocks());
-    }
     // Finalize last descriptor (normalize branch/Z nibble and flush) before returning
     FinalizeChainForSubmit(chain, dmaManager_);
     return chain;
@@ -690,7 +611,6 @@ bool DescriptorBuilder::LinkTailTo(size_t tailIndex, const DescriptorChain& newC
         return false;
     }
 
-    const bool prevImmediate = HW::IsImmediate(*prevLast);
     const uint8_t nextPacketBlocks = newChain.TotalBlocks();
     const uint32_t branch = HW::MakeBranchWordAT(static_cast<uint64_t>(newChain.firstIOVA32), nextPacketBlocks);
     if (branch == 0) {
@@ -711,46 +631,17 @@ bool DescriptorBuilder::LinkTailTo(size_t tailIndex, const DescriptorChain& newC
                  nextPacketBlocks);
     }
 
-    const uint32_t controlBefore = prevLast->control;
     const uint32_t branchBefore = prevLast->branchWord;
-
-    const bool tracing = DMAMemoryManager::IsTracingEnabled();
-    if (tracing) {
-        ASFW_LOG_V4(Async,
-                 "LinkTailTo: txid=%u prevLast[%zu] prevBlocks=%u imm=%d ctrl_before=0x%08x br_before=0x%08x -> firstIOVA=0x%08x blocks=%u Z=%u branch=0x%08x",
-                 newChain.txid,
-                 prevLastIndex,
-                 prevBlocks,
-                 prevImmediate ? 1 : 0,
-                 controlBefore,
-                 branchBefore,
-                 newChain.firstIOVA32,
-                 nextPacketBlocks,
-                 zNibble,
-                 branch);
-    } else {
-        ASFW_LOG_V3(Async,
-                 "LinkTailTo: prevIdx=%zu branch=0x%08x -> 0x%08x blocks=%u",
-                 prevLastIndex,
-                 branchBefore,
-                 branch,
-                 nextPacketBlocks);
-    }
+    ASFW_LOG_V3(Async,
+             "LinkTailTo: prevIdx=%zu branch=0x%08x -> 0x%08x blocks=%u",
+             prevLastIndex,
+             branchBefore,
+             branch,
+             nextPacketBlocks);
 
     // Patch the LAST descriptor's branchWord (where hardware actually reads it)
     // PatchBranchWord() writes branchWord first, then sets b=11, then flushes
     PatchBranchWord(prevLast, branch);
-
-    if (tracing) {
-        const uint32_t controlAfter = prevLast->control;
-        const uint32_t branchAfter = prevLast->branchWord;
-        ASFW_LOG_V4(Async,
-                 "LinkTailTo: txid=%u patched prevLast[%zu] ctrl_after=0x%08x br_after=0x%08x",
-                 newChain.txid,
-                 prevLastIndex,
-                 controlAfter,
-                 branchAfter);
-    }
 
     return true;
 }

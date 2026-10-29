@@ -508,23 +508,6 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
         }
         return status;
     };
-    bool traceProperty = false;
-    if (OSDictionary* serviceProperties = nullptr;
-        CopyProperties(&serviceProperties) == kIOReturnSuccess && serviceProperties != nullptr) {
-        if (auto property = serviceProperties->getObject("ASFWTraceDMACoherency")) {
-            if (auto booleanProp = OSDynamicCast(OSBoolean, property)) {
-                traceProperty = (booleanProp == kOSBooleanTrue);
-            } else if (auto numberProp = OSDynamicCast(OSNumber, property)) {
-                traceProperty = numberProp->unsigned32BitValue() != 0;
-            } else if (auto stringProp = OSDynamicCast(OSString, property)) {
-                traceProperty = stringProp->isEqualTo("1") || stringProp->isEqualTo("true") ||
-                                stringProp->isEqualTo("TRUE");
-            }
-        }
-        serviceProperties->release();
-    }
-    ASFW_LOG(Controller, "ASFWDriver::Start(): ASFWTraceDMACoherency property=%{public}s",
-             traceProperty ? "true" : "false");
     if (auto statusKr = ctx.statusPublisher.Prepare(); statusKr != kIOReturnSuccess) {
         return failStart(statusKr, "status publisher prepare failed");
     }
@@ -568,10 +551,6 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
             ASFW_LOG(Controller, "AsyncSubsystem::Start() failed: 0x%08x", kr);
             return failStart(kr, "async subsystem start failed");
         }
-        const bool traceActive = ASFW::Shared::DMAMemoryManager::IsTracingEnabled();
-        ASFW_LOG(Controller,
-                 "ASFWDriver::Start(): DMA coherency tracing %{public}s (requested=%{public}s)",
-                 traceActive ? "ENABLED" : "disabled", traceProperty ? "true" : "false");
     }
     ctx.lifecycle->MarkStageComplete(StartStage::kAsyncReady);
     trace.Step("async DMA ready");
