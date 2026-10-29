@@ -68,6 +68,10 @@ struct AudioDriverDeviceState {
     char outputPlugName[64]{};
     char inputChannelNames[ASFW::Isoch::Audio::kMaxNamedChannels][64]{};
     char outputChannelNames[ASFW::Isoch::Audio::kMaxNamedChannels][64]{};
+    // Element names last handed to the HAL per scope, so a rate change that
+    // narrows the device can remove the names past its new channel count.
+    uint32_t namedInputElements{0};
+    uint32_t namedOutputElements{0};
 
     // Resolved per-stream wire geometry, carried across the nub. StartIO frames
     // playback from this rather than from the profile's compiled-in constants,

@@ -1206,6 +1206,28 @@ ValidateSampleRate(ASFWAudioDriver_IVars& ivars, uint32_t rateHz, const char* or
     return *next;
 }
 
+// The HAL keeps an element name until it is removed, so after a rate change
+// that narrows the device the old names past the new count still answered
+// for channels that no longer exist (b146: 22 input names for 18 channels at
+// 96 kHz). A null name removes one; that is documented in the DriverKit 24+
+// headers, so older targets keep the stale names rather than risk the call.
+void RemoveNamesPastCount(IOUserAudioDevice& device,
+                          IOUserAudioObjectPropertyScope scope,
+                          uint32_t& named,
+                          uint32_t count) noexcept {
+#if defined(__ENVIRONMENT_DRIVERKIT_VERSION_MIN_REQUIRED__) && \
+    __ENVIRONMENT_DRIVERKIT_VERSION_MIN_REQUIRED__ >= 240000
+    for (uint32_t element = count + 1; element <= named; ++element) {
+        (void)device.SetElementName(element, scope, nullptr);
+    }
+    named = count;
+#else
+    (void)device;
+    (void)scope;
+    named = std::max(named, count);
+#endif
+}
+
 // Applies a validated rate inside the host's configuration-change window (IO
 // is stopped), in the midi branch's order: hardware clock, device nominal
 // rate, zero-timestamp period, stream formats, HAL declarations, then the
@@ -1301,6 +1323,10 @@ ValidateSampleRate(ASFWAudioDriver_IVars& ivars, uint32_t rateHz, const char* or
             if ((kr = device.SetElementName(ch, IOUserAudioObjectPropertyScope::Output, name.get())) != kIOReturnSuccess)
                 return kr;
         }
+        RemoveNamesPastCount(device, IOUserAudioObjectPropertyScope::Input,
+                             ivars.device.namedInputElements, ivars.device.inputChannelCount);
+        RemoveNamesPastCount(device, IOUserAudioObjectPropertyScope::Output,
+                             ivars.device.namedOutputElements, ivars.device.outputChannelCount);
     }
 
     // Move the IO handler's view onto the new active ring, matching the ring

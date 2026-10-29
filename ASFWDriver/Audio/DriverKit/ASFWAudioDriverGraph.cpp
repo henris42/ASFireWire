@@ -836,6 +836,11 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         }
     }
 
+    ivars.device.namedInputElements =
+        std::min(ivars.device.inputChannelCount, ASFW::Isoch::Audio::kMaxNamedChannels);
+    ivars.device.namedOutputElements =
+        std::min(ivars.device.outputChannelCount, ASFW::Isoch::Audio::kMaxNamedChannels);
+
     for (uint32_t index = 0; index < ivars.device.avcControlCount; ++index) {
         const auto& descriptor = ivars.device.avcControls[index];
         auto controlName = OSSharedPtr(OSString::withCString(descriptor.name), OSNoRetain);
