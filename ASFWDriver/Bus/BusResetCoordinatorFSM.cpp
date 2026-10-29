@@ -98,7 +98,7 @@ BusResetCoordinator::StepResult BusResetCoordinator::StepWaitingSelfID() {
 
         const bool decoded = DecodeSelfID();
         ConsumeSelfIDLatch();
-        if (hardware_ != nullptr && hardware_->BringUpTrace().ConsoleActive()) {
+        if (hardware_ != nullptr && hardware_->BringUpTrace().Active()) {
             hardware_->BringUpTrace().Step("self-IDs %s, generation %u",
                                            decoded ? "decoded" : "not decoded",
                                            static_cast<unsigned>(lastGeneration_.value));

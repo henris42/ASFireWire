@@ -861,7 +861,7 @@ HardwareInterface::AllocateDMA(size_t length, uint64_t options, size_t alignment
 
     ASFW_LOG_V2(Hardware, "DMA buffer allocated: iova=0x%llx size=%zu align=%zu", mappedAddress,
                 length, alignment);
-    if (bringUpTrace_.ConsoleActive()) {
+    if (bringUpTrace_.Active()) {
         bringUpTrace_.Step("DMA %zu bytes at 0x%llx", length, mappedAddress);
     }
 
@@ -975,7 +975,7 @@ HardwareInterface::AllocateDMAPaged(size_t length, uint64_t options) {
     result.deviceAddress = result.segments.front().address;
     ASFW_LOG(Hardware, "DMA paged buffer allocated: %zu bytes in %zu page run(s), %zu window(s), first iova=0x%llx",
              length, result.segments.size(), result.windowCommands.size(), result.deviceAddress);
-    if (bringUpTrace_.ConsoleActive()) {
+    if (bringUpTrace_.Active()) {
         uint64_t lowest = UINT64_MAX;
         uint64_t highestEnd = 0;
         for (const auto& segment : result.segments) {

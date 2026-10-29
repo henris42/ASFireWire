@@ -493,7 +493,7 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
         ASFW_LOG(Controller, "ASFWDriver::Start() failed at %{public}s: 0x%08x", detail, status);
         if (ctx.deps.hardware) {
             ctx.deps.hardware->BringUpTrace().Step("start failed at %s: 0x%08x", detail, status);
-            ctx.deps.hardware->BringUpTrace().Unbind();
+            ctx.deps.hardware->BringUpTrace().End("start failed");
         }
         if (ctx.lifecycle) {
             if (const auto plan = ctx.lifecycle->BeginFailedStart(detail, mach_absolute_time())) {
@@ -534,7 +534,7 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
     }
     ctx.lifecycle->MarkStageComplete(StartStage::kQueueReady);
     auto& trace = ctx.deps.hardware->BringUpTrace();
-    trace.Bind(this, ctx.workQueue.get());
+    trace.Begin();
     trace.Step("start %s (%s%s), IOMMU %s", ASFW::Version::kSemanticVersion,
                ASFW::Version::kGitCommitShort, ASFW::Version::kGitDirty ? " dirty" : "",
                IommuState(provider));
@@ -732,7 +732,6 @@ kern_return_t IMPL(ASFWDriver, Stop) {
     // Terminal service Stop must use the existing software-only teardown;
     // planned runtime quiesce while the provider is alive is separate.
     if (ivars && ivars->context && ivars->context->deps.hardware) {
-        ivars->context->deps.hardware->BringUpTrace().Unbind();
         ivars->context->deps.hardware->LatchProviderRevokedAndDrain();
     }
     RequestRuntimeQuiesce(static_cast<uint32_t>(QuiesceReason::kProviderRevoked));
@@ -1123,8 +1122,8 @@ kern_return_t IMPL(ASFWDriver, NewUserClient) {
 }
 
 namespace {
-// Bring-up trace: the first interrupts show on the console whether the line
-// fires at all, and whether it keeps firing with nothing pending.
+// Bring-up trace: the first interrupts show whether the line fires at all,
+// and whether it keeps firing with nothing pending.
 constexpr uint64_t kTracedInterrupts = 8;
 } // namespace
 

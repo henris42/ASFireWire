@@ -194,9 +194,9 @@ add_core_test(LogRingTests
     LogRingTests.cpp
 )
 
-# Bring-up steps on the kernel console (ConsoleTrace.cpp comes from asfw_test_support)
-add_core_test(ConsoleTraceTests
-    ConsoleTraceTests.cpp
+# Numbered start steps (BringUpTrace.cpp comes from asfw_test_support)
+add_core_test(BringUpTraceTests
+    BringUpTraceTests.cpp
 )
 
 # Self-ID derived path speed for isochronous traffic
