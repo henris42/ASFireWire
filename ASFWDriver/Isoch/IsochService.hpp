@@ -138,6 +138,8 @@ class IsochService {
 
     /**
      * @brief Allocates the shared payload slab, metadata ring, and control block.
+     * @param hardware Allocates the payload slab, which the controller reads
+     *        (HardwareInterface::CreateDMAPages).
      * @param numSlots The number of packet slots in the payload ring buffer.
      * @param maxPacketBytes Maximum size of a single packet payload in bytes.
      * @param interruptInterval Frequency of interrupts in packets.
@@ -145,7 +147,8 @@ class IsochService {
      * @param outMetadataRing Shared memory descriptor containing packet metadata.
      * @param outControlBlock Shared memory descriptor containing stream control states.
      */
-    kern_return_t AllocateTxIsochResources(uint32_t streamIndex, uint32_t numSlots,
+    kern_return_t AllocateTxIsochResources(HardwareInterface* hardware, uint32_t streamIndex,
+                                           uint32_t numSlots,
                                            uint32_t maxPacketBytes, uint32_t interruptInterval,
                                            IOMemoryDescriptor** outPayloadSlab,
                                            IOMemoryDescriptor** outMetadataRing,
@@ -214,7 +217,7 @@ class IsochService {
     // playback streams (multi-stream DICE, e.g. Venice F32 = 2×16). Each IT
     // context DMAs its own slab; the audio engine maps each and writes its
     // de-interleaved 16-ch slice into it.
-    OSSharedPtr<IOBufferMemoryDescriptor> txPayloadSlab_[kMaxStreamsPerDirection]{};
+    OSSharedPtr<IOMemoryDescriptor> txPayloadSlab_[kMaxStreamsPerDirection]{};
     OSSharedPtr<IOBufferMemoryDescriptor> txMetadataRing_[kMaxStreamsPerDirection]{};
     OSSharedPtr<IOBufferMemoryDescriptor> txControlBlock_[kMaxStreamsPerDirection]{};
 

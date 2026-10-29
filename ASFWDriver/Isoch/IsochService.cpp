@@ -534,7 +534,8 @@ void IsochService::StartDeferredTransmitIfReady() noexcept {
     }
 }
 
-kern_return_t IsochService::AllocateTxIsochResources(uint32_t streamIndex, uint32_t numSlots,
+kern_return_t IsochService::AllocateTxIsochResources(HardwareInterface* hardware, uint32_t streamIndex,
+                                                     uint32_t numSlots,
                                                      uint32_t maxPacketBytes,
                                                      uint32_t interruptInterval,
                                                      IOMemoryDescriptor** outPayloadSlab,
@@ -555,23 +556,24 @@ kern_return_t IsochService::AllocateTxIsochResources(uint32_t streamIndex, uint3
     txMetadataRing_[streamIndex] = nullptr;
     txControlBlock_[streamIndex] = nullptr;
 
-    // 1. Allocate payload slab (page-aligned)
-    const size_t payloadSlabBytes = static_cast<size_t>(numSlots) * maxPacketBytes;
-    IOBufferMemoryDescriptor* payloadDescriptor = nullptr;
-    kern_return_t kr = IOBufferMemoryDescriptor::Create(kIOMemoryDirectionInOut, payloadSlabBytes,
-                                                        4096, &payloadDescriptor);
-    if (kr != kIOReturnSuccess || !payloadDescriptor) {
-        ASFW_LOG(Isoch, "IsochService: Failed to allocate payload slab: 0x%08x", kr);
-        return (kr == kIOReturnSuccess) ? kIOReturnNoMemory : kr;
+    // 1. Allocate payload slab. The controller reads it, so its pages come from
+    // HardwareInterface, which keeps them where the controller reaches them.
+    if (hardware == nullptr) {
+        return kIOReturnNotReady;
     }
-    txPayloadSlab_[streamIndex] = Common::AdoptRetained(payloadDescriptor);
+    const size_t payloadSlabBytes = static_cast<size_t>(numSlots) * maxPacketBytes;
+    txPayloadSlab_[streamIndex] = hardware->CreateDMAPages(payloadSlabBytes);
+    if (!txPayloadSlab_[streamIndex]) {
+        ASFW_LOG(Isoch, "IsochService: Failed to allocate payload slab (%zu bytes)", payloadSlabBytes);
+        return kIOReturnNoMemory;
+    }
 
     // 2. Allocate metadata ring (cacheline aligned)
     const size_t metadataRingBytes =
         static_cast<size_t>(numSlots) * sizeof(ASFW::Isoch::IsochTxPacketMeta);
     IOBufferMemoryDescriptor* metadataDescriptor = nullptr;
-    kr = IOBufferMemoryDescriptor::Create(kIOMemoryDirectionInOut, metadataRingBytes, 64,
-                                          &metadataDescriptor);
+    kern_return_t kr = IOBufferMemoryDescriptor::Create(kIOMemoryDirectionInOut, metadataRingBytes, 64,
+                                                        &metadataDescriptor);
     if (kr != kIOReturnSuccess || !metadataDescriptor) {
         ASFW_LOG(Isoch, "IsochService: Failed to allocate metadata ring: 0x%08x", kr);
         txPayloadSlab_[streamIndex] = nullptr;

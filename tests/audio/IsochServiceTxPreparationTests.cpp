@@ -64,7 +64,7 @@ TEST(IsochServiceTxPreparation, CallbackRegisteredBeforeContextCreationSurvivesS
     IOMemoryDescriptor* metadataDescriptor = nullptr;
     IOMemoryDescriptor* controlDescriptor = nullptr;
     ASSERT_EQ(service.AllocateTxIsochResources(
-                  /*streamIndex=*/0, AudioTimingGeometry::kTxSharedSlotPackets, 512,
+                  &hardware, /*streamIndex=*/0, AudioTimingGeometry::kTxSharedSlotPackets, 512,
                   AudioTimingGeometry::kTxPacketsPerGroup, &payloadDescriptor, &metadataDescriptor,
                   &controlDescriptor),
               kIOReturnSuccess);
@@ -127,7 +127,7 @@ TEST(IsochServiceTxPreparation, ActiveTransmitStopRetainsQueueUntilHardwareQuies
     IOMemoryDescriptor* metadataDescriptor = nullptr;
     IOMemoryDescriptor* controlDescriptor = nullptr;
     ASSERT_EQ(service.AllocateTxIsochResources(
-                  0, AudioTimingGeometry::kTxSharedSlotPackets, 512,
+                  &hardware, 0, AudioTimingGeometry::kTxSharedSlotPackets, 512,
                   AudioTimingGeometry::kTxPacketsPerGroup, &payloadDescriptor,
                   &metadataDescriptor, &controlDescriptor),
               kIOReturnSuccess);
@@ -190,7 +190,7 @@ TEST(IsochServiceTxPreparation, FaultedTransmitIsQuiescedByStopBeforeReuse) {
     IOMemoryDescriptor* metadataDescriptor = nullptr;
     IOMemoryDescriptor* controlDescriptor = nullptr;
     ASSERT_EQ(service.AllocateTxIsochResources(
-                  0, AudioTimingGeometry::kTxSharedSlotPackets, 512,
+                  &hardware, 0, AudioTimingGeometry::kTxSharedSlotPackets, 512,
                   AudioTimingGeometry::kTxPacketsPerGroup, &payloadDescriptor,
                   &metadataDescriptor, &controlDescriptor),
               kIOReturnSuccess);
@@ -267,7 +267,7 @@ TEST(IsochServiceTxPreparation, StartClearsContextControlAndOnlyItsOwnEvent) {
     IOMemoryDescriptor* metadataDescriptor = nullptr;
     IOMemoryDescriptor* controlDescriptor = nullptr;
     ASSERT_EQ(service.AllocateTxIsochResources(
-                  0, AudioTimingGeometry::kTxSharedSlotPackets, 512,
+                  &hardware, 0, AudioTimingGeometry::kTxSharedSlotPackets, 512,
                   AudioTimingGeometry::kTxPacketsPerGroup, &payloadDescriptor,
                   &metadataDescriptor, &controlDescriptor),
               kIOReturnSuccess);
@@ -419,7 +419,7 @@ TEST(IsochServiceTxPreparation, SecondaryTransmitStreamCreatesIndependentContext
     IOMemoryDescriptor* metadataDescriptor = nullptr;
     IOMemoryDescriptor* controlDescriptor = nullptr;
     ASSERT_EQ(service.AllocateTxIsochResources(
-                  /*streamIndex=*/1, AudioTimingGeometry::kTxSharedSlotPackets, 512,
+                  &hardware, /*streamIndex=*/1, AudioTimingGeometry::kTxSharedSlotPackets, 512,
                   AudioTimingGeometry::kTxPacketsPerGroup, &payloadDescriptor, &metadataDescriptor,
                   &controlDescriptor),
               kIOReturnSuccess);

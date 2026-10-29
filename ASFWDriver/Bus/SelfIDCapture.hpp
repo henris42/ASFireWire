@@ -90,7 +90,7 @@ class SelfIDCapture {
     friend class SelfIDCaptureTestPeer;
 #endif
 
-    OSSharedPtr<IOBufferMemoryDescriptor> buffer_;
+    OSSharedPtr<IOMemoryDescriptor> buffer_;
     OSSharedPtr<IODMACommand> dmaCommand_;
     OSSharedPtr<IOMemoryMap> map_;
     IOAddressSegment segment_{};

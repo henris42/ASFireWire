@@ -90,7 +90,7 @@ class ConfigROMStager {
     kern_return_t EnsurePrepared(HardwareInterface& hw);
     void ZeroBuffer();
 
-    OSSharedPtr<IOBufferMemoryDescriptor> buffer_;
+    OSSharedPtr<IOMemoryDescriptor> buffer_;
     OSSharedPtr<IOMemoryMap> map_;
     OSSharedPtr<IODMACommand> dma_;
     IOAddressSegment segment_{};

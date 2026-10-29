@@ -136,7 +136,7 @@ bool DMAMemoryManager::Initialize(Driver::HardwareInterface& hw, size_t totalSiz
     ASFW_LOG(Async, "DMAMemoryManager: Allocating %zu bytes (requested %zu), scattered pages",
              alignedSize, totalSize);
 
-    auto dmaBufferOpt = hw.AllocateDMAPaged(alignedSize, kIOMemoryDirectionInOut);
+    auto dmaBufferOpt = hw.AllocateDMAPaged(alignedSize);
     if (!dmaBufferOpt.has_value()) {
         ASFW_LOG(Async, "DMAMemoryManager: AllocateDMAPaged failed for %zu bytes", alignedSize);
         return false;

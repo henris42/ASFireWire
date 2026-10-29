@@ -79,57 +79,25 @@ kern_return_t SelfIDCapture::PrepareBuffers(size_t quadCapacity, HardwareInterfa
     const size_t requestedBytes = quadCapacity * sizeof(uint32_t);
     const size_t allocBytes = RoundUp(std::max(requestedBytes, static_cast<size_t>(2048)), kSelfIDAlignment);
 
-    IOBufferMemoryDescriptor* descriptor = nullptr;
-    kern_return_t kr = IOBufferMemoryDescriptor::Create(kIOMemoryDirectionIn, allocBytes, kSelfIDAlignment, &descriptor);
-    if (kr != kIOReturnSuccess || descriptor == nullptr) {
-        return (kr != kIOReturnSuccess) ? kr : kIOReturnNoMemory;
+    // AllocateDMA prepares the buffer as one segment at the requested
+    // alignment and probes that the controller writes the driver's own pages
+    // (a bounced mapping shows up as a buffer whose generation never changes, b55).
+    auto dma = hw.AllocateDMA(allocBytes, kIOMemoryDirectionIn, kSelfIDAlignment);
+    if (!dma) {
+        return kIOReturnNoMemory;
     }
-
-    descriptor->SetLength(allocBytes);
-    buffer_ = OSSharedPtr(descriptor, OSNoRetain);
+    buffer_ = std::move(dma->descriptor);
+    dmaCommand_ = std::move(dma->dmaCommand);
     bufferBytes_ = allocBytes;
+    const IOAddressSegment segment{.address = dma->deviceAddress, .length = allocBytes};
 
     IOMemoryMap* map = nullptr;
-    kr = buffer_->CreateMapping(0, 0, 0, 0, 0, &map);
+    kern_return_t kr = buffer_->CreateMapping(0, 0, 0, 0, 0, &map);
     if (kr != kIOReturnSuccess || map == nullptr) {
         ReleaseBuffers();
         return (kr != kIOReturnSuccess) ? kr : kIOReturnNoMemory;
     }
     map_ = OSSharedPtr(map, OSNoRetain);
-
-    dmaCommand_ = hw.CreateDMACommand();
-    if (!dmaCommand_) {
-        ReleaseBuffers();
-        return kIOReturnNoResources;
-    }
-
-    uint32_t segmentCount = 1;
-    IOAddressSegment segment{};
-    uint64_t flags = 0;
-    kr = dmaCommand_->PrepareForDMA(kIODMACommandPrepareForDMANoOptions,
-                                    buffer_.get(),
-                                    0,
-                                    allocBytes,
-                                    &flags,
-                                    &segmentCount,
-                                    &segment);
-    (void)flags;
-    if (kr != kIOReturnSuccess || segmentCount < 1 || segment.address == 0 || segment.length < allocBytes) {
-        ReleaseBuffers();
-        return (kr != kIOReturnSuccess) ? kr : kIOReturnNoResources;
-    }
-
-    if ((segment.address & (kSelfIDAlignment - 1)) != 0) {
-        ReleaseBuffers();
-        return kIOReturnNotAligned;
-    }
-
-    // The controller writes Self-IDs here; a bounced mapping shows up as a
-    // buffer whose generation never changes (b55).
-    if (!hw.VerifyDirectDMA(*dmaCommand_, *buffer_, 0, "the Self-ID buffer")) {
-        ReleaseBuffers();
-        return kIOReturnUnsupported;
-    }
 
     segment_ = segment;
     segmentValid_ = true;

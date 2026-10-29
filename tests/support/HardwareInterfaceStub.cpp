@@ -358,7 +358,7 @@ std::optional<HardwareInterface::DMABuffer> HardwareInterface::AllocateDMA(size_
     buffer->GetAddressRange(&segment);
 
     DMABuffer result;
-    result.descriptor = OSSharedPtr<IOBufferMemoryDescriptor>(buffer, OSNoRetain);
+    result.descriptor = OSSharedPtr<IOMemoryDescriptor>(buffer, OSNoRetain);
     result.dmaCommand = OSSharedPtr<IODMACommand>(command, OSNoRetain);
     result.length = length;
 
@@ -390,9 +390,8 @@ std::optional<HardwareInterface::DMABuffer> HardwareInterface::AllocateDMA(size_
     return result;
 }
 
-std::optional<HardwareInterface::DMABuffer> HardwareInterface::AllocateDMAPaged(size_t length,
-                                                                                uint64_t options) {
-    auto result = AllocateDMA(length, options, kDMAPageGranule);
+std::optional<HardwareInterface::DMABuffer> HardwareInterface::AllocateDMAPaged(size_t length) {
+    auto result = AllocateDMA(length, kIOMemoryDirectionInOut, kDMAPageGranule);
     if (result) {
         result->segments.push_back(IOAddressSegment{result->deviceAddress, length});
         result->windowCommands.push_back(result->dmaCommand);
@@ -402,6 +401,24 @@ std::optional<HardwareInterface::DMABuffer> HardwareInterface::AllocateDMAPaged(
 
 bool HardwareInterface::VerifyDirectDMA(IODMACommand&, IOMemoryDescriptor&, uint64_t, const char*) {
     return true;
+}
+
+OSSharedPtr<IOBufferMemoryDescriptor> HardwareInterface::CreateDMABuffer(size_t length, size_t alignment,
+                                                                       uint64_t direction) {
+    IOBufferMemoryDescriptor* buffer = nullptr;
+    if (IOBufferMemoryDescriptor::Create(direction, length, alignment, &buffer) != kIOReturnSuccess) {
+        return nullptr;
+    }
+    return OSSharedPtr<IOBufferMemoryDescriptor>(buffer, OSNoRetain);
+}
+
+OSSharedPtr<IOMemoryDescriptor> HardwareInterface::CreateDMAPages(size_t length) {
+    IOBufferMemoryDescriptor* buffer = nullptr;
+    if (IOBufferMemoryDescriptor::Create(kIOMemoryDirectionInOut, length, kDMAPageGranule, &buffer) !=
+        kIOReturnSuccess) {
+        return nullptr;
+    }
+    return OSSharedPtr<IOMemoryDescriptor>(buffer, OSNoRetain);
 }
 
 OSSharedPtr<IODMACommand> HardwareInterface::CreateDMACommand() {

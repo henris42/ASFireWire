@@ -641,6 +641,7 @@
 		0CD134ED5E9A65D7A8A6943D /* AvcDeviceHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvcDeviceHeader.swift; sourceTree = "<group>"; };
 		0D0166324F7667585F28B95B /* ROMScanner.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ROMScanner.hpp; sourceTree = "<group>"; };
 		0D264DCA6E0A2799CC954891 /* ConfigROMHandler.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ConfigROMHandler.hpp; sourceTree = "<group>"; };
+		0D38F7B60D6007EA90DA5C1A /* DmaReach.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DmaReach.hpp; sourceTree = "<group>"; };
 		0D60EB5B8BD0E1D57B9A6D5E /* SessionScheduler.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = SessionScheduler.cpp; sourceTree = "<group>"; };
 		0D64275890CE0E64593121E3 /* BusManagerPolicyCoordinator.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = BusManagerPolicyCoordinator.hpp; sourceTree = "<group>"; };
 		0D6D570BBB3D40A554D48A8A /* ASFWSBP2Nub.iig */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.iig; path = ASFWSBP2Nub.iig; sourceTree = "<group>"; };
@@ -3266,6 +3267,7 @@
 		AF1ACC8667973EACC198C98C /* Hardware */ = {
 			isa = PBXGroup;
 			children = (
+				0D38F7B60D6007EA90DA5C1A /* DmaReach.hpp */,
 				DDC8BB9AD43F0F474F1D7F08 /* HardwareAccessGate.hpp */,
 				9404F1D903E3DB56F0EBE15A /* HardwareAccessScope.hpp */,
 				9F7E564F41599A92B7D55B12 /* HardwareInterface.cpp */,

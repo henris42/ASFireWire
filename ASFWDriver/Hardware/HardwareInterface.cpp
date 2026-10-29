@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <bit>
+#include <iterator>
+#include <string>
 
 #include "../Async/Interfaces/IAsyncControllerPort.hpp"
 #include "../Bus/IRM/IRMCSRConstants.hpp"
@@ -10,8 +12,12 @@
 
 #ifndef ASFW_HOST_TEST
 #include <DriverKit/IOLib.h>
+#include <DriverKit/IOMemoryDescriptor.h>
 #include <DriverKit/IOService.h>
 #include <DriverKit/OSAction.h>
+#include <DriverKit/OSData.h>
+#include <DriverKit/OSDictionary.h>
+#include <DriverKit/OSString.h>
 #include <PCIDriverKit/IOPCIFamilyDefinitions.h>
 #else
 #include <chrono>
@@ -59,13 +65,17 @@ constexpr uint16_t kRequiredCommandBits = 0;
 
 HardwareInterface::HardwareInterface() {
     phyLock_ = IOLockAlloc();
+    probeLock_ = IOLockAlloc();
+    reachLock_ = IOLockAlloc();
 }
 
 HardwareInterface::~HardwareInterface() {
     Detach();
-    if (phyLock_) {
-        IOLockFree(phyLock_);
-        phyLock_ = nullptr;
+    for (IOLock** lock : {&phyLock_, &probeLock_, &reachLock_}) {
+        if (*lock) {
+            IOLockFree(*lock);
+            *lock = nullptr;
+        }
     }
 }
 
@@ -159,6 +169,7 @@ kern_return_t HardwareInterface::Attach(IOService* owner, IOService* provider) {
     accessGate_.Open();
     bringUpTrace_.Step("pci command 0x%04x -> 0x%04x, BAR0 %llu bytes type %u",
                        command, commandVerify, barSize, barType);
+    ConfigureDmaReach(provider);
     return kIOReturnSuccess;
 }
 
@@ -180,6 +191,13 @@ void HardwareInterface::Detach() {
     // Make every later BAR operation a no-op before closing the PCI client.
     // RevokeAndDrain() also waits for any in-progress batch to finish.
     RevokeAndDrain();
+    if (reachLock_) {
+        // The probe command belongs to this provider; checked pages are just memory.
+        IOLockLock(reachLock_);
+        reachProbe_.reset();
+        reachablePages_.clear();
+        IOLockUnlock(reachLock_);
+    }
     if (device_) {
         if (owner_) {
             device_->Close(owner_);
@@ -732,12 +750,18 @@ void HardwareInterface::IntMaskClear(uint32_t bits) {
 
 std::optional<HardwareInterface::DMABuffer>
 HardwareInterface::AllocateDMA(size_t length, uint64_t options, size_t alignment) {
-    auto access = TryBeginAccess();
-    if (!access || !device_) {
-        ASFW_LOG_V0(Hardware, "DMA allocation failed - no PCI device");
-        return std::nullopt;
+    const bool reachableBefore = ReachablePagesOnly();
+    auto buffer = AllocateDMAOnce(length, options, alignment);
+    if (!buffer && !reachableBefore && ReachablePagesOnly()) {
+        // This allocation's own preparation bounced; its replacement takes
+        // reachable pages.
+        buffer = AllocateDMAOnce(length, options, alignment);
     }
+    return buffer;
+}
 
+std::optional<HardwareInterface::DMABuffer>
+HardwareInterface::AllocateDMAOnce(size_t length, uint64_t options, size_t alignment) {
     if ((options & (kIOMemoryDirectionOut | kIOMemoryDirectionIn)) !=
         (kIOMemoryDirectionOut | kIOMemoryDirectionIn)) {
         ASFW_LOG(Hardware, "⚠️  AllocateDMA: options=0x%llx may not be bidirectional", options);
@@ -774,20 +798,15 @@ HardwareInterface::AllocateDMA(size_t length, uint64_t options, size_t alignment
         alignment = std::max(alignment, std::bit_ceil(length));
     }
 
-    IOBufferMemoryDescriptor* buffer = nullptr;
-    kern_return_t kr = IOBufferMemoryDescriptor::Create(options, length, alignment, &buffer);
-    if (kr != kIOReturnSuccess || buffer == nullptr) {
-        ASFW_LOG_V0(Hardware,
-                    "IOBufferMemoryDescriptor::Create failed: 0x%08x (%zu bytes, alignment %zu%{public}s)",
-                    kr, length, alignment,
-                    length > kDMAPageGranule ? ", physically contiguous; memory may be fragmented" : "");
+    // Before taking the access gate: finding reachable pages can take many
+    // kernel calls, and interrupts and streams need the gate meanwhile.
+    OSSharedPtr<IOBufferMemoryDescriptor> buffer = CreateDMABuffer(length, alignment, options);
+    if (!buffer) {
         return std::nullopt;
     }
-
-    kr = buffer->SetLength(length);
-    if (kr != kIOReturnSuccess) {
-        ASFW_LOG_V0(Hardware, "IOBufferMemoryDescriptor::SetLength failed: 0x%08x", kr);
-        buffer->release();
+    auto access = TryBeginAccess();
+    if (!access || !device_) {
+        ASFW_LOG_V0(Hardware, "DMA allocation failed - no PCI device");
         return std::nullopt;
     }
 
@@ -796,10 +815,9 @@ HardwareInterface::AllocateDMA(size_t length, uint64_t options, size_t alignment
     spec.maxAddressBits = kDefaultDMAMaxAddressBits;
 
     IODMACommand* dmaCmd = nullptr;
-    kr = IODMACommand::Create(device_.get(), kIODMACommandCreateNoOptions, &spec, &dmaCmd);
+    kern_return_t kr = IODMACommand::Create(device_.get(), kIODMACommandCreateNoOptions, &spec, &dmaCmd);
     if (kr != kIOReturnSuccess || dmaCmd == nullptr) {
         ASFW_LOG_V0(Hardware, "IODMACommand::Create failed: 0x%08x", kr);
-        buffer->release();
         return std::nullopt;
     }
     OSSharedPtr<IODMACommand> command(dmaCmd, OSNoRetain);
@@ -808,20 +826,18 @@ HardwareInterface::AllocateDMA(size_t length, uint64_t options, size_t alignment
     uint32_t segmentCount = 32;
     uint64_t flags = 0;
 
-    kr = command->PrepareForDMA(kIODMACommandPrepareForDMANoOptions, buffer, 0, length, &flags,
+    kr = command->PrepareForDMA(kIODMACommandPrepareForDMANoOptions, buffer.get(), 0, length, &flags,
                                 &segmentCount, segments);
 
     if (kr != kIOReturnSuccess) {
         ASFW_LOG_V0(Hardware, "IODMACommand::PrepareForDMA failed: 0x%08x", kr);
         command->CompleteDMA(kIODMACommandCompleteDMANoOptions);
-        buffer->release();
         return std::nullopt;
     }
 
     if (segmentCount != 1) {
         ASFW_LOG_V0(Hardware, "❌ AllocateDMA: invalid segment count components=%u", segmentCount);
         command->CompleteDMA(kIODMACommandCompleteDMANoOptions);
-        buffer->release();
         return std::nullopt;
     }
 
@@ -829,7 +845,6 @@ HardwareInterface::AllocateDMA(size_t length, uint64_t options, size_t alignment
         ASFW_LOG_V0(Hardware, "❌ AllocateDMA: partial mapping len=%llu need=%zu",
                     (unsigned long long)segments[0].length, length);
         command->CompleteDMA(kIODMACommandCompleteDMANoOptions);
-        buffer->release();
         return std::nullopt;
     }
 
@@ -838,7 +853,6 @@ HardwareInterface::AllocateDMA(size_t length, uint64_t options, size_t alignment
     if (mappedAddress > 0xFFFFFFFFULL) {
         ASFW_LOG_V0(Hardware, "DMA IOVA 0x%llx exceeds 32-bit range", mappedAddress);
         command->CompleteDMA(kIODMACommandCompleteDMANoOptions);
-        buffer->release();
         return std::nullopt;
     }
 
@@ -846,13 +860,11 @@ HardwareInterface::AllocateDMA(size_t length, uint64_t options, size_t alignment
         ASFW_LOG_V0(Hardware, "❌ CRITICAL: DMA buffer misaligned! iova=0x%llx requested=%zu",
                     mappedAddress, alignment);
         command->CompleteDMA(kIODMACommandCompleteDMANoOptions);
-        buffer->release();
         return std::nullopt;
     }
 
     if (!VerifyDirectDMA(*command, *buffer, 0, "a DMA buffer")) {
         command->CompleteDMA(kIODMACommandCompleteDMANoOptions);
-        buffer->release();
         return std::nullopt;
     }
 
@@ -862,37 +874,36 @@ HardwareInterface::AllocateDMA(size_t length, uint64_t options, size_t alignment
         bringUpTrace_.Step("DMA %zu bytes at 0x%llx", length, mappedAddress);
     }
 
-    return DMABuffer{.descriptor = OSSharedPtr(buffer, OSNoRetain),
+    return DMABuffer{.descriptor = OSSharedPtr<IOMemoryDescriptor>(buffer.get(), OSRetain),
                      .dmaCommand = std::move(command),
                      .deviceAddress = mappedAddress,
                      .length = length};
 }
 
-std::optional<HardwareInterface::DMABuffer>
-HardwareInterface::AllocateDMAPaged(size_t length, uint64_t options) {
-    auto access = TryBeginAccess();
-    if (!access || !device_) {
-        ASFW_LOG_V0(Hardware, "DMA allocation failed - no PCI device");
-        return std::nullopt;
+std::optional<HardwareInterface::DMABuffer> HardwareInterface::AllocateDMAPaged(size_t length) {
+    const bool reachableBefore = ReachablePagesOnly();
+    auto buffer = AllocateDMAPagedOnce(length);
+    if (!buffer && !reachableBefore && ReachablePagesOnly()) {
+        buffer = AllocateDMAPagedOnce(length);
     }
+    return buffer;
+}
+
+std::optional<HardwareInterface::DMABuffer> HardwareInterface::AllocateDMAPagedOnce(size_t length) {
     if (length == 0) {
         return std::nullopt;
     }
 
-    // Page alignment keeps IOBufferMemoryDescriptor on its ordinary allocator:
-    // the pages are scattered, the CPU mapping is contiguous, and DMAMemoryManager
-    // translates per page run.
-    IOBufferMemoryDescriptor* rawBuffer = nullptr;
-    kern_return_t kr = IOBufferMemoryDescriptor::Create(options, length, kDMAPageGranule, &rawBuffer);
-    if (kr != kIOReturnSuccess || rawBuffer == nullptr) {
-        ASFW_LOG_V0(Hardware, "AllocateDMAPaged: IOBufferMemoryDescriptor::Create failed: 0x%08x (%zu bytes)",
-                    kr, length);
+    // Scattered pages: the CPU mapping is contiguous and DMAMemoryManager
+    // translates per page run. Created before taking the access gate (see
+    // AllocateDMAOnce).
+    OSSharedPtr<IOMemoryDescriptor> buffer = CreateDMAPages(length);
+    if (!buffer) {
         return std::nullopt;
     }
-    OSSharedPtr<IOBufferMemoryDescriptor> buffer(rawBuffer, OSNoRetain);
-    kr = buffer->SetLength(length);
-    if (kr != kIOReturnSuccess) {
-        ASFW_LOG_V0(Hardware, "AllocateDMAPaged: SetLength failed: 0x%08x", kr);
+    auto access = TryBeginAccess();
+    if (!access || !device_) {
+        ASFW_LOG_V0(Hardware, "DMA allocation failed - no PCI device");
         return std::nullopt;
     }
 
@@ -918,7 +929,7 @@ HardwareInterface::AllocateDMAPaged(size_t length, uint64_t options) {
         spec.options = kIODMACommandSpecificationNoOptions;
         spec.maxAddressBits = kDefaultDMAMaxAddressBits;
         IODMACommand* rawCommand = nullptr;
-        kr = IODMACommand::Create(device_.get(), kIODMACommandCreateNoOptions, &spec, &rawCommand);
+        kern_return_t kr = IODMACommand::Create(device_.get(), kIODMACommandCreateNoOptions, &spec, &rawCommand);
         if (kr != kIOReturnSuccess || rawCommand == nullptr) {
             ASFW_LOG_V0(Hardware, "AllocateDMAPaged: IODMACommand::Create failed: 0x%08x", kr);
             return failWindows();
@@ -988,6 +999,9 @@ HardwareInterface::AllocateDMAPaged(size_t length, uint64_t options) {
 bool HardwareInterface::VerifyDirectDMA(IODMACommand& command, IOMemoryDescriptor& buffer,
                                         uint64_t preparedOffset, const char* what) {
     constexpr uint64_t kProbeBytes = 16;
+
+    // Probes from different queues share the scratch page.
+    IOLockGuard probeGuard(probeLock_);
 
     // A probe that cannot run must not stop the driver; it only loses the
     // early diagnosis.
@@ -1071,18 +1085,329 @@ bool HardwareInterface::VerifyDirectDMA(IODMACommand& command, IOMemoryDescripto
     }
     if (!direct) {
         ASFW_LOG_V0(Hardware,
-                    "❌ DMA to %{public}s is bounced through a kernel copy: its pages lie above 4 GiB and no "
+                    "DMA to %{public}s is bounced through a kernel copy: its pages lie above 4 GiB and no "
                     "IOMMU remaps them. The OHCI controller addresses 32 bits of physical memory, so the "
-                    "device reads and writes the copy while the driver sees its own untouched pages "
-                    "(Self-IDs and packets never arrive). This is fixed on the machine, not in the driver: "
-                    "enable VT-d (BIOS VT-d on, a DMAR table, OpenCore Quirks DisableIoMapper=false so "
-                    "AppleVTD loads), give a VM a virtual IOMMU, or limit RAM to 4 GiB.",
+                    "device would read and write the copy while the driver sees its own untouched pages "
+                    "(Self-IDs and packets never arrive).",
                     what);
+        RequireReachablePages(what);
         return false;
     }
     ASFW_LOG_V2(Hardware, "DMA reach probe OK for %{public}s (offset %llu): device sees the driver's pages",
                 what, preparedOffset);
     return true;
+}
+
+namespace {
+// Pages tried for each reachable page wanted before giving up. On a 16 GiB
+// Intel machine about one page in seven lies below 4 GiB (the RAM under the
+// PCI hole); this leaves room for far fewer.
+constexpr size_t kReachTriesPerPage = 64;
+// Rejected pages stay allocated until the search ends, so the allocator cannot
+// hand the same page back; at most this many (256 MiB) at once.
+constexpr size_t kMaxRejectedPages = 65536;
+// Pages checked at a time for single-page buffers (an async payload per
+// transaction), so most of them need no search of their own.
+constexpr size_t kReachableReserveBatch = 16;
+} // namespace
+
+OSSharedPtr<IOBufferMemoryDescriptor>
+HardwareInterface::CreateDMABuffer(size_t length, size_t alignment, uint64_t direction) {
+    if (length == 0) {
+        return nullptr;
+    }
+    if (!ReachablePagesOnly()) {
+        IOBufferMemoryDescriptor* raw = nullptr;
+        const kern_return_t kr = IOBufferMemoryDescriptor::Create(direction, length, alignment, &raw);
+        if (kr != kIOReturnSuccess || raw == nullptr) {
+            ASFW_LOG_V0(Hardware,
+                        "IOBufferMemoryDescriptor::Create failed: 0x%08x (%zu bytes, alignment %zu%{public}s)",
+                        kr, length, alignment,
+                        length > kDMAPageGranule ? ", physically contiguous; memory may be fragmented" : "");
+            return nullptr;
+        }
+        OSSharedPtr<IOBufferMemoryDescriptor> buffer(raw, OSNoRetain);
+        if (const kern_return_t lengthKr = buffer->SetLength(length); lengthKr != kIOReturnSuccess) {
+            ASFW_LOG_V0(Hardware, "IOBufferMemoryDescriptor::SetLength failed: 0x%08x", lengthKr);
+            return nullptr;
+        }
+        return buffer;
+    }
+    // Reachable pages are allocated one at a time, so nothing is physically
+    // contiguous across a page.
+    if (length > kDMAPageGranule || alignment > kDMAPageGranule) {
+        ASFW_LOG_V0(Hardware,
+                    "DMA buffer of %zu bytes (alignment %zu) refused: pages are checked below 4 GiB "
+                    "one at a time, so nothing longer than a page is physically contiguous",
+                    length, alignment);
+        return nullptr;
+    }
+    auto pages = TakeReachablePages(1);
+    if (pages.empty()) {
+        return nullptr;
+    }
+    OSSharedPtr<IOBufferMemoryDescriptor> page = std::move(pages.front());
+    if (const kern_return_t lengthKr = page->SetLength(length); lengthKr != kIOReturnSuccess) {
+        ASFW_LOG_V0(Hardware, "IOBufferMemoryDescriptor::SetLength failed: 0x%08x", lengthKr);
+        return nullptr;
+    }
+    return page;
+}
+
+OSSharedPtr<IOMemoryDescriptor> HardwareInterface::CreateDMAPages(size_t length) {
+    if (length == 0) {
+        return nullptr;
+    }
+    if (!ReachablePagesOnly()) {
+        IOBufferMemoryDescriptor* raw = nullptr;
+        const kern_return_t kr =
+            IOBufferMemoryDescriptor::Create(kIOMemoryDirectionInOut, length, kDMAPageGranule, &raw);
+        if (kr != kIOReturnSuccess || raw == nullptr) {
+            ASFW_LOG_V0(Hardware, "DMA pages: IOBufferMemoryDescriptor::Create failed: 0x%08x (%zu bytes)",
+                        kr, length);
+            return nullptr;
+        }
+        OSSharedPtr<IOBufferMemoryDescriptor> buffer(raw, OSNoRetain);
+        if (const kern_return_t lengthKr = buffer->SetLength(length); lengthKr != kIOReturnSuccess) {
+            ASFW_LOG_V0(Hardware, "DMA pages: SetLength failed: 0x%08x", lengthKr);
+            return nullptr;
+        }
+        return OSSharedPtr<IOMemoryDescriptor>(buffer.get(), OSRetain);
+    }
+    const size_t pageCount = (length + kDMAPageGranule - 1) / kDMAPageGranule;
+    if (pageCount > DmaReach::kMaxCompositePages) {
+        ASFW_LOG_V0(Hardware, "DMA pages: %zu pages exceed the %zu one composed buffer holds", pageCount,
+                    DmaReach::kMaxCompositePages);
+        return nullptr;
+    }
+    auto pages = TakeReachablePages(pageCount);
+    if (pages.size() != pageCount) {
+        return nullptr;
+    }
+    // Exactly `length` long, like an ordinary buffer: consumers derive their
+    // geometry from it (IsochTransmitContext divides the payload slab by its
+    // slot count). The composed descriptor sums its members' lengths.
+    const size_t tail = length - (pageCount - 1) * kDMAPageGranule;
+    if (const kern_return_t kr = pages.back()->SetLength(tail); kr != kIOReturnSuccess) {
+        ASFW_LOG_V0(Hardware, "DMA pages: SetLength(%zu) failed: 0x%08x", tail, kr);
+        return nullptr;
+    }
+    return ComposeDMAPages(pages);
+}
+
+OSSharedPtr<IOMemoryDescriptor>
+HardwareInterface::ComposeDMAPages(std::vector<OSSharedPtr<IOBufferMemoryDescriptor>>& pages) {
+    if (pages.empty()) {
+        return nullptr;
+    }
+    if (pages.size() == 1) {
+        return OSSharedPtr<IOMemoryDescriptor>(pages.front().get(), OSRetain);
+    }
+#ifdef ASFW_HOST_TEST
+    return nullptr;
+#else
+    using DmaReach::kDescriptorsPerComposite;
+    // The composed descriptors retain their members (xnu
+    // IOMultiMemoryDescriptor::initWithDescriptors), so `pages` may go after this.
+    const auto compose = [](IOMemoryDescriptor* const* members, size_t count) {
+        IOMemoryDescriptor* table[kDescriptorsPerComposite]{};
+        for (size_t i = 0; i < count; ++i) {
+            table[i] = members[i];
+        }
+        IOMemoryDescriptor* composite = nullptr;
+        const kern_return_t kr = IOMemoryDescriptor::CreateWithMemoryDescriptors(
+            kIOMemoryDirectionInOut, static_cast<uint32_t>(count), table, &composite);
+        if (kr != kIOReturnSuccess || composite == nullptr) {
+            ASFW_LOG_V0(Hardware, "DMA pages: CreateWithMemoryDescriptors(%zu) failed: 0x%08x", count, kr);
+            return OSSharedPtr<IOMemoryDescriptor>();
+        }
+        return OSSharedPtr<IOMemoryDescriptor>(composite, OSNoRetain);
+    };
+
+    std::vector<OSSharedPtr<IOMemoryDescriptor>> groups;
+    groups.reserve((pages.size() + kDescriptorsPerComposite - 1) / kDescriptorsPerComposite);
+    for (size_t first = 0; first < pages.size(); first += kDescriptorsPerComposite) {
+        const size_t count = std::min(kDescriptorsPerComposite, pages.size() - first);
+        IOMemoryDescriptor* members[kDescriptorsPerComposite]{};
+        for (size_t i = 0; i < count; ++i) {
+            members[i] = pages[first + i].get();
+        }
+        auto group = compose(members, count);
+        if (!group) {
+            return nullptr;
+        }
+        groups.push_back(std::move(group));
+    }
+    if (groups.size() == 1) {
+        return groups.front();
+    }
+    IOMemoryDescriptor* members[kDescriptorsPerComposite]{};
+    for (size_t i = 0; i < groups.size(); ++i) {
+        members[i] = groups[i].get();
+    }
+    return compose(members, groups.size());
+#endif
+}
+
+std::vector<OSSharedPtr<IOBufferMemoryDescriptor>> HardwareInterface::TakeReachablePages(size_t count) {
+    std::vector<OSSharedPtr<IOBufferMemoryDescriptor>> taken;
+    if (count == 0 || reachLock_ == nullptr) {
+        return taken;
+    }
+    IOLockLock(reachLock_);
+    if (reachablePages_.size() < count) {
+        // Single pages refill a small reserve; a larger buffer searches for
+        // exactly what it lacks.
+        FillReachablePages(count == 1 ? kReachableReserveBatch : count - reachablePages_.size());
+    }
+    const size_t available = reachablePages_.size();
+    if (available >= count) {
+        const auto first = reachablePages_.end() - static_cast<std::ptrdiff_t>(count);
+        taken.assign(std::make_move_iterator(first), std::make_move_iterator(reachablePages_.end()));
+        reachablePages_.erase(first, reachablePages_.end());
+    }
+    const uint64_t tried = reachPagesTried_;
+    IOLockUnlock(reachLock_);
+    if (available < count) {
+        ASFW_LOG_V0(Hardware,
+                    "❌ DMA pages: %zu of the %zu pages needed lie where the controller reaches them "
+                    "(below 4 GiB%{public}s) after checking %llu. Free memory, limit RAM with the "
+                    "maxmem=2048 boot-arg, or give the controller an IOMMU (VT-d).",
+                    available, count, excludedRanges_.empty() ? "" : ", outside asfw-dma-exclude", tried);
+    }
+    return taken;
+}
+
+void HardwareInterface::FillReachablePages(size_t wanted) {
+    if (!reachProbe_) {
+        auto access = TryBeginAccess();
+        if (!access || !device_) {
+            return;
+        }
+        // Without an IOMMU a 64-bit preparation reports the page's physical
+        // address and never bounces; that is the bus address the controller uses.
+        IODMACommandSpecification spec{};
+        spec.options = kIODMACommandSpecificationNoOptions;
+        spec.maxAddressBits = 64;
+        IODMACommand* raw = nullptr;
+        const kern_return_t kr = IODMACommand::Create(device_.get(), kIODMACommandCreateNoOptions, &spec, &raw);
+        if (kr != kIOReturnSuccess || raw == nullptr) {
+            ASFW_LOG_V0(Hardware, "DMA pages: the address probe command could not be created: 0x%08x", kr);
+            return;
+        }
+        OSSharedPtr<IODMACommand> probe(raw, OSNoRetain);
+        reachProbe_ = std::move(probe);
+    }
+
+    std::vector<OSSharedPtr<IOBufferMemoryDescriptor>> rejected;
+    const size_t target = reachablePages_.size() + wanted;
+    const size_t maxTries = wanted * kReachTriesPerPage;
+    size_t tries = 0;
+    size_t kept = 0;
+    size_t excludedHits = 0;
+    while (reachablePages_.size() < target && tries < maxTries && rejected.size() < kMaxRejectedPages) {
+        ++tries;
+        IOBufferMemoryDescriptor* raw = nullptr;
+        if (IOBufferMemoryDescriptor::Create(kIOMemoryDirectionInOut, kDMAPageGranule, kDMAPageGranule, &raw) !=
+                kIOReturnSuccess ||
+            raw == nullptr) {
+            ASFW_LOG_V0(Hardware, "DMA pages: page allocation failed after %zu tries", tries);
+            break;
+        }
+        OSSharedPtr<IOBufferMemoryDescriptor> page(raw, OSNoRetain);
+        IOAddressSegment segment{};
+        uint32_t segmentCount = 1;
+        uint64_t flags = 0;
+        if (page->SetLength(kDMAPageGranule) != kIOReturnSuccess ||
+            reachProbe_->PrepareForDMA(kIODMACommandPrepareForDMANoOptions, page.get(), 0, kDMAPageGranule,
+                                       &flags, &segmentCount, &segment) != kIOReturnSuccess) {
+            ASFW_LOG_V0(Hardware, "DMA pages: a page could not be prepared after %zu tries", tries);
+            break;
+        }
+        (void)reachProbe_->CompleteDMA(kIODMACommandCompleteDMANoOptions);
+        if (segmentCount == 1 && segment.length == kDMAPageGranule &&
+            DmaReach::Reachable(segment.address, kDMAPageGranule, excludedRanges_)) {
+            reachablePages_.push_back(std::move(page));
+            ++kept;
+            continue;
+        }
+        if (const auto* hit = DmaReach::ExcludedHit(segment.address, kDMAPageGranule, excludedRanges_)) {
+            if (++excludedHits <= 4) {
+                ASFW_LOG(Hardware, "[DmaGuard] rejected page 0x%llx in excluded 0x%llx-0x%llx",
+                         segment.address, hit->first, hit->last);
+            }
+        }
+        rejected.push_back(std::move(page));
+    }
+    reachPagesTried_ += tries;
+    reachPagesRejected_ += rejected.size();
+    if (wanted > kReachableReserveBatch || excludedHits > 0 || reachablePages_.size() < target) {
+        ASFW_LOG(Hardware,
+                 "DMA pages: %zu checked, %zu kept below 4 GiB, %zu rejected (%zu in excluded ranges); "
+                 "%llu checked and %llu rejected since start",
+                 tries, kept, rejected.size(), excludedHits, reachPagesTried_, reachPagesRejected_);
+        if (bringUpTrace_.ConsoleActive()) {
+            bringUpTrace_.Step("DMA pages: %zu checked, %zu kept, %zu rejected", tries, kept,
+                               rejected.size());
+        }
+    }
+    // The rejected pages go back to the kernel here, after the search.
+}
+
+void HardwareInterface::RequireReachablePages(const char* why) {
+    if (reachablePagesOnly_.exchange(true, std::memory_order_acq_rel)) {
+        return;
+    }
+    ASFW_LOG_V0(Hardware,
+                "DMA: %{public}s bounced; from now on every DMA page is allocated on its own and kept "
+                "only below 4 GiB (no IOMMU remaps DMA on this machine)",
+                why);
+    bringUpTrace_.Step("DMA to %s bounced: pages below 4 GiB only from now on", why);
+}
+
+void HardwareInterface::ConfigureDmaReach(IOService* provider) {
+    excludedRanges_.clear();
+#ifndef ASFW_HOST_TEST
+    OSDictionary* properties = nullptr;
+    if (provider == nullptr || provider->CopyProperties(&properties) != kIOReturnSuccess ||
+        properties == nullptr) {
+        return;
+    }
+    std::string text;
+    OSObject* value = properties->getObject("asfw-dma-exclude");
+    if (auto* string = OSDynamicCast(OSString, value)) {
+        text = string->getCStringNoCopy();
+    } else if (auto* data = OSDynamicCast(OSData, value)) {
+        // OpenCore DeviceProperties hand a String over as bytes ending in NUL.
+        const auto* bytes = static_cast<const char*>(data->getBytesNoCopy());
+        size_t length = data->getLength();
+        while (bytes != nullptr && length > 0 && bytes[length - 1] == '\0') {
+            --length;
+        }
+        if (bytes != nullptr) {
+            text.assign(bytes, length);
+        }
+    }
+    properties->release();
+    if (text.empty()) {
+        return;
+    }
+    std::vector<DmaReach::BusRange> ranges;
+    if (!DmaReach::ParseExcludedRanges(text, ranges) || ranges.empty()) {
+        ASFW_LOG_V0(Hardware, "asfw-dma-exclude ignored: \"%{public}s\" is not first-last[,first-last] in hex",
+                    text.c_str());
+        return;
+    }
+    excludedRanges_ = std::move(ranges);
+    for (const auto& range : excludedRanges_) {
+        ASFW_LOG(Hardware, "[DmaGuard] DMA pages avoid 0x%llx-0x%llx (asfw-dma-exclude)", range.first,
+                 range.last);
+    }
+    reachablePagesOnly_.store(true, std::memory_order_release);
+    bringUpTrace_.Step("DMA avoids %zu excluded range(s): checked pages only", excludedRanges_.size());
+#else
+    (void)provider;
+#endif
 }
 
 OSSharedPtr<IODMACommand> HardwareInterface::CreateDMACommand() {
