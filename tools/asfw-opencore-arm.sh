@@ -11,16 +11,16 @@
 #
 #   sudo ./asfw-opencore-arm.sh --report            show controllers, paths and config state; change nothing
 #   sudo ./asfw-opencore-arm.sh                     arm every FireWire OHCI found (same as --arm)
-#   sudo ./asfw-opencore-arm.sh --disarm            remove asfw-armed (and asfw-dma-exclude) from every path
+#   sudo ./asfw-opencore-arm.sh --disarm            remove asfw-armed (and asfw-log-level) from every path
 #   options:
 #     --esp diskXsY      use this EFI partition (default: the ESP on the boot disk)
-#     --exclude RANGES   also set asfw-dma-exclude = "first-last[,first-last]" (hex bus addresses the
-#                        driver must not use for DMA, e.g. a passthrough bridge window in a VM)
-#     --trace            add dk=0x3 to boot-args: the kernel prints the driver's start-up steps on
-#                        the console and serial port (DriverKit stays enabled: bit 0x1)
-#     --no-trace         remove the dk= boot-arg again
-#     --vtd              also set Kernel → Quirks → DisableIoMapper = false (experimental: with AppleVTD
-#                        active the armed boot froze on one Z390 machine, b170)
+#     --vtd              also set Kernel → Quirks → DisableIoMapper = false. Needed with more than
+#                        4 GiB of RAM (and VT-d on in the BIOS); without it, boot with maxmem=2048
+#     --log-level SPEC   set asfw-log-level, the driver's log level from the first start step on:
+#                        off, error, warn (the default), info, debug or trace, optionally followed
+#                        by per-subsystem levels, e.g. "debug" or "info irm=debug isoch=trace".
+#                        The app and the login agent can change the level later without a reboot.
+#     --no-log-level     remove asfw-log-level again
 #     --dry-run          show what would change, write nothing
 #
 # Takes effect at the next boot. To undo by hand, copy the backup over config.plist,
@@ -33,26 +33,29 @@ ok()   { printf '  \033[32mok\033[0m    %s\n' "$*"; }
 warn() { printf '  \033[33mwarn\033[0m  %s\n' "$*"; }
 bad()  { printf '  \033[31mFAIL\033[0m  %s\n' "$*"; }
 info() { printf '        %s\n' "$*"; }
+# plget KEYPATH FILE: the raw value at KEYPATH, or nothing. On macOS 12 plutil prints a
+# missing key's error on stdout, so its exit status decides, not its output.
+plget() { local v; v=$(plutil -extract "$1" raw -o - "$2" 2>/dev/null) || return 0; printf '%s' "$v"; }
 
-MODE=arm; ESP=""; VTD=0; DRY=0; EXCLUDE=""; TRACE=""
+MODE=arm; ESP=""; VTD=0; DRY=0; LOGLEVEL=""; NO_LOGLEVEL=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --arm) MODE=arm ;;
         --disarm) MODE=disarm ;;
         --report) MODE=report ;;
         --esp) ESP="${2:-}"; shift ;;
-        --exclude) EXCLUDE="${2:-}"; shift ;;
-        --trace) TRACE=on ;;
-        --no-trace) TRACE=off ;;
+        --log-level) LOGLEVEL="${2:-}"; shift ;;
+        --no-log-level) NO_LOGLEVEL=1 ;;
         --vtd) VTD=1 ;;
         --dry-run) DRY=1 ;;
-        -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
         *) echo "unknown option: $1 (see --help)"; exit 2 ;;
     esac
     shift
 done
-if [ -n "$EXCLUDE" ] && ! printf '%s' "$EXCLUDE" | grep -Eq '^ *(0[xX])?[0-9a-fA-F]{1,16}-(0[xX])?[0-9a-fA-F]{1,16}( *[, ] *(0[xX])?[0-9a-fA-F]{1,16}-(0[xX])?[0-9a-fA-F]{1,16})* *$'; then
-    echo "--exclude wants first-last[,first-last] in hex, e.g. 0x90300000-0x903fffff"; exit 2
+LEVELS='off|error|warn|info|debug|trace'
+if [ -n "$LOGLEVEL" ] && ! grep -Eqi "^ *($LEVELS)( *[, ] *[a-z]+=($LEVELS))* *\$" <<< "$LOGLEVEL"; then
+    echo "--log-level wants a level ($LEVELS), optionally followed by subsystem=level pairs, e.g. \"info irm=debug\""; exit 2
 fi
 if [ "$MODE" != report ] && [ "$DRY" = 0 ] && [ "$(id -u)" != 0 ]; then
     echo "Run with sudo (it mounts the EFI partition and edits config.plist)."; exit 2
@@ -120,26 +123,26 @@ info "$C"
 armed_count() { plutil -extract "DeviceProperties.Add.$1" xml1 -o - "$C" 2>/dev/null | grep -c '<key>asfw-armed</key>'; }
 ver=$(nvram 4D1FDA02-38C7-4A6A-9CC6-4BCCA8B30102:opencore-version 2>/dev/null | awk '{print $2}')
 info "running OpenCore: ${ver:-unknown}"
-iomapper=$(plutil -extract Kernel.Quirks.DisableIoMapper raw -o - "$C" 2>/dev/null)
+iomapper=$(plget Kernel.Quirks.DisableIoMapper "$C")
 mem=$(( $(sysctl -n hw.memsize) / 1073741824 ))
 vtd_live=$(ioreg -c AppleVTD 2>/dev/null | grep -c '<class AppleVTD')
 while IFS=$'\t' read -r p n ids; do
     [ "$(armed_count "$p")" -gt 0 ] && ok "armed:   $p" || info "unarmed: $p"
-    ex=$(plutil -extract "DeviceProperties.Add.$p.asfw-dma-exclude" raw -o - "$C" 2>/dev/null)
-    [ -n "$ex" ] && info "         asfw-dma-exclude = $ex"
+    level=$(plget "DeviceProperties.Add.$p.asfw-log-level" "$C")
+    [ -n "$level" ] && info "         asfw-log-level = $level"
 done <<< "$PATHS"
-bootargs=$(plutil -extract "NVRAM.Add.$OCGUID.boot-args" raw -o - "$C" 2>/dev/null)
+bootargs=$(plget "NVRAM.Add.$OCGUID.boot-args" "$C")
 info "boot-args: ${bootargs:-<none>}"
 if [ "$mem" -gt 4 ]; then
     if [ "$vtd_live" -gt 0 ]; then
-        warn "$mem GiB RAM with AppleVTD active: an armed boot froze with VT-d on one machine (b170)."
-        info "If it freezes, boot another OpenCore and run --disarm, or set DisableIoMapper=true."
+        ok "$mem GiB RAM, VT-d active (AppleVTD): the controller's DMA is remapped below 4 GiB."
     else
-        ok "$mem GiB RAM, no IOMMU: the driver keeps every DMA page below 4 GiB itself (from b173)."
-        info "If it logs that too few pages lie below 4 GiB, add the boot-arg maxmem=2048."
+        warn "$mem GiB RAM and no IOMMU: the driver will refuse to start (its DMA would be bounced)."
+        info "Run with --vtd (and turn VT-d on in the BIOS), or add the boot-arg maxmem=2048."
     fi
 fi
-plutil -extract ACPI.Delete xml1 -o - "$C" 2>/dev/null | grep -qi 'DMAR' && warn "config deletes an ACPI DMAR table: VT-d will not be available"
+acpi_delete=$(plutil -extract ACPI.Delete xml1 -o - "$C" 2>/dev/null || true)
+grep -qi 'DMAR' <<< "$acpi_delete" && warn "config deletes an ACPI DMAR table: VT-d will not be available"
 
 [ "$MODE" = report ] && exit 0
 
@@ -155,11 +158,16 @@ while IFS=$'\t' read -r p n ids; do
             plutil -insert "DeviceProperties.Add.$p" -xml '<dict><key>asfw-armed</key><data>AQ==</data></dict>' "$TMP"
         fi && { ok "arm     $p"; changed=1; }
     fi
-    if [ "$MODE" = arm ] && [ -n "$EXCLUDE" ]; then
-        plutil -remove "DeviceProperties.Add.$p.asfw-dma-exclude" "$TMP" 2>/dev/null
-        plutil -insert "DeviceProperties.Add.$p.asfw-dma-exclude" -string "$EXCLUDE" "$TMP" \
-            && { ok "exclude $p  $EXCLUDE"; changed=1; }
+    level=$(plget "DeviceProperties.Add.$p.asfw-log-level" "$TMP")
+    if [ "$MODE" = arm ] && [ -n "$LOGLEVEL" ] && [ "$LOGLEVEL" != "$level" ]; then
+        [ -n "$level" ] && plutil -remove "DeviceProperties.Add.$p.asfw-log-level" "$TMP"
+        plutil -insert "DeviceProperties.Add.$p.asfw-log-level" -string "$LOGLEVEL" "$TMP" \
+            && { ok "log level  $p  $LOGLEVEL"; changed=1; }
     fi
+    if { [ "$MODE" = disarm ] || [ "$NO_LOGLEVEL" = 1 ]; } && [ -n "$level" ]; then
+        plutil -remove "DeviceProperties.Add.$p.asfw-log-level" "$TMP" && { ok "remove asfw-log-level  $p"; changed=1; }
+    fi
+    # The DMA exclusion property is gone from the driver (b178); old configs lose it on disarm.
     if [ "$MODE" = disarm ] && plutil -extract "DeviceProperties.Add.$p.asfw-dma-exclude" raw -o - "$TMP" >/dev/null 2>&1; then
         plutil -remove "DeviceProperties.Add.$p.asfw-dma-exclude" "$TMP" && { ok "remove asfw-dma-exclude  $p"; changed=1; }
     fi
@@ -171,16 +179,6 @@ while IFS=$'\t' read -r p n ids; do
 done <<< "$PATHS"
 if [ "$VTD" = 1 ] && [ "$iomapper" != false ]; then
     plutil -replace Kernel.Quirks.DisableIoMapper -bool NO "$TMP" && { ok "DisableIoMapper → false"; changed=1; }
-fi
-if [ -n "$TRACE" ]; then
-    old=$(plutil -extract "NVRAM.Add.$OCGUID.boot-args" raw -o - "$TMP" 2>/dev/null)
-    new=$(printf '%s' "$old" | tr ' ' '\n' | grep -v '^dk=' | tr '\n' ' ' | sed 's/  */ /g; s/^ //; s/ $//')
-    [ "$TRACE" = on ] && new="${new:+$new }dk=0x3"
-    if [ "$new" != "$old" ]; then
-        plutil -replace "NVRAM.Add.$OCGUID.boot-args" -string "$new" "$TMP" && { ok "boot-args → $new"; changed=1; }
-        plutil -extract "NVRAM.Delete.$OCGUID" xml1 -o - "$TMP" 2>/dev/null | grep -q '<string>boot-args</string>' \
-            || warn "NVRAM → Delete does not list boot-args: OpenCore may keep the old value in NVRAM"
-    fi
 fi
 plutil -lint "$TMP" >/dev/null || { bad "edited config does not lint; nothing written"; rm -f "$TMP"; exit 1; }
 
