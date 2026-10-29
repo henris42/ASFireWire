@@ -86,7 +86,7 @@ ASFW::Audio::Runtime::ZtsMirrorPublishResult PublishSharedZeroTimestampToHAL(
     }
 
     if (firstPublication) {
-        ASFW_LOG(
+        ASFW_LOG_DEBUG(
             DirectAudio,
             "Core audio hardware ZTS ready guid=0x%016llx sampleFrame=%llu hostTicks=%llu",
             ivars.device.guid,
@@ -269,8 +269,8 @@ bool SelectTxClockDomain(ASFWAudioDriver_IVars& ivars,
                 ASFW_LOG_ERROR(DirectAudio, "[StopTrace] stage=start-epoch rate=%u action=refuse-busy-or-invalid-timeline", rateHz);
                 return false;
             }
-            ASFW_LOG(DirectAudio, "[Zts] epoch=%llu source=receive reason=start-io rate=%u",
-                     epoch, rateHz);
+            ASFW_LOG_DEBUG(DirectAudio, "[Zts] epoch=%llu source=receive reason=start-io rate=%u",
+                           epoch, rateHz);
         }
     }
     ivars.runtime.mAudioTxClockProfile.store(

@@ -106,7 +106,7 @@ bool BufferRing::Finalize(uint64_t descriptorsIOVABase, uint64_t buffersIOVABase
         const bool continueFlag = i != (bufferCount_ - 1);
         const uint32_t branchWord = HW::MakeBranchWordAR(nextDescIOVA, continueFlag);
         if (branchWord == 0) {
-            ASFW_LOG(Async, "BufferRing::Finalize: invalid branchWord for index %zu (nextIOVA=0x%llx)", i, nextDescIOVA);
+            ASFW_LOG_ERROR(Async, "BufferRing::Finalize: invalid branchWord for index %zu (nextIOVA=0x%llx)", i, nextDescIOVA);
             return false;
         }
         desc.branchWord = branchWord;
@@ -187,7 +187,7 @@ std::optional<FilledBufferInfo> BufferRing::Dequeue() noexcept {
                      index, total_bytes_in_buffer, rereadTotal);
             uint8_t* fragAddr = GetBufferAddress(index);
             if (!fragAddr) {
-                ASFW_LOG(Async, "BufferRing::Dequeue: invalid buffer address at index %zu", index);
+                ASFW_LOG_ERROR(Async, "BufferRing::Dequeue: invalid buffer address at index %zu", index);
                 return std::nullopt;
             }
             if (dma_) {
@@ -231,10 +231,10 @@ std::optional<FilledBufferInfo> BufferRing::Dequeue() noexcept {
         }
         const kern_return_t recycleKr = Recycle(index);
         if (recycleKr != kIOReturnSuccess) {
-            ASFW_LOG(Async,
-                     "BufferRing::Dequeue: auto-recycle failed for buffer[%zu], kr=0x%08x",
-                     index,
-                     recycleKr);
+            ASFW_LOG_ERROR(Async,
+                           "BufferRing::Dequeue: auto-recycle failed for buffer[%zu], kr=0x%08x",
+                           index,
+                           recycleKr);
             return std::nullopt;
         }
         index = head_;
@@ -255,7 +255,7 @@ std::optional<FilledBufferInfo> BufferRing::Dequeue() noexcept {
 
         const uint8_t* bufferAddr = GetBufferAddress(index);
         if (!bufferAddr) {
-            ASFW_LOG(Async, "BufferRing::Dequeue: invalid buffer address at advanced index %zu", index);
+            ASFW_LOG_ERROR(Async, "BufferRing::Dequeue: invalid buffer address at advanced index %zu", index);
             return std::nullopt;
         }
 
@@ -314,15 +314,15 @@ std::optional<FilledBufferInfo> BufferRing::Dequeue() noexcept {
 
     // Validate resCount sanity
     if (resCount > reqCount) {
-        ASFW_LOG(Async, "BufferRing::Dequeue: invalid resCount %u > reqCount %u at index %zu",
-                 resCount, reqCount, index);
+        ASFW_LOG_ERROR(Async, "BufferRing::Dequeue: invalid resCount %u > reqCount %u at index %zu",
+                       resCount, reqCount, index);
         return std::nullopt;
     }
 
     // Get virtual address of buffer START (caller will add startOffset)
     uint8_t* bufferAddr = GetBufferAddress(index);
     if (!bufferAddr) {
-        ASFW_LOG(Async, "BufferRing::Dequeue: invalid buffer address at index %zu", index);
+        ASFW_LOG_ERROR(Async, "BufferRing::Dequeue: invalid buffer address at index %zu", index);
         return std::nullopt;
     }
 
@@ -424,7 +424,7 @@ size_t BufferRing::CopyReadableBytes(std::span<uint8_t> destination) noexcept {
 
         uint8_t* bufferAddr = GetBufferAddress(index);
         if (!bufferAddr) {
-            ASFW_LOG(Async, "BufferRing::CopyReadableBytes: invalid buffer address at index %zu", index);
+            ASFW_LOG_ERROR(Async, "BufferRing::CopyReadableBytes: invalid buffer address at index %zu", index);
             break;
         }
 
@@ -605,9 +605,9 @@ kern_return_t BufferRing::Recycle(size_t index) noexcept {
                 index, head_, (head_ + 1) % bufferCount_);
 
     if (resCountAfter != reqCount) {
-        ASFW_LOG(Async,
-                 "⚠️  BufferRing::Recycle[%zu]: UNEXPECTED! resCount=%u after reset, expected %u",
-                 index, resCountAfter, reqCount);
+        ASFW_LOG_WARNING(Async,
+                         "⚠️  BufferRing::Recycle[%zu]: UNEXPECTED! resCount=%u after reset, expected %u",
+                         index, resCountAfter, reqCount);
     }
 
     // Advance head to next buffer (circular)

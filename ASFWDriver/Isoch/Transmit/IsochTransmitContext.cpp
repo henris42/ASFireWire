@@ -58,7 +58,7 @@ IsochTransmitContext::~IsochTransmitContext() noexcept = default;
 kern_return_t IsochTransmitContext::Configure(uint8_t channel, uint8_t sid,
                                               FW::FwSpeed speed) noexcept {
     if (state_ != State::Unconfigured && state_ != State::Stopped) {
-        ASFW_LOG(Isoch, "IT: Configure rejected - state=%{public}s", TxStateName(state_));
+        ASFW_LOG_WARNING(Isoch, "IT: Configure rejected - state=%{public}s", TxStateName(state_));
         return kIOReturnBusy;
     }
 
@@ -72,15 +72,15 @@ kern_return_t IsochTransmitContext::Configure(uint8_t channel, uint8_t sid,
         if (!ring_.HasRings()) {
             const kern_return_t kr = ring_.SetupRings(*dmaMemory_);
             if (kr != kIOReturnSuccess) {
-                ASFW_LOG(Isoch, "IT: SetupRings failed");
+                ASFW_LOG_ERROR(Isoch, "IT: SetupRings failed");
                 return kr;
             }
         }
     }
 
     state_ = State::Configured;
-    ASFW_LOG(Isoch, "IT: Configured ch=%u sid=%u speed=S%u", channel, sid,
-             100U << static_cast<uint8_t>(speed));
+    ASFW_LOG_DEBUG(Isoch, "IT: Configured ch=%u sid=%u speed=S%u", channel, sid,
+                   100U << static_cast<uint8_t>(speed));
     return kIOReturnSuccess;
 }
 
@@ -96,7 +96,7 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
     if (NeedsQuiesce()) {
         // Replacing the maps would pull memory from under a context that may
         // still be fetching it.
-        ASFW_LOG(Isoch, "IT: shared memory rejected - state=%{public}s", TxStateName(state_));
+        ASFW_LOG_WARNING(Isoch, "IT: shared memory rejected - state=%{public}s", TxStateName(state_));
         return kIOReturnBusy;
     }
 
@@ -157,8 +157,8 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
             kr = dmaCmd->PrepareForDMA(kIODMACommandPrepareForDMANoOptions, payloadSlab, offset, window, &flags,
                                        &segmentCount, segments.data());
             if (kr != kIOReturnSuccess || segmentCount == 0) {
-                ASFW_LOG(Isoch, "IT: PrepareForDMA failed for payload slab window at %llu: 0x%08x (%{public}s)",
-                         offset, kr, ASFW::Logging::IOReturnName(kr));
+                ASFW_LOG_ERROR(Isoch, "IT: PrepareForDMA failed for payload slab window at %llu: 0x%08x (%{public}s)",
+                               offset, kr, ASFW::Logging::IOReturnName(kr));
                 return failWindows(kr != kIOReturnSuccess ? kr : kIOReturnInternalError);
             }
             payloadDmaCmds_.push_back(dmaCmd);
@@ -219,14 +219,14 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
                 }
             }
         }
-        ASFW_LOG(Isoch,
-                 "IT: Payload DMA mapped ctx=%u bytes=%llu segments=%zu windows=%zu multiPageRuns=%zu %{public}s",
-                 contextIndex_,
-                 payloadDmaMap_.SlabLength(),
-                 payloadDmaMap_.SegmentCount(),
-                 payloadDmaCmds_.size(),
-                 multiPageRuns,
-                 runList);
+        ASFW_LOG_DEBUG(Isoch,
+                       "IT: Payload DMA mapped ctx=%u bytes=%llu segments=%zu windows=%zu multiPageRuns=%zu %{public}s",
+                       contextIndex_,
+                       payloadDmaMap_.SlabLength(),
+                       payloadDmaMap_.SegmentCount(),
+                       payloadDmaCmds_.size(),
+                       multiPageRuns,
+                       runList);
         for (std::size_t i = 0; i < payloadDmaMap_.SegmentCount(); ++i) {
             const auto* segment = payloadDmaMap_.SegmentAt(i);
             ASFW_LOG_V2(Isoch,
@@ -291,19 +291,19 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
     controlBlock_->interruptInterval = interruptInterval;
     controlBlock_->ResetConsumerForArm();
     if (controlBlock_->abiVersion != kTxQueueAbiVersion) {
-        ASFW_LOG(Isoch, "IT: TX queue ABI write validation failed abi=%u",
-                 controlBlock_->abiVersion);
+        ASFW_LOG_ERROR(Isoch, "IT: TX queue ABI write validation failed abi=%u",
+                       controlBlock_->abiVersion);
         return kIOReturnInternalError;
     }
 
-    ASFW_LOG(Isoch, "IT: Mapped shared memory. payloadSegments=%zu metadataRing=%p controlBlock=%p slots=%u maxBytes=%u",
-             payloadDmaMap_.SegmentCount(), metadataRing_, controlBlock_, numSlots, maxPacketBytes);
+    ASFW_LOG_DEBUG(Isoch, "IT: Mapped shared memory. payloadSegments=%zu metadataRing=%p controlBlock=%p slots=%u maxBytes=%u",
+                   payloadDmaMap_.SegmentCount(), metadataRing_, controlBlock_, numSlots, maxPacketBytes);
     return kIOReturnSuccess;
 }
 
 kern_return_t IsochTransmitContext::Start() noexcept {
     if (state_ != State::Configured && state_ != State::Stopped) {
-        ASFW_LOG(Isoch, "IT: Start rejected - state=%{public}s", TxStateName(state_));
+        ASFW_LOG_WARNING(Isoch, "IT: Start rejected - state=%{public}s", TxStateName(state_));
         return kIOReturnNotReady;
     }
 
@@ -336,7 +336,7 @@ kern_return_t IsochTransmitContext::Start() noexcept {
     ring_.ResetForStart();
     ring_.SeedCycleTracking(*hardware_);
 
-    ASFW_LOG(Isoch, "IT: Starting transmit context (Stage 3 - ADK Phase 2)");
+    ASFW_LOG_DEBUG(Isoch, "IT: Starting transmit context (Stage 3 - ADK Phase 2)");
 
     const uint64_t preFillCount = controlBlock_->committedEnd.load(std::memory_order_relaxed);
     const auto primeStats =
@@ -365,7 +365,7 @@ kern_return_t IsochTransmitContext::Start() noexcept {
         ASFW_LOG(Isoch, "IT: Prime did not provide a valid initial command pointer");
         return kIOReturnInternalError;
     }
-    ASFW_LOG(Isoch, "IT: Writing CommandPtr=0x%08x", cmdPtr);
+    ASFW_LOG_DEBUG(Isoch, "IT: Writing CommandPtr=0x%08x", cmdPtr);
     auto access = hardware_->TryBeginAccess();
     if (!access) return kIOReturnNotReady;
     access.Write(cmdPtrReg, cmdPtr);
@@ -389,10 +389,10 @@ kern_return_t IsochTransmitContext::Start() noexcept {
     access.Write(Register32::kIsoXmitIntEventClear, (1u << contextIndex_));
     access.Write(Register32::kIsoXmitIntMaskSet, (1u << contextIndex_));
     access.Write(Register32::kIntMaskSet, IntEventBits::kIsochTx);
-    ASFW_LOG(Isoch, "IT: start ctx=%u ctrlBefore=0x%08x cycleMatchEnable=%u pendingEvents=0x%08x",
-             contextIndex_, ctrlBefore,
-             (ctrlBefore & Driver::ContextControl::kItCycleMatchEnable) != 0 ? 1U : 0U,
-             pendingEvents);
+    ASFW_LOG_DEBUG(Isoch, "IT: start ctx=%u ctrlBefore=0x%08x cycleMatchEnable=%u pendingEvents=0x%08x",
+                   contextIndex_, ctrlBefore,
+                   (ctrlBefore & Driver::ContextControl::kItCycleMatchEnable) != 0 ? 1U : 0U,
+                   pendingEvents);
 
     access.Write(ctrlSetReg, Driver::ContextControl::kRun);
 
@@ -404,16 +404,16 @@ kern_return_t IsochTransmitContext::Start() noexcept {
     const bool deadSet = (readCtl & Driver::ContextControl::kDead) != 0;
     const uint32_t eventCode = (readCtl & Driver::ContextControl::kEventCodeMask) >> Driver::ContextControl::kEventCodeShift;
 
-    ASFW_LOG(Isoch, "IT: Readback Cmd=0x%08x Ctl=0x%08x (run=%d active=%d dead=%d evt=0x%02x)",
-             readCmd, readCtl, runSet, activeSet, deadSet, eventCode);
+    ASFW_LOG_DEBUG(Isoch, "IT: Readback Cmd=0x%08x Ctl=0x%08x (run=%d active=%d dead=%d evt=0x%02x)",
+                   readCmd, readCtl, runSet, activeSet, deadSet, eventCode);
 
     if (deadSet) {
-        ASFW_LOG(Isoch, "❌ IT: Context is DEAD immediately! Check descriptor program.");
+        ASFW_LOG_ERROR(Isoch, "❌ IT: Context is DEAD immediately! Check descriptor program.");
         return kIOReturnNotPermitted;
     }
 
     state_ = State::Running;
-    ASFW_LOG(Isoch, "IT: Started successfully");
+    ASFW_LOG_DEBUG(Isoch, "IT: Started successfully");
     return kIOReturnSuccess;
 }
 
@@ -516,12 +516,12 @@ kern_return_t IsochTransmitContext::Stop() noexcept {
                  ringCounters.criticalGapEvents.load(std::memory_order_relaxed),
                  ringCounters.maxDeltaConsumed.load(std::memory_order_relaxed),
                  ringCounters.mappedRegionExhausted.load(std::memory_order_relaxed));
-        ASFW_LOG(Isoch, "IT: cycle accounting: ctx=%u completed=%llu lostCycles=%llu abnormalCompletions=%llu lastAbnormal=0x%04x",
-                 contextIndex_,
-                 static_cast<unsigned long long>(ringCounters.completedPackets.load(std::memory_order_relaxed)),
-                 static_cast<unsigned long long>(ringCounters.lostCycles.load(std::memory_order_relaxed)),
-                 static_cast<unsigned long long>(ringCounters.abnormalCompletions.load(std::memory_order_relaxed)),
-                 ringCounters.lastAbnormalStatus.load(std::memory_order_relaxed));
+        ASFW_LOG_DEBUG(Isoch, "IT: cycle accounting: ctx=%u completed=%llu lostCycles=%llu abnormalCompletions=%llu lastAbnormal=0x%04x",
+                       contextIndex_,
+                       static_cast<unsigned long long>(ringCounters.completedPackets.load(std::memory_order_relaxed)),
+                       static_cast<unsigned long long>(ringCounters.lostCycles.load(std::memory_order_relaxed)),
+                       static_cast<unsigned long long>(ringCounters.abnormalCompletions.load(std::memory_order_relaxed)),
+                       ringCounters.lastAbnormalStatus.load(std::memory_order_relaxed));
         ring_.LogAbnormalSummary(contextIndex_);
         return kIOReturnSuccess;
     }
@@ -555,7 +555,7 @@ void IsochTransmitContext::DoRefillOnce(uint64_t eventHostTicks,
         payloadDmaMap_);
     if (!outcome.ok) {
         const auto& counters = ring_.RTCounters();
-        ASFW_LOG(
+        ASFW_LOG_ERROR(
             Isoch,
             "IT: Refill failed reason=%{public}s ctrl=0x%08x streamStatus=%u "
             "cmdPtr=0x%08x cmdAddr=0x%08x hwPacket=%u "
@@ -618,7 +618,7 @@ void IsochTransmitContext::StopImmediatelyForTxFault() noexcept {
     // (OHCI 1.1 §3.1.1). Stop() still has to see ACTIVE clear before the
     // memory may go.
     state_ = State::Faulted;
-    ASFW_LOG(Isoch, "IT FATAL STOP: RUN cleared and interrupt masked; awaiting Stop() quiesce");
+    ASFW_LOG_ERROR(Isoch, "IT FATAL STOP: RUN cleared and interrupt masked; awaiting Stop() quiesce");
 }
 
 void IsochTransmitContext::Poll() noexcept {
@@ -668,13 +668,13 @@ void IsochTransmitContext::Poll() noexcept {
                 const uint32_t ctrl = access ? access.Read(static_cast<Register32>(
                     DMAContextHelpers::IsoXmitContextControl(contextIndex_))) : 0;
                 const uint32_t latchedIntEvents = access ? access.Read(Register32::kIntEvent) : 0;
-                ASFW_LOG(Isoch,
-                         "IT FATAL: interrupt path silent across %u "
-                         "consecutive watchdog kicks; stopping context "
-                         "(ctrl=0x%08x intEvent=0x%08x)",
-                         irqSilentKickStreak_,
-                         ctrl,
-                         latchedIntEvents);
+                ASFW_LOG_ERROR(Isoch,
+                               "IT FATAL: interrupt path silent across %u "
+                               "consecutive watchdog kicks; stopping context "
+                               "(ctrl=0x%08x intEvent=0x%08x)",
+                               irqSilentKickStreak_,
+                               ctrl,
+                               latchedIntEvents);
                 // Close the scope before the fault stop: HardwareAccessGate is a plain
                 // os_unfair_lock, and StopImmediatelyForTxFault opens its own scope to
                 // clear RUN. Holding this one across the call re-enters the lock on the

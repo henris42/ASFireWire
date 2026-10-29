@@ -97,10 +97,10 @@ static_assert(sizeof(HeaderPhyPacket) == 16);
 
 [[nodiscard]] bool ValidateContext(const PacketContext& context, const char* operation) {
     if ((context.sourceNodeID & kNodeIDMask) == 0) {
-        ASFW_LOG(Async,
-                 "PacketBuilder::%{public}s: Source NodeID missing (context source=0x%04x)",
-                 operation,
-                 context.sourceNodeID);
+        ASFW_LOG_WARNING(Async,
+                         "PacketBuilder::%{public}s: Source NodeID missing (context source=0x%04x)",
+                         operation,
+                         context.sourceNodeID);
         return false;
     }
 

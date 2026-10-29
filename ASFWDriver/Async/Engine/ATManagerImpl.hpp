@@ -119,10 +119,10 @@ kern_return_t ATManager<ContextT, RingT, RoleTag>::SubmitPath1_(const Descriptor
             const uint32_t ctrl = ctx().ReadControl();
             const uint32_t cmdPtrReg = ctx().ReadCommandPtr();
             const uint64_t sinceDrainNs = NowNs() - ctx().LastDrainStopNs();
-            ASFW_LOG(Async, "ctx=%{public}s txid=%u gen=%u P1_ARM while ACTIVE after clearRun poll gave up ctrl=0x%08x cmdPtr=0x%08x state=%{public}s head=%zu tail=%zu prevLast=%u drainStops=%u sinceDrainUs=%llu",
-                     RoleTag::kContextName, txid, generation_, ctrl, cmdPtrReg, ToString(this->state_),
-                     ring().Head(), ring().Tail(), ring().PrevLastBlocks(),
-                     ctx().DrainStopCount(), sinceDrainNs / 1000);
+            ASFW_LOG_WARNING(Async, "ctx=%{public}s txid=%u gen=%u P1_ARM while ACTIVE after clearRun poll gave up ctrl=0x%08x cmdPtr=0x%08x state=%{public}s head=%zu tail=%zu prevLast=%u drainStops=%u sinceDrainUs=%llu",
+                             RoleTag::kContextName, txid, generation_, ctrl, cmdPtrReg, ToString(this->state_),
+                             ring().Head(), ring().Tail(), ring().PrevLastBlocks(),
+                             ctx().DrainStopCount(), sinceDrainNs / 1000);
             if (!wedgeDumped_) {
                 wedgeDumped_ = true;
                 logWedgeSnapshot_(txid, cmdPtrReg);

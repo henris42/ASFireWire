@@ -215,7 +215,7 @@ public:
         // (fireface_hw.cpp:913). RME 3.41 instead writes this mask once before
         // init (hwStart 0x3f05); a user's FF800 played only with this order.
         if (const IOReturn kr = WriteFetchMask(true); kr != kIOReturnSuccess) {
-            ASFW_LOG(Audio, "[RME] fetch mask open failed kr=0x%08x", kr);
+            ASFW_LOG_ERROR(Audio, "[RME] fetch mask open failed kr=0x%08x", kr);
             return std::unexpected(kr);
         }
         ASFW_LOG(Audio, "[RME] streaming confirmed: fetch mask open, device plays host audio");
@@ -246,7 +246,7 @@ public:
         const std::array<uint32_t, 4> ff400{0, 0, 0, 1};
         const IOReturn kr = model_ == FirefaceModel::kFF800
             ? WriteWords(Register::kFF800Stop, ff800) : WriteWords(Register::kFF400Stop, ff400);
-        if (kr != kIOReturnSuccess) { ASFW_LOG(Audio, "[RME] stop write failed kr=0x%08x", kr); return kr; }
+        if (kr != kIOReturnSuccess) { ASFW_LOG_ERROR(Audio, "[RME] stop write failed kr=0x%08x", kr); return kr; }
         ASFW_LOG(Audio, "[RME] stopped");
         enabled_ = false; initialized_ = false; configured_ = false; lastHealthy_.reset();
         // Stop first, then mute every channel (Linux finish_session,
@@ -443,8 +443,8 @@ private:
         lastDryRun_ = {};
         auto flash = ReadFlashSettings();
         if (!flash) {
-            ASFW_LOG(Audio, "[RME] settings %{public}s: flash read failed kr=0x%08x",
-                     model, flash.error());
+            ASFW_LOG_ERROR(Audio, "[RME] settings %{public}s: flash read failed kr=0x%08x",
+                           model, flash.error());
         } else {
             lastDryRun_.flash = *flash;
             const auto& q = *flash;

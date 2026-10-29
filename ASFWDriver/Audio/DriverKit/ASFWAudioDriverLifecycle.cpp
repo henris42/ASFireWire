@@ -18,26 +18,26 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
     ASFW_LOG(Audio, "ASFWAudioDriver: Start() - provider is ASFWAudioNub");
 
     if (!ivars) {
-        ASFW_LOG(Audio, "ASFWAudioDriver: Start() failed - ivars not initialized");
+        ASFW_LOG_ERROR(Audio, "ASFWAudioDriver: Start() failed - ivars not initialized");
         return kIOReturnNotReady;
     }
     if (!provider) {
-        ASFW_LOG(Audio, "ASFWAudioDriver: Start() failed - null provider");
+        ASFW_LOG_ERROR(Audio, "ASFWAudioDriver: Start() failed - null provider");
         return kIOReturnBadArgument;
     }
 
     kern_return_t error = Start(provider, SUPERDISPATCH);
     if (error != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "ASFWAudioDriver: super::Start() failed: %d", error);
+        ASFW_LOG_ERROR(Audio, "ASFWAudioDriver: super::Start() failed: %d", error);
         return error;
     }
 
     auto failStart = [&](kern_return_t status, const char* stage) -> kern_return_t {
         const kern_return_t result = (status == kIOReturnSuccess) ? kIOReturnError : status;
-        ASFW_LOG(Audio,
-                 "ASFWAudioDriver: Start() failed at %{public}s kr=0x%x (%{public}s) - unwinding partial ADK graph",
-                 stage ? stage : "unknown",
-                 result, ASFW::Logging::IOReturnName(result));
+        ASFW_LOG_ERROR(Audio,
+                       "ASFWAudioDriver: Start() failed at %{public}s kr=0x%x (%{public}s) - unwinding partial ADK graph",
+                       stage ? stage : "unknown",
+                       result, ASFW::Logging::IOReturnName(result));
         if (ivars->device.audioNub) {
             (void)ivars->device.audioNub->RegisterZtsAnchorAction(nullptr);
             (void)ivars->device.audioNub->RegisterTxPreparationAction(nullptr);
@@ -176,9 +176,9 @@ void IMPL(ASFWAudioDriver, DeviceClockChanged)
     const kern_return_t kr =
         ivars->audioDevice->RequestExternalRateResync(nominalRateHz);
     if (kr != kIOReturnSuccess) {
-        ASFW_LOG(Audio,
-                 "ASFWAudioDriver: external rate resync request failed: 0x%x (%{public}s)",
-                 kr, ASFW::Logging::IOReturnName(kr));
+        ASFW_LOG_WARNING(Audio,
+                         "ASFWAudioDriver: external rate resync request failed: 0x%x (%{public}s)",
+                         kr, ASFW::Logging::IOReturnName(kr));
     }
 }
 
@@ -190,7 +190,7 @@ void IMPL(ASFWAudioDriver, IoRestartRequired)
     }
     const kern_return_t kr = ivars->audioDevice->RequestIoRestart(reason);
     if (kr != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "ASFWAudioDriver: IO restart request failed: 0x%x (%{public}s)", kr, ASFW::Logging::IOReturnName(kr));
+        ASFW_LOG_WARNING(Audio, "ASFWAudioDriver: IO restart request failed: 0x%x (%{public}s)", kr, ASFW::Logging::IOReturnName(kr));
     }
 }
 
@@ -209,69 +209,69 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
                                            IOUserAudioStartStopFlags in_flags)
 {
     if (!ivars || !ivars->audioDevice) {
-        ASFW_LOG(Audio, "ASFWAudioDriver: StartDevice failed - not initialized");
+        ASFW_LOG_ERROR(Audio, "ASFWAudioDriver: StartDevice failed - not initialized");
         return kIOReturnNotReady;
     }
     if (in_object_id != ivars->audioDevice->GetObjectID()) {
-        ASFW_LOG(Audio,
-                 "ASFWAudioDriver: StartDevice failed - unexpected object id=%u deviceId=%u",
-                 in_object_id,
-                 ivars->audioDevice->GetObjectID());
+        ASFW_LOG_ERROR(Audio,
+                       "ASFWAudioDriver: StartDevice failed - unexpected object id=%u deviceId=%u",
+                       in_object_id,
+                       ivars->audioDevice->GetObjectID());
         return kIOReturnBadArgument;
     }
     if ((!ivars->inputStream && !ivars->outputStream) || !ivars->device.audioNub) {
-        ASFW_LOG(Audio,
-                 "ASFWAudioDriver: StartDevice failed - incomplete graph input=%p output=%p nub=%p",
-                 static_cast<void*>(ivars->inputStream.get()),
-                 static_cast<void*>(ivars->outputStream.get()),
-                 static_cast<void*>(ivars->device.audioNub));
+        ASFW_LOG_ERROR(Audio,
+                       "ASFWAudioDriver: StartDevice failed - incomplete graph input=%p output=%p nub=%p",
+                       static_cast<void*>(ivars->inputStream.get()),
+                       static_cast<void*>(ivars->outputStream.get()),
+                       static_cast<void*>(ivars->device.audioNub));
         return kIOReturnNotReady;
     }
     if (!ivars->runtime.directAudioSkeletonBound.load(std::memory_order_acquire) ||
         !ivars->runtime.directAudioGraph.control ||
         !ivars->runtime.directAudioGraph.HasInput() ||
         !ivars->runtime.directAudioGraph.HasOutput()) {
-        ASFW_LOG(DirectAudio,
-                 "ADK FATAL StartDevice direct graph not ready guid=0x%016llx skeleton=%d control=%p hasIn=%d hasOut=%d",
-                 ivars->device.guid,
-                 ivars->runtime.directAudioSkeletonBound.load(std::memory_order_acquire),
-                 static_cast<void*>(ivars->runtime.directAudioGraph.control),
-                 ivars->runtime.directAudioGraph.HasInput(),
-                 ivars->runtime.directAudioGraph.HasOutput());
+        ASFW_LOG_ERROR(DirectAudio,
+                       "ADK FATAL StartDevice direct graph not ready guid=0x%016llx skeleton=%d control=%p hasIn=%d hasOut=%d",
+                       ivars->device.guid,
+                       ivars->runtime.directAudioSkeletonBound.load(std::memory_order_acquire),
+                       static_cast<void*>(ivars->runtime.directAudioGraph.control),
+                       ivars->runtime.directAudioGraph.HasInput(),
+                       ivars->runtime.directAudioGraph.HasOutput());
         return kIOReturnNotReady;
     }
 
-    ASFW_LOG(Audio,
-             "ASFWAudioDriver: StartDevice(id=%u flags=0x%llx deviceId=%u inStreamId=%u outStreamId=%u)",
-             in_object_id,
-             static_cast<uint64_t>(in_flags),
-             ivars->audioDevice->GetObjectID(),
-             ivars->inputStream ? ivars->inputStream->GetObjectID() : 0,
-             ivars->outputStream ? ivars->outputStream->GetObjectID() : 0);
+    ASFW_LOG_DEBUG(Audio,
+                   "ASFWAudioDriver: StartDevice(id=%u flags=0x%llx deviceId=%u inStreamId=%u outStreamId=%u)",
+                   in_object_id,
+                   static_cast<uint64_t>(in_flags),
+                   ivars->audioDevice->GetObjectID(),
+                   ivars->inputStream ? ivars->inputStream->GetObjectID() : 0,
+                   ivars->outputStream ? ivars->outputStream->GetObjectID() : 0);
 
     // Transport setup (TX isoch, prefill, streaming start) is handled by
     // ASFWAudioDevice::StartIO, called by the framework via super::StartDevice.
     const kern_return_t superStartKr = super::StartDevice(in_object_id, in_flags);
     if (superStartKr != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "ASFWAudioDriver: super::StartDevice failed: 0x%x (%{public}s)", superStartKr, ASFW::Logging::IOReturnName(superStartKr));
+        ASFW_LOG_ERROR(Audio, "ASFWAudioDriver: super::StartDevice failed: 0x%x (%{public}s)", superStartKr, ASFW::Logging::IOReturnName(superStartKr));
         return superStartKr;
     }
-    ASFW_LOG(DirectAudio, "ADK DBG IO super StartDevice ok id=%u", in_object_id);
+    ASFW_LOG_DEBUG(DirectAudio, "ADK DBG IO super StartDevice ok id=%u", in_object_id);
 
-    ASFW_LOG(Audio, "ASFWAudioDriver: Device started (transport via StartIO)");
+    ASFW_LOG_DEBUG(Audio, "ASFWAudioDriver: Device started (transport via StartIO)");
     return kIOReturnSuccess;
 }
 
 kern_return_t ASFWAudioDriver::StopDevice(IOUserAudioObjectID in_object_id,
                                           IOUserAudioStartStopFlags in_flags)
 {
-    ASFW_LOG(Audio, "ASFWAudioDriver: StopDevice(id=%u)", in_object_id);
+    ASFW_LOG_DEBUG(Audio, "ASFWAudioDriver: StopDevice(id=%u)", in_object_id);
 
     // Transport teardown (stop streaming, free TX resources) is handled by
     // ASFWAudioDevice::StopIO, called by the framework via super::StopDevice.
     const kern_return_t superStopKr = super::StopDevice(in_object_id, in_flags);
     if (superStopKr != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "ASFWAudioDriver: super::StopDevice failed: 0x%x (%{public}s)", superStopKr, ASFW::Logging::IOReturnName(superStopKr));
+        ASFW_LOG_ERROR(Audio, "ASFWAudioDriver: super::StopDevice failed: 0x%x (%{public}s)", superStopKr, ASFW::Logging::IOReturnName(superStopKr));
     }
 
     return superStopKr;

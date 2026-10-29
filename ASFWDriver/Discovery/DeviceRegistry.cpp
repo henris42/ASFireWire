@@ -213,7 +213,7 @@ DeviceRecord DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPolic
                    DeviceProfiles::Audio::CatalogResolutionError::AmbiguousIdentity) {
             device.isAudioCandidate = false;
             device.quarantineReason = QuarantineReason::AmbiguousIdentity;
-            ASFW_LOG(Discovery, "Device GUID=0x%016llx rejected due to ambiguous catalog identity", guid);
+            ASFW_LOG_WARNING(Discovery, "Device GUID=0x%016llx rejected due to ambiguous catalog identity", guid);
         } else {
             device.quarantineReason = QuarantineReason::None;
             device.isAudioCandidate = IsAudioCandidate(rom);
@@ -279,8 +279,8 @@ void DeviceRegistry::MarkDuplicateGuid(Generation gen, Guid64 guid, uint8_t node
         it->second.state = LifeState::Quarantined;
         it->second.audioPolicy.reset();
         it->second.avcCommandFilter = AvcCommandFilterId::BlockAll;
-        ASFW_LOG(Discovery, "⚠️  Duplicate GUID detected: 0x%016llx node=%u gen=%u (quarantined)",
-                 guid, nodeId, gen.value);
+        ASFW_LOG_WARNING(Discovery, "⚠️  Duplicate GUID detected: 0x%016llx node=%u gen=%u (quarantined)",
+                         guid, nodeId, gen.value);
     }
     IOLockUnlock(lock_);
 }

@@ -77,7 +77,7 @@ kern_return_t IsochHandler::TestIRMAllocation(IOUserClientMethodArguments* args)
     auto* avcDiscovery = controllerCore->GetAVCDiscovery();
     const auto units = avcDiscovery->Units();
     if (units.empty()) {
-        ASFW_LOG(UserClient, "❌ No AVC Unit found for sample rate configuration.");
+        ASFW_LOG_ERROR(UserClient, "❌ No AVC Unit found for sample rate configuration.");
         return kIOReturnNotFound;
     }
     const auto& avcUnit = units[0]; // Assume first unit is target
@@ -104,8 +104,8 @@ kern_return_t IsochHandler::TestIRMAllocation(IOUserClientMethodArguments* args)
     avcUnit->Control(AVC::Cmd::PlugSignalFormatCommand{.operands = ops},
                      [irmClient, driver = driver_](AVC::Expected<AVC::Cmd::PlugSignalFormat> result) {
         if (!result) {
-            ASFW_LOG(UserClient, "❌ Failed to set 48kHz on Unit Plug 0: %u",
-                     static_cast<unsigned>(result.error().kind));
+            ASFW_LOG_ERROR(UserClient, "❌ Failed to set 48kHz on Unit Plug 0: %u",
+                           static_cast<unsigned>(result.error().kind));
             // Fallback or abort? Let's try Output Plug if Input failed, or just abort.
             return;
         }
@@ -126,7 +126,7 @@ kern_return_t IsochHandler::TestIRMAllocation(IOUserClientMethodArguments* args)
                                                             // different diagnostic messages
                     ASFW_LOG(UserClient, "✅ IRM allocation succeeded!");
                 } else {
-                    ASFW_LOG(UserClient, "❌ IRM allocation failed: %{public}s", ASFW::IRM::ToString(status));
+                    ASFW_LOG_ERROR(UserClient, "❌ IRM allocation failed: %{public}s", ASFW::IRM::ToString(status));
                 }
             });
     });
@@ -158,7 +158,7 @@ kern_return_t IsochHandler::TestIRMRelease(IOUserClientMethodArguments* args) {
                                                         // different diagnostic messages
                 ASFW_LOG(UserClient, "✅ IRM release succeeded!");
             } else {
-                ASFW_LOG(UserClient, "❌ IRM release failed: %{public}s", ASFW::IRM::ToString(status));
+                ASFW_LOG_ERROR(UserClient, "❌ IRM release failed: %{public}s", ASFW::IRM::ToString(status));
             }
         });
 
@@ -190,7 +190,7 @@ kern_return_t IsochHandler::TestCMPConnectOPCR(IOUserClientMethodArguments* args
             ASFW_LOG(UserClient, "✅ CMP oPCR connect succeeded!");
 
         } else {
-            ASFW_LOG(UserClient, "❌ CMP oPCR connect failed: %d", static_cast<int>(status));
+            ASFW_LOG_ERROR(UserClient, "❌ CMP oPCR connect failed: %d", static_cast<int>(status));
         }
     });
 
@@ -216,7 +216,7 @@ kern_return_t IsochHandler::TestCMPDisconnectOPCR(IOUserClientMethodArguments* a
         if (status == ASFW::CMP::CMPStatus::Success) {
             ASFW_LOG(UserClient, "✅ CMP oPCR disconnect succeeded!");
         } else {
-            ASFW_LOG(UserClient, "❌ CMP oPCR disconnect failed: %d", static_cast<int>(status));
+            ASFW_LOG_ERROR(UserClient, "❌ CMP oPCR disconnect failed: %d", static_cast<int>(status));
         }
     });
 
@@ -245,7 +245,7 @@ kern_return_t IsochHandler::TestCMPConnectIPCR(IOUserClientMethodArguments* args
                                                        // diagnostic messages
             ASFW_LOG(UserClient, "✅ CMP iPCR connect succeeded!");
         } else {
-            ASFW_LOG(UserClient, "❌ CMP iPCR connect failed: %d", static_cast<int>(status));
+            ASFW_LOG_ERROR(UserClient, "❌ CMP iPCR connect failed: %d", static_cast<int>(status));
         }
     });
 
@@ -272,7 +272,7 @@ kern_return_t IsochHandler::TestCMPDisconnectIPCR(IOUserClientMethodArguments* a
                                                        // diagnostic messages
             ASFW_LOG(UserClient, "✅ CMP iPCR disconnect succeeded!");
         } else {
-            ASFW_LOG(UserClient, "❌ CMP iPCR disconnect failed: %d", static_cast<int>(status));
+            ASFW_LOG_ERROR(UserClient, "❌ CMP iPCR disconnect failed: %d", static_cast<int>(status));
         }
     });
 

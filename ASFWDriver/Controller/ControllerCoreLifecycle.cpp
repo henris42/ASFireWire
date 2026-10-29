@@ -65,9 +65,9 @@ kern_return_t EnableLinkPowerStatus(ASFW::Driver::HardwareInterface& hw) {
 
     if (!lpsAchieved) {
         const uint32_t finalHC = hw.ReadHCControl();
-        ASFW_LOG(Hardware,
-                 "✗ Failed to set Link Power Status after 3 × 50ms attempts (HCControl=0x%08x)",
-                 finalHC);
+        ASFW_LOG_ERROR(Hardware,
+                       "✗ Failed to set Link Power Status after 3 × 50ms attempts (HCControl=0x%08x)",
+                       finalHC);
         return kIOReturnTimeout;
     }
 
@@ -119,9 +119,9 @@ void ConfigureGapCount(ASFW::Driver::HardwareInterface& hw, uint8_t reg1Value) {
         IOSleep(1);
     }
 
-    ASFW_LOG(Hardware,
-             "Failed to reliably write PHY Register 1 (gap count) after %d attempts",
-             kMaxPhyWriteAttempts);
+    ASFW_LOG_ERROR(Hardware,
+                   "Failed to reliably write PHY Register 1 (gap count) after %d attempts",
+                   kMaxPhyWriteAttempts);
 }
 
 bool ConfigurePhyOperationalRegisters(ASFW::Driver::HardwareInterface& hw,
@@ -155,7 +155,7 @@ bool ConfigurePhyOperationalRegisters(ASFW::Driver::HardwareInterface& hw,
                                             clearReg4Bits,
                                             phyReg4Bits);
     if (!phyConfigOk) {
-        ASFW_LOG(Hardware, "Failed to configure PHY register 4");
+        ASFW_LOG_ERROR(Hardware, "Failed to configure PHY register 4");
         return false;
     }
 
@@ -173,7 +173,7 @@ bool ConfigurePhyEnhancements(ASFW::Driver::HardwareInterface& hw) {
     const bool accelEnabled =
         hw.UpdatePhyRegister(ASFW::Driver::kPhyReg5Address, 0, phyReg5EnhanceBits);
     if (!accelEnabled) {
-        ASFW_LOG(Hardware, "Failed to enable PHY accelerated/multi arbitration (reg5 bits 1:0)");
+        ASFW_LOG_ERROR(Hardware, "Failed to enable PHY accelerated/multi arbitration (reg5 bits 1:0)");
         return false;
     }
 
@@ -206,7 +206,7 @@ kern_return_t ConfigurePhyRegisters(ASFW::Driver::HardwareInterface& hw,
 
     auto phyId = hw.ReadPhyRegister(1);
     if (!phyId) {
-        ASFW_LOG(Hardware, "PHY probe failed on first attempt; retrying with LPS toggle");
+        ASFW_LOG_WARNING(Hardware, "PHY probe failed on first attempt; retrying with LPS toggle");
         hw.ClearHCControlBits(ASFW::Driver::HCControlBits::kLPS);
         IODelay(5000);
         // Wait for LPS and let it settle before the PHY is touched again.
@@ -217,7 +217,7 @@ kern_return_t ConfigurePhyRegisters(ASFW::Driver::HardwareInterface& hw,
     }
 
     if (!phyId) {
-        ASFW_LOG(Hardware, "❌ PHY probe failed after retry; PHY not responding");
+        ASFW_LOG_ERROR(Hardware, "❌ PHY probe failed after retry; PHY not responding");
         return kIOReturnNoDevice;
     }
 
@@ -246,7 +246,7 @@ void FinalizePhyLinkConfiguration(ASFW::Driver::HardwareInterface& hw,
         hw.SetHCControlBits(ASFW::Driver::HCControlBits::kAPhyEnhanceEnable);
     } else {
         hw.ClearHCControlBits(ASFW::Driver::HCControlBits::kAPhyEnhanceEnable);
-        ASFW_LOG(Hardware, "aPhyEnhanceEnable CLEARED - IEEE1394a enhancements disabled in "
+        ASFW_LOG_WARNING(Hardware, "aPhyEnhanceEnable CLEARED - IEEE1394a enhancements disabled in "
                            "Link (PHY config failed/skipped)");
     }
 
@@ -301,14 +301,14 @@ kern_return_t PrepareSelfIdBuffer(const std::shared_ptr<ASFW::Driver::SelfIDCapt
     hw.BringUpTrace().Step("self-ID buffer");
     const kern_return_t prepStatus = selfId->PrepareBuffers(512, hw);
     if (prepStatus != kIOReturnSuccess) {
-        ASFW_LOG(Hardware, "Self-ID PrepareBuffers failed: 0x%08x (DMA allocation failed)",
-                 prepStatus);
+        ASFW_LOG_ERROR(Hardware, "Self-ID PrepareBuffers failed: 0x%08x (DMA allocation failed)",
+                       prepStatus);
         return prepStatus;
     }
 
     const kern_return_t armStatus = selfId->Arm(hw);
     if (armStatus != kIOReturnSuccess) {
-        ASFW_LOG(Hardware, "Self-ID Arm failed: 0x%08x", armStatus);
+        ASFW_LOG_ERROR(Hardware, "Self-ID Arm failed: 0x%08x", armStatus);
         return armStatus;
     }
     hw.BringUpTrace().Step("self-ID buffer armed");
@@ -360,10 +360,10 @@ kern_return_t ForceInitialBusReset(ASFW::Driver::HardwareInterface& hw) {
     const bool forced = hw.InitiateBusReset(false);
     if (!forced) {
         if (hw.HardwareGone()) {
-            ASFW_LOG(Hardware, "❌ Forced bus reset failed: controller gone");
+            ASFW_LOG_ERROR(Hardware, "❌ Forced bus reset failed: controller gone");
             return kIOReturnNoDevice;
         }
-        ASFW_LOG(Hardware, "WARNING: Forced bus reset failed; will rely on auto reset");
+        ASFW_LOG_WARNING(Hardware, "WARNING: Forced bus reset failed; will rely on auto reset");
     }
     return kIOReturnSuccess;
 }
@@ -378,7 +378,7 @@ kern_return_t ArmAsyncReceiveContexts(ASFW::Async::IAsyncControllerPort* asyncCo
 
     const kern_return_t armStatus = asyncController->ArmARContextsOnly();
     if (armStatus != kIOReturnSuccess) {
-        ASFW_LOG(Hardware, "Failed to arm AR contexts: 0x%08x", armStatus);
+        ASFW_LOG_ERROR(Hardware, "Failed to arm AR contexts: 0x%08x", armStatus);
         return armStatus;
     }
 
@@ -501,8 +501,8 @@ void ControllerCore::LogBuildBanner() const {
 kern_return_t ControllerCore::InitializeBusResetAndDiscovery() {
     if (!(deps_.busReset && deps_.hardware && deps_.scheduler && deps_.asyncController &&
           deps_.selfId && deps_.configRomStager && deps_.interrupts && deps_.topology)) {
-        ASFW_LOG(Controller,
-                 "❌ CRITICAL: Missing dependencies for BusResetCoordinator initialization");
+        ASFW_LOG_ERROR(Controller,
+                       "❌ CRITICAL: Missing dependencies for BusResetCoordinator initialization");
         return kIOReturnNoResources;
     }
 
@@ -552,13 +552,13 @@ kern_return_t ControllerCore::Start(IOService* provider) {
     // induced bus reset from racing ahead of Self-ID buffer programming.
     kern_return_t kr = InitialiseHardware(provider);
     if (kr != kIOReturnSuccess) {
-        ASFW_LOG(Controller, "❌ Hardware initialization failed: 0x%08x", kr);
+        ASFW_LOG_ERROR(Controller, "❌ Hardware initialization failed: 0x%08x", kr);
         hardwareAttached_ = false;
         return kr;
     }
 
     if (!deps_.interrupts) {
-        ASFW_LOG_V0(Controller, "❌ CRITICAL: No InterruptManager - cannot enable interrupts!");
+        ASFW_LOG_ERROR(Controller, "❌ CRITICAL: No InterruptManager - cannot enable interrupts!");
         return kIOReturnNoResources;
     }
 
@@ -574,7 +574,7 @@ kern_return_t ControllerCore::Start(IOService* provider) {
 
     kr = EnableInterruptsAndStartBus();
     if (kr != kIOReturnSuccess) {
-        ASFW_LOG(Controller, "❌ Final enable sequence failed: 0x%08x", kr);
+        ASFW_LOG_ERROR(Controller, "❌ Final enable sequence failed: 0x%08x", kr);
         deps_.interrupts->Disable();
         running_ = false;
         hardwareAttached_ = false;
@@ -585,7 +585,7 @@ kern_return_t ControllerCore::Start(IOService* provider) {
 
     if (deps_.topologyMapService) {
         if (!deps_.topologyMapService->Start()) {
-            ASFW_LOG(Controller, "⚠️ WARNING: TopologyMapService failed to start");
+            ASFW_LOG_WARNING(Controller, "⚠️ WARNING: TopologyMapService failed to start");
         }
     }
 
@@ -638,7 +638,7 @@ kern_return_t ControllerCore::PerformSoftReset() const {
     const bool cleared =
         hw.WaitHC(HCControlBits::kSoftReset, false, kSoftResetTimeoutUsec, kSoftResetPollUsec);
     if (!cleared) {
-        ASFW_LOG(Hardware, "Software reset timeout after 500ms");
+        ASFW_LOG_ERROR(Hardware, "Software reset timeout after 500ms");
         return kIOReturnTimeout;
     }
 
@@ -660,7 +660,7 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
 
     auto& hw = *deps_.hardware;
     if (!hw.Attached()) {
-        ASFW_LOG(Hardware, "HardwareInterface not attached; aborting init");
+        ASFW_LOG_ERROR(Hardware, "HardwareInterface not attached; aborting init");
         return kIOReturnNotReady;
     }
 
@@ -676,7 +676,7 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
     // Step 1: Software reset - clear all controller state
     const kern_return_t resetStatus = PerformSoftReset();
     if (resetStatus != kIOReturnSuccess) {
-        ASFW_LOG(Hardware, "✗ Software reset FAILED: 0x%08x", resetStatus);
+        ASFW_LOG_ERROR(Hardware, "✗ Software reset FAILED: 0x%08x", resetStatus);
         return resetStatus;
     }
 
@@ -716,7 +716,7 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
     if (isOHCI_1_1_OrLater) {
         const kern_return_t kr = hw.ProgramInitialIRMResourceRegisters();
         if (kr != kIOReturnSuccess) {
-            ASFW_LOG(Hardware, "❌ Failed to program initial IRM registers: 0x%08x", kr);
+            ASFW_LOG_ERROR(Hardware, "❌ Failed to program initial IRM registers: 0x%08x", kr);
             // We continue anyway, as basic operation might still work
         }
     }
@@ -780,7 +780,7 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
 
     const kern_return_t configRomStatus = StageConfigROM(busOptions, guidHi, guidLo);
     if (configRomStatus != kIOReturnSuccess) {
-        ASFW_LOG(Hardware, "Config ROM staging failed: 0x%08x", configRomStatus);
+        ASFW_LOG_ERROR(Hardware, "Config ROM staging failed: 0x%08x", configRomStatus);
         return configRomStatus;
     }
 
@@ -846,8 +846,8 @@ kern_return_t ControllerCore::EnableInterruptsAndStartBus() {
 kern_return_t ControllerCore::StageConfigROM(uint32_t busOptions, uint32_t guidHi,
                                              uint32_t guidLo) const {
     if (!deps_.configRom || !deps_.configRomStager || !deps_.hardware) {
-        ASFW_LOG(Hardware, "Config ROM dependencies missing (builder=%p stager=%p hw=%p)",
-                 deps_.configRom.get(), deps_.configRomStager.get(), deps_.hardware.get());
+        ASFW_LOG_ERROR(Hardware, "Config ROM dependencies missing (builder=%p stager=%p hw=%p)",
+                       deps_.configRom.get(), deps_.configRomStager.get(), deps_.hardware.get());
         return kIOReturnNotReady;
     }
 
@@ -879,7 +879,7 @@ kern_return_t ControllerCore::StageConfigROM(uint32_t busOptions, uint32_t guidH
     auto& hw = *deps_.hardware;
     const kern_return_t kr = deps_.configRomStager->StageImage(*builder, hw);
     if (kr != kIOReturnSuccess) {
-        ASFW_LOG(Hardware, "Config ROM staging failed: 0x%08x", kr);
+        ASFW_LOG_ERROR(Hardware, "Config ROM staging failed: 0x%08x", kr);
     }
     return kr;
 }
@@ -914,7 +914,7 @@ kern_return_t ControllerCore::ApplyRolePolicy(const RolePolicy& policy) {
     }
     const kern_return_t kr = StageConfigROM(busOptions, guidHi, guidLo);
     if (kr != kIOReturnSuccess) {
-        ASFW_LOG(Controller, "ApplyRolePolicy: Config ROM re-stage failed: 0x%08x", kr);
+        ASFW_LOG_ERROR(Controller, "ApplyRolePolicy: Config ROM re-stage failed: 0x%08x", kr);
         return kr;
     }
     ASFW_LOG(Controller,
@@ -1009,7 +1009,7 @@ void ControllerCore::DiagnoseUnrecoverableError() const {
              selfIDCountReg);
 
     if (!bibValid) {
-        ASFW_LOG(Controller, "  BIBimageValid cleared: Config ROM fetch failure suspected");
+        ASFW_LOG_WARNING(Controller, "  BIBimageValid cleared: Config ROM fetch failure suspected");
     }
 
     if (selfIDBufferReg == 0) {

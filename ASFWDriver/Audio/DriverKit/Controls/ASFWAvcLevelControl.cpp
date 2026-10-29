@@ -34,13 +34,13 @@ kern_return_t ASFWAvcLevelControl::HandleChangeDecibelValue(float value) {
     ASFW_LOG(Audio, "[AvcControl] callback volume-db token=0x%06x requestedDb=%f ready=%u", ivars ? ivars->descriptor.token : 0, value, ivars != nullptr);
     if (!ivars) return kIOReturnNotReady;
     const auto raw = ivars->descriptor.range.Quantize(value);
-    if (!raw) { ASFW_LOG(Audio, "[AvcControl] volume-db invalid token=0x%06x kr=0x%x", ivars->descriptor.token, kIOReturnBadArgument); return kIOReturnBadArgument; }
+    if (!raw) { ASFW_LOG_WARNING(Audio, "[AvcControl] volume-db invalid token=0x%06x kr=0x%x", ivars->descriptor.token, kIOReturnBadArgument); return kIOReturnBadArgument; }
     ASFW_LOG(Audio, "[AvcControl] volume-db quantized token=0x%06x raw=%d", ivars->descriptor.token, *raw);
     int32_t confirmed{};
     const auto result = ivars->driver->ApplyAvcFeatureControl(ivars->descriptor.token, false, *raw, &confirmed);
-    if (result != kIOReturnSuccess) { ASFW_LOG(Audio, "[AvcControl] volume-db failed token=0x%06x kr=0x%x", ivars->descriptor.token, result); return result; }
+    if (result != kIOReturnSuccess) { ASFW_LOG_ERROR(Audio, "[AvcControl] volume-db failed token=0x%06x kr=0x%x", ivars->descriptor.token, result); return result; }
     if (confirmed == INT16_MIN || confirmed < ivars->descriptor.range.minimum || confirmed > ivars->descriptor.range.maximum) {
-        ASFW_LOG(Audio, "[AvcControl] volume-db invalid readback token=0x%06x confirmedRaw=%d kr=0x%x", ivars->descriptor.token, confirmed, kIOReturnError);
+        ASFW_LOG_WARNING(Audio, "[AvcControl] volume-db invalid readback token=0x%06x confirmedRaw=%d kr=0x%x", ivars->descriptor.token, confirmed, kIOReturnError);
         return kIOReturnError;
     }
     const auto status = SetDecibelValue(ASFW::Audio::Model::AvcVolumeRange::Decibels(static_cast<int16_t>(confirmed)));
@@ -50,7 +50,7 @@ kern_return_t ASFWAvcLevelControl::HandleChangeDecibelValue(float value) {
 kern_return_t ASFWAvcLevelControl::HandleChangeScalarValue(float value) {
     ASFW_LOG(Audio, "[AvcControl] callback volume-scalar token=0x%06x requestedScalar=%f", ivars ? ivars->descriptor.token : 0, value);
     if (!std::isfinite(value) || value < 0 || value > 1) {
-        ASFW_LOG(Audio, "[AvcControl] volume-scalar invalid kr=0x%x", kIOReturnBadArgument);
+        ASFW_LOG_WARNING(Audio, "[AvcControl] volume-scalar invalid kr=0x%x", kIOReturnBadArgument);
         return kIOReturnBadArgument;
     }
     // Use ADK's own scalar/decibel conversion, exposed by the SDK's generated

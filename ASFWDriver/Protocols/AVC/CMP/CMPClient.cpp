@@ -14,7 +14,7 @@
 // Every async stage logs SUBMIT (request issued to bus ops) / DONE (callback fired)
 // with hex wire values so the trace aligns 1:1 with a FireBug capture.
 #define CMPTRACE(fmt, ...) \
-    ASFW_LOG(Audio, "!!! [CMP] " fmt, ##__VA_ARGS__)
+    ASFW_LOG_DEBUG(Audio, "!!! [CMP] " fmt, ##__VA_ARGS__)
 
 namespace ASFW::CMP {
 

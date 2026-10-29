@@ -91,7 +91,7 @@ bool LoginSession::Login() noexcept {
     }
 
     if (!AllocateResources()) {
-        ASFW_LOG_SBP2( "LoginSession::Login: resource allocation failed");
+        ASFW_LOG_ERROR(Async, "LoginSession::Login: resource allocation failed");
         SetState(LoginState::Failed);
         return false;
     }
@@ -123,7 +123,7 @@ bool LoginSession::Login() noexcept {
         });
 
     if (!loginWriteHandle_) {
-        ASFW_LOG_SBP2( "LoginSession::Login: WriteBlock failed immediately");
+        ASFW_LOG_ERROR(Async, "LoginSession::Login: WriteBlock failed immediately");
         SetState(LoginState::Failed);
         return false;
     }
@@ -167,7 +167,7 @@ bool LoginSession::Logout() noexcept {
         });
 
     if (!logoutWriteHandle_) {
-        ASFW_LOG_SBP2( "LoginSession::Logout: WriteBlock failed");
+        ASFW_LOG_ERROR(Async, "LoginSession::Logout: WriteBlock failed");
         SetState(LoginState::Failed);
         return false;
     }
@@ -191,7 +191,7 @@ bool LoginSession::Reconnect() noexcept {
     loginNodeID_ = targetInfo_.targetNodeId;
 
     if (!AllocateResources()) {
-        ASFW_LOG_SBP2( "LoginSession::Reconnect: resource allocation failed");
+        ASFW_LOG_ERROR(Async, "LoginSession::Reconnect: resource allocation failed");
         SetState(LoginState::Failed);
         return false;
     }
@@ -219,7 +219,7 @@ bool LoginSession::Reconnect() noexcept {
         });
 
     if (!reconnectWriteHandle_) {
-        ASFW_LOG_SBP2( "LoginSession::Reconnect: WriteBlock failed, will retry");
+        ASFW_LOG_WARNING(Async, "LoginSession::Reconnect: WriteBlock failed, will retry");
         ArmManagementTimer(kLoginRetryDelayMs, [this]() { OnReconnectTimeout(); });
         return true;  // will retry
     }
@@ -283,7 +283,7 @@ void LoginSession::AbandonSuspended() noexcept {
     if (state_ != LoginState::Suspended) {
         return;
     }
-    ASFW_LOG_SBP2("LoginSession: device gone while suspended — session lost");
+    ASFW_LOG_WARNING(Async, "LoginSession: device gone while suspended — session lost");
     CancelManagementTimer();
     loginID_ = 0;
     SetState(LoginState::Failed);
@@ -589,7 +589,7 @@ void LoginSession::OnLoginWriteComplete(uint16_t expectedGeneration,
             return;
         }
 
-        ASFW_LOG_SBP2( "LoginSession: login retries exhausted");
+        ASFW_LOG_ERROR(Async, "LoginSession: login retries exhausted");
         SetState(LoginState::Failed);
         if (loginCallback_) {
             LoginCompleteParams params{};
@@ -639,7 +639,7 @@ void LoginSession::OnReconnectWriteComplete(uint16_t expectedGeneration,
         // and its client logs in afresh (IOFireWireSBP2Login::doReconnect,
         // IOFireWireSBP2Login.cpp:2285). Same fallback as a synchronous
         // WriteBlock failure in Reconnect().
-        ASFW_LOG_SBP2( "LoginSession::OnReconnectWriteComplete: status=%{public}s, session lost",
+        ASFW_LOG_WARNING(Async, "LoginSession::OnReconnectWriteComplete: status=%{public}s, session lost",
                  Async::ToString(status));
         ArmManagementTimer(kLoginRetryDelayMs, [this]() { OnReconnectTimeout(); });
         return;
@@ -653,7 +653,7 @@ void LoginSession::OnReconnectTimeout() noexcept {
     if (state_ != LoginState::Reconnecting) {
         return;
     }
-    ASFW_LOG_SBP2( "LoginSession: reconnect timeout, falling back to full login");
+    ASFW_LOG_WARNING(Async, "LoginSession: reconnect timeout, falling back to full login");
     NotifySessionLost();
     SetState(LoginState::Idle);
     (void)Login();
@@ -760,7 +760,7 @@ void LoginSession::OnStatusBlockRemoteWrite(uint32_t offset,
 void LoginSession::CompleteLoginFromStatusBlock(const Wire::StatusBlock& block,
                                                 uint32_t length) noexcept {
     if (block.sbpStatus != Wire::SBPStatus::kNoAdditionalInfo) {
-        ASFW_LOG_SBP2( "LoginSession: login failed — sbpStatus=%u, retrying (%u/%u)",
+        ASFW_LOG_WARNING(Async, "LoginSession: login failed — sbpStatus=%u, retrying (%u/%u)",
                  block.sbpStatus, loginRetryCount_ + 1, kLoginRetryMax);
         if (loginRetryCount_ < kLoginRetryMax) {
             loginRetryCount_++;
@@ -858,7 +858,7 @@ void LoginSession::CompleteLoginFromStatusBlock(const Wire::StatusBlock& block,
 void LoginSession::CompleteReconnectFromStatusBlock(const Wire::StatusBlock& block,
                                                     uint32_t length) noexcept {
     if (block.sbpStatus != Wire::SBPStatus::kNoAdditionalInfo) {
-        ASFW_LOG_SBP2( "LoginSession: reconnect failed — sbpStatus=%u, falling back to full login",
+        ASFW_LOG_WARNING(Async, "LoginSession: reconnect failed — sbpStatus=%u, falling back to full login",
                  block.sbpStatus);
         NotifySessionLost();
         SetState(LoginState::Idle);
@@ -925,7 +925,7 @@ void LoginSession::ProcessStatusBlock(const Wire::StatusBlock& block, uint32_t l
 
 bool LoginSession::SubmitORB(SBP2CommandORB* orb) noexcept {
     if (state_ != LoginState::LoggedIn) {
-        ASFW_LOG_SBP2( "LoginSession::SubmitORB: state=%{public}s, rejecting", ToString(state_));
+        ASFW_LOG_WARNING(Async, "LoginSession::SubmitORB: state=%{public}s, rejecting", ToString(state_));
         return false;
     }
     return fetchAgent_.Submit(orb);
@@ -1003,7 +1003,7 @@ void LoginSession::WriteBusyTimeout() noexcept {
         });
 
     if (!busyTimeoutWriteHandle_) {
-        ASFW_LOG_SBP2( "LoginSession::WriteBusyTimeout: WriteBlock failed");
+        ASFW_LOG_ERROR(Async, "LoginSession::WriteBusyTimeout: WriteBlock failed");
         busyTimeoutInProgress_ = false;
     }
 }

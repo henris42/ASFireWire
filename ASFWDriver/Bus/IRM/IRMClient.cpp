@@ -76,7 +76,7 @@ namespace {
         return false;
     }
     --retriesLeft;
-    ASFW_LOG(IRM, "IRM %{public}s timed out, re-issuing (re-issues left=%u)", step, retriesLeft);
+    ASFW_LOG_WARNING(IRM, "IRM %{public}s timed out, re-issuing (re-issues left=%u)", step, retriesLeft);
     return true;
 }
 
@@ -214,15 +214,15 @@ void IRMClient::ReadIRMQuadlet(
 
             const auto result = localIRMAccess_.read(*selector);
             const AllocationStatus mapped = MapLocalCSRStatus(result.status);
-            ASFW_LOG(IRM,
-                     "IRMClient: local CSR read %{public}s selector=%u addr=0x%08x "
-                     "status=%{public}s mapped=%{public}s value=0x%08x",
-                     LocalIRMSelectorName(*selector),
-                     *selector,
-                     addressLo,
-                     LocalCSRStatusName(result.status),
-                     ToString(mapped),
-                     result.value);
+            ASFW_LOG_TRACE(IRM,
+                           "IRMClient: local CSR read %{public}s selector=%u addr=0x%08x "
+                           "status=%{public}s mapped=%{public}s value=0x%08x",
+                           LocalIRMSelectorName(*selector),
+                           *selector,
+                           addressLo,
+                           LocalCSRStatusName(result.status),
+                           ToString(mapped),
+                           result.value);
             callback(mapped, result.value);
             return;
         }
@@ -283,19 +283,19 @@ void IRMClient::CompareSwapIRMQuadlet(
 
             const auto result = localIRMAccess_.compareSwap(*selector, expected, desired);
             const AllocationStatus mapped = MapLocalCSRStatus(result.status);
-            ASFW_LOG(IRM,
-                     "IRMClient: local CSR CAS %{public}s selector=%u addr=0x%08x "
-                     "expected=0x%08x desired=0x%08x status=%{public}s "
-                     "mapped=%{public}s old=0x%08x matched=%u",
-                     LocalIRMSelectorName(*selector),
-                     *selector,
-                     addressLo,
-                     expected,
-                     desired,
-                     LocalCSRStatusName(result.status),
-                     ToString(mapped),
-                     result.oldValue,
-                     result.compareMatched ? 1u : 0u);
+            ASFW_LOG_TRACE(IRM,
+                           "IRMClient: local CSR CAS %{public}s selector=%u addr=0x%08x "
+                           "expected=0x%08x desired=0x%08x status=%{public}s "
+                           "mapped=%{public}s old=0x%08x matched=%u",
+                           LocalIRMSelectorName(*selector),
+                           *selector,
+                           addressLo,
+                           expected,
+                           desired,
+                           LocalCSRStatusName(result.status),
+                           ToString(mapped),
+                           result.oldValue,
+                           result.compareMatched ? 1u : 0u);
             callback(mapped, result.oldValue);
             return;
         }
@@ -584,9 +584,9 @@ void IRMClient::PerformChannelLock(uint8_t channel, bool allocate,
     const uint32_t addressLo = ChannelToRegisterAddress(channel);
     const uint32_t bitMask = ChannelToBitMask(channel);
 
-    ASFW_LOG(IRM, "%{public}s channel %u (addr=0x%08x bit=0x%08x)",
-             allocate ? "Allocating" : "Releasing",
-             channel, addressLo, bitMask);
+    ASFW_LOG_DEBUG(IRM, "%{public}s channel %u (addr=0x%08x bit=0x%08x)",
+                   allocate ? "Allocating" : "Releasing",
+                   channel, addressLo, bitMask);
 
     auto ctx = std::make_shared<ChannelLockState>(ChannelLockState{
         std::move(callback),
@@ -605,8 +605,8 @@ void IRMClient::PerformBandwidthLock(uint32_t units, bool allocate,
                                       AllocationCallback callback,
                                       const RetryPolicy& retryPolicy)
 {
-    ASFW_LOG(IRM, "%{public}s bandwidth %u units",
-             allocate ? "Allocating" : "Releasing", units);
+    ASFW_LOG_DEBUG(IRM, "%{public}s bandwidth %u units",
+                   allocate ? "Allocating" : "Releasing", units);
 
     auto ctx = std::make_shared<BandwidthLockState>(BandwidthLockState{
         std::move(callback),
@@ -686,9 +686,9 @@ void IRMClient::OnChannelCompareSwap(const std::shared_ptr<ChannelLockState>& ct
     }
 
     if (oldValue == expectedValue) {
-        ASFW_LOG(IRM, "Channel %u %{public}s succeeded",
-                 ctx->channel,
-                 ctx->allocate ? "allocation" : "release");
+        ASFW_LOG_DEBUG(IRM, "Channel %u %{public}s succeeded",
+                       ctx->channel,
+                       ctx->allocate ? "allocation" : "release");
         ctx->userCallback(AllocationStatus::Success);
         return;
     }
@@ -696,7 +696,7 @@ void IRMClient::OnChannelCompareSwap(const std::shared_ptr<ChannelLockState>& ct
     ASFW_LOG(IRM, "Channel lock contention (expected=0x%08x actual=0x%08x retries=%u)",
              expectedValue, oldValue, ctx->retriesLeft);
     if (ctx->retriesLeft == 0) {
-        ASFW_LOG(IRM, "Channel lock exhausted retries");
+        ASFW_LOG_ERROR(IRM, "Channel lock exhausted retries");
         ctx->userCallback(AllocationStatus::NoResources);
         return;
     }
@@ -738,8 +738,8 @@ void IRMClient::OnBandwidthRead(const std::shared_ptr<BandwidthLockState>& ctx,
     // bus reset.)
     if (!ctx->allocate && ctx->unansweredDesired.has_value() &&
         currentBandwidth == *ctx->unansweredDesired) {
-        ASFW_LOG(IRM, "Bandwidth release already applied (available=%u); only the response was lost",
-                 currentBandwidth);
+        ASFW_LOG_WARNING(IRM, "Bandwidth release already applied (available=%u); only the response was lost",
+                         currentBandwidth);
         ctx->userCallback(AllocationStatus::Success);
         return;
     }
@@ -792,9 +792,9 @@ void IRMClient::OnBandwidthCompareSwap(const std::shared_ptr<BandwidthLockState>
     }
 
     if (oldValue == expectedBandwidth) {
-        ASFW_LOG(IRM, "Bandwidth %{public}s succeeded (%u units)",
-                 ctx->allocate ? "allocation" : "release",
-                 ctx->units);
+        ASFW_LOG_DEBUG(IRM, "Bandwidth %{public}s succeeded (%u units)",
+                       ctx->allocate ? "allocation" : "release",
+                       ctx->units);
         ctx->userCallback(AllocationStatus::Success);
         return;
     }
@@ -802,7 +802,7 @@ void IRMClient::OnBandwidthCompareSwap(const std::shared_ptr<BandwidthLockState>
     ASFW_LOG(IRM, "Bandwidth lock contention (expected=%u actual=%u retries=%u)",
              expectedBandwidth, oldValue, ctx->retriesLeft);
     if (ctx->retriesLeft == 0) {
-        ASFW_LOG(IRM, "Bandwidth lock exhausted retries");
+        ASFW_LOG_ERROR(IRM, "Bandwidth lock exhausted retries");
         ctx->userCallback(AllocationStatus::NoResources);
         return;
     }

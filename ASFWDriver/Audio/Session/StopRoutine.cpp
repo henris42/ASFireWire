@@ -32,10 +32,10 @@ IOReturn StopRoutine::Run(uint64_t guid,
                           const AudioDuplexChannels& channels) noexcept {
     const auto trace = [&](const char* stage, auto&& action) {
         const uint64_t begin = UptimeMilliseconds();
-        ASFW_LOG(Audio, "[StopTrace] guid=%016llx stage=%{public}s phase=begin", guid, stage);
+        ASFW_LOG_DEBUG(Audio, "[StopTrace] guid=%016llx stage=%{public}s phase=begin", guid, stage);
         const IOReturn status = action();
-        ASFW_LOG(Audio, "[StopTrace] guid=%016llx stage=%{public}s phase=end kr=0x%x (%{public}s) elapsedMs=%llu",
-                 guid, stage, status, ASFW::Logging::IOReturnName(status), UptimeMilliseconds() - begin);
+        ASFW_LOG_DEBUG(Audio, "[StopTrace] guid=%016llx stage=%{public}s phase=end kr=0x%x (%{public}s) elapsedMs=%llu",
+                       guid, stage, status, ASFW::Logging::IOReturnName(status), UptimeMilliseconds() - begin);
         return status;
     };
     // No MMIO after teardown: the service detaches the hardware next.

@@ -155,16 +155,16 @@ public:
         if (!outOutputMemory || !outInputMemory || !outControlMemory ||
             !outOutputFrames || !outOutputChannels || !outInputFrames || !outInputChannels ||
             !outSampleRateHz || !outGeneration) {
-            ASFW_LOG(DirectAudio,
-                     "ADK DBG MEM runtime copy failed bad_args guid=0x%016llx",
-                     guid_);
+            ASFW_LOG_WARNING(DirectAudio,
+                             "ADK DBG MEM runtime copy failed bad_args guid=0x%016llx",
+                             guid_);
             return kIOReturnBadArgument;
         }
 
         if (!lock_) {
-            ASFW_LOG(DirectAudio,
-                     "ADK DBG MEM runtime copy failed no_lock guid=0x%016llx",
-                     guid_);
+            ASFW_LOG_WARNING(DirectAudio,
+                             "ADK DBG MEM runtime copy failed no_lock guid=0x%016llx",
+                             guid_);
             return kIOReturnNotReady;
         }
 
@@ -174,10 +174,10 @@ public:
 
         kern_return_t kr = EnsureDirectAudioMemoryLocked();
         if (kr != kIOReturnSuccess) {
-            ASFW_LOG(DirectAudio,
-                     "ADK DBG MEM runtime copy ensure_failed guid=0x%016llx kr=0x%x",
-                     guid_,
-                     kr);
+            ASFW_LOG_DEBUG(DirectAudio,
+                           "ADK DBG MEM runtime copy ensure_failed guid=0x%016llx kr=0x%x",
+                           guid_,
+                           kr);
             if (lock_) {
                 IOLockUnlock(lock_);
             }
@@ -185,18 +185,18 @@ public:
         }
 
         if (!HasCompleteDirectAudioMemoryLocked()) {
-            ASFW_LOG(DirectAudio,
-                     "ADK DBG MEM runtime copy failed incomplete guid=0x%016llx gen=%llu outMem=%p inMem=%p ctlMem=%p outMap=%p inMap=%p ctlMap=%p control=%p rate=%u",
-                     guid_,
-                     directGeneration_,
-                     static_cast<void*>(directOutputMemory_),
-                     static_cast<void*>(directInputMemory_),
-                     static_cast<void*>(directControlMemory_),
-                     static_cast<void*>(directOutputMap_),
-                     static_cast<void*>(directInputMap_),
-                     static_cast<void*>(directControlMap_),
-                     static_cast<void*>(directControl_),
-                     directSampleRateHz_);
+            ASFW_LOG_WARNING(DirectAudio,
+                             "ADK DBG MEM runtime copy failed incomplete guid=0x%016llx gen=%llu outMem=%p inMem=%p ctlMem=%p outMap=%p inMap=%p ctlMap=%p control=%p rate=%u",
+                             guid_,
+                             directGeneration_,
+                             static_cast<void*>(directOutputMemory_),
+                             static_cast<void*>(directInputMemory_),
+                             static_cast<void*>(directControlMemory_),
+                             static_cast<void*>(directOutputMap_),
+                             static_cast<void*>(directInputMap_),
+                             static_cast<void*>(directControlMap_),
+                             static_cast<void*>(directControl_),
+                             directSampleRateHz_);
             if (lock_) {
                 IOLockUnlock(lock_);
             }
@@ -217,18 +217,18 @@ public:
         *outSampleRateHz = directSampleRateHz_;
         *outGeneration = directGeneration_;
 
-        ASFW_LOG(DirectAudio,
-                 "ADK DBG MEM runtime copy ok guid=0x%016llx gen=%llu outMem=%p outFrames=%u outCh=%u inMem=%p inFrames=%u inCh=%u controlMem=%p rate=%u",
-                 guid_,
-                 *outGeneration,
-                 static_cast<void*>(*outOutputMemory),
-                 *outOutputFrames,
-                 *outOutputChannels,
-                 static_cast<void*>(*outInputMemory),
-                 *outInputFrames,
-                 *outInputChannels,
-                 static_cast<void*>(*outControlMemory),
-                 *outSampleRateHz);
+        ASFW_LOG_DEBUG(DirectAudio,
+                       "ADK DBG MEM runtime copy ok guid=0x%016llx gen=%llu outMem=%p outFrames=%u outCh=%u inMem=%p inFrames=%u inCh=%u controlMem=%p rate=%u",
+                       guid_,
+                       *outGeneration,
+                       static_cast<void*>(*outOutputMemory),
+                       *outOutputFrames,
+                       *outOutputChannels,
+                       static_cast<void*>(*outInputMemory),
+                       *outInputFrames,
+                       *outInputChannels,
+                       static_cast<void*>(*outControlMemory),
+                       *outSampleRateHz);
 
         if (lock_) {
             IOLockUnlock(lock_);
@@ -515,20 +515,20 @@ private:
             static_cast<uintptr_t>(directControlMap_->GetAddress()));
         ++directGeneration_;
 
-        ASFW_LOG(DirectAudio,
-                 "ADK DBG BIND runtime local_memory_ready guid=0x%016llx gen=%llu outBase=%p outBytes=%llu outFrames=%u outCh=%u inBase=%p inBytes=%llu inFrames=%u inCh=%u control=%p rate=%u",
-                 guid_,
-                 directGeneration_,
-                 static_cast<const void*>(directOutputBase_),
-                 directOutputBytes_,
-                 directOutputCapacityFrames_,
-                 directOutputChannels_,
-                 static_cast<void*>(directInputBase_),
-                 directInputBytes_,
-                 directInputCapacityFrames_,
-                 directInputChannels_,
-                 static_cast<void*>(directControl_),
-                 directSampleRateHz_);
+        ASFW_LOG_DEBUG(DirectAudio,
+                       "ADK DBG BIND runtime local_memory_ready guid=0x%016llx gen=%llu outBase=%p outBytes=%llu outFrames=%u outCh=%u inBase=%p inBytes=%llu inFrames=%u inCh=%u control=%p rate=%u",
+                       guid_,
+                       directGeneration_,
+                       static_cast<const void*>(directOutputBase_),
+                       directOutputBytes_,
+                       directOutputCapacityFrames_,
+                       directOutputChannels_,
+                       static_cast<void*>(directInputBase_),
+                       directInputBytes_,
+                       directInputCapacityFrames_,
+                       directInputChannels_,
+                       static_cast<void*>(directControl_),
+                       directSampleRateHz_);
     }
 
     void ReleaseDirectAudioMemoryLocked() noexcept {
@@ -572,9 +572,9 @@ private:
 
     [[nodiscard]] kern_return_t EnsureDirectAudioMemoryLocked() noexcept {
         if (!configValid_.load(std::memory_order_acquire)) {
-            ASFW_LOG(DirectAudio,
-                     "ADK DBG MEM runtime ensure failed no_config guid=0x%016llx",
-                     guid_);
+            ASFW_LOG_WARNING(DirectAudio,
+                             "ADK DBG MEM runtime ensure failed no_config guid=0x%016llx",
+                             guid_);
             return kIOReturnNotReady;
         }
 
@@ -603,13 +603,13 @@ private:
 
         if (outputChannels == 0 || inputChannels == 0 || sampleRateHz == 0 ||
             outputFrames == 0) {
-            ASFW_LOG(DirectAudio,
-                     "ADK DBG MEM runtime ensure failed bad_config guid=0x%016llx agg=%u in=%u out=%u rate=%u",
-                     guid_,
-                     config_.channelCount,
-                     inputChannels,
-                     outputChannels,
-                     sampleRateHz);
+            ASFW_LOG_WARNING(DirectAudio,
+                             "ADK DBG MEM runtime ensure failed bad_config guid=0x%016llx agg=%u in=%u out=%u rate=%u",
+                             guid_,
+                             config_.channelCount,
+                             inputChannels,
+                             outputChannels,
+                             sampleRateHz);
             return kIOReturnBadArgument;
         }
 
@@ -619,15 +619,15 @@ private:
             directOutputChannels_ == outputChannels &&
             directInputChannels_ == inputChannels &&
             directSampleRateHz_ == sampleRateHz) {
-            ASFW_LOG(DirectAudio,
-                     "ADK DBG MEM runtime ensure reuse guid=0x%016llx gen=%llu outFrames=%u outCh=%u inFrames=%u inCh=%u rate=%u",
-                     guid_,
-                     directGeneration_,
-                     outputFrames,
-                     outputChannels,
-                     inputFrames,
-                     inputChannels,
-                     sampleRateHz);
+            ASFW_LOG_DEBUG(DirectAudio,
+                           "ADK DBG MEM runtime ensure reuse guid=0x%016llx gen=%llu outFrames=%u outCh=%u inFrames=%u inCh=%u rate=%u",
+                           guid_,
+                           directGeneration_,
+                           outputFrames,
+                           outputChannels,
+                           inputFrames,
+                           inputChannels,
+                           sampleRateHz);
             return kIOReturnSuccess;
         }
 
@@ -653,27 +653,27 @@ private:
         const uint64_t inputBytes = static_cast<uint64_t>(allocatedFrames) * allocation.captureChannelCapacity * sizeof(int32_t);
         const uint64_t controlBytes = sizeof(Runtime::AudioTransportControlBlock);
 
-        ASFW_LOG(DirectAudio,
-                 "ADK DBG MEM runtime allocate guid=0x%016llx outBytes=%llu outFrames=%u outCh=%u inBytes=%llu inFrames=%u inCh=%u controlBytes=%llu rate=%u",
-                 guid_,
-                 outputBytes,
-                 outputFrames,
-                 outputChannels,
-                 inputBytes,
-                 inputFrames,
-                 inputChannels,
-                 controlBytes,
-                 sampleRateHz);
+        ASFW_LOG_DEBUG(DirectAudio,
+                       "ADK DBG MEM runtime allocate guid=0x%016llx outBytes=%llu outFrames=%u outCh=%u inBytes=%llu inFrames=%u inCh=%u controlBytes=%llu rate=%u",
+                       guid_,
+                       outputBytes,
+                       outputFrames,
+                       outputChannels,
+                       inputBytes,
+                       inputFrames,
+                       inputChannels,
+                       controlBytes,
+                       sampleRateHz);
 
         kern_return_t kr = CreateMappedDirectBuffer(outputBytes, 64, &directOutputMemory_, &directOutputMap_);
         if (kr != kIOReturnSuccess) {
-            ASFW_LOG(DirectAudio, "ADK DBG MEM runtime allocate output failed guid=0x%016llx kr=0x%x", guid_, kr);
+            ASFW_LOG_ERROR(DirectAudio, "ADK DBG MEM runtime allocate output failed guid=0x%016llx kr=0x%x", guid_, kr);
             ReleaseDirectAudioMemoryLocked();
             return kr;
         }
         kr = CreateMappedDirectBuffer(inputBytes, 64, &directInputMemory_, &directInputMap_);
         if (kr != kIOReturnSuccess) {
-            ASFW_LOG(DirectAudio, "ADK DBG MEM runtime allocate input failed guid=0x%016llx kr=0x%x", guid_, kr);
+            ASFW_LOG_ERROR(DirectAudio, "ADK DBG MEM runtime allocate input failed guid=0x%016llx kr=0x%x", guid_, kr);
             ReleaseDirectAudioMemoryLocked();
             return kr;
         }
@@ -682,7 +682,7 @@ private:
                                       &directControlMemory_,
                                       &directControlMap_);
         if (kr != kIOReturnSuccess) {
-            ASFW_LOG(DirectAudio, "ADK DBG MEM runtime allocate control failed guid=0x%016llx kr=0x%x", guid_, kr);
+            ASFW_LOG_ERROR(DirectAudio, "ADK DBG MEM runtime allocate control failed guid=0x%016llx kr=0x%x", guid_, kr);
             ReleaseDirectAudioMemoryLocked();
             return kr;
         }

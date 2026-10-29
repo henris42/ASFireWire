@@ -314,21 +314,21 @@ void DirectAudioReceiveConsumer::ConsumePacket(
                     }
                 }
             }
-            ASFW_LOG(DirectAudio,
-                     "[RxContent] bound=%u status=%u seen=%llu sytData=%llu decoded=%llu noBind=%llu range=%llu "
-                     "geom=%llu badCip=%llu peakQ24=%u word=0x%08x ring write=%llu read=%llu cap=%u ch=%u "
-                     "ringNow ch0=%d ch12=%d",
-                     inputWriter_.IsBound() ? 1U : 0U, static_cast<uint32_t>(result.status), seen,
-                     counters->rxDataPackets.load(std::memory_order_relaxed),
-                     counters->counters.rxDecodedFrames.load(std::memory_order_relaxed),
-                     counters->counters.rxInvalidBinding.load(std::memory_order_relaxed),
-                     counters->counters.rxInvalidRange.load(std::memory_order_relaxed),
-                     counters->rxGeometryMismatch.load(std::memory_order_relaxed),
-                     counters->rxInvalidCipHeaders.load(std::memory_order_relaxed), peakQ24,
-                     counters->counters.rxLastSampleWord.load(std::memory_order_relaxed), ringWrite,
-                     counters->captureRingReadFrame.load(std::memory_order_relaxed),
-                     inputView_.memory.inputFrameCapacity, inputView_.memory.inputChannels,
-                     ringCh0Q24, ringCh12Q24);
+            ASFW_LOG_DEBUG(DirectAudio,
+                           "[RxContent] bound=%u status=%u seen=%llu sytData=%llu decoded=%llu noBind=%llu range=%llu "
+                           "geom=%llu badCip=%llu peakQ24=%u word=0x%08x ring write=%llu read=%llu cap=%u ch=%u "
+                           "ringNow ch0=%d ch12=%d",
+                           inputWriter_.IsBound() ? 1U : 0U, static_cast<uint32_t>(result.status), seen,
+                           counters->rxDataPackets.load(std::memory_order_relaxed),
+                           counters->counters.rxDecodedFrames.load(std::memory_order_relaxed),
+                           counters->counters.rxInvalidBinding.load(std::memory_order_relaxed),
+                           counters->counters.rxInvalidRange.load(std::memory_order_relaxed),
+                           counters->rxGeometryMismatch.load(std::memory_order_relaxed),
+                           counters->rxInvalidCipHeaders.load(std::memory_order_relaxed), peakQ24,
+                           counters->counters.rxLastSampleWord.load(std::memory_order_relaxed), ringWrite,
+                           counters->captureRingReadFrame.load(std::memory_order_relaxed),
+                           inputView_.memory.inputFrameCapacity, inputView_.memory.inputChannels,
+                           ringCh0Q24, ringCh12Q24);
         }
         if (result.hasValidCip) {
             if (result.syt == 0xffff) {
@@ -350,15 +350,15 @@ void DirectAudioReceiveConsumer::ConsumePacket(
                 inputView_.control->rxShortPackets.load(std::memory_order_relaxed);
             if (shortPackets == 1 || shortPackets % 1000 == 0) {
                 const auto& bytes = packet.payload;
-                ASFW_LOG(DirectAudio,
-                         "[RxShort] count=%llu desc=%u bytes=%zu first=%02x%02x%02x%02x%02x%02x%02x%02x "
-                         "frame=%llu",
-                         shortPackets, packet.descriptorIndex, bytes.size(),
-                         bytes.size() > 0 ? bytes[0] : 0, bytes.size() > 1 ? bytes[1] : 0,
-                         bytes.size() > 2 ? bytes[2] : 0, bytes.size() > 3 ? bytes[3] : 0,
-                         bytes.size() > 4 ? bytes[4] : 0, bytes.size() > 5 ? bytes[5] : 0,
-                         bytes.size() > 6 ? bytes[6] : 0, bytes.size() > 7 ? bytes[7] : 0,
-                         absoluteFrameCursor_);
+                ASFW_LOG_TRACE(DirectAudio,
+                               "[RxShort] count=%llu desc=%u bytes=%zu first=%02x%02x%02x%02x%02x%02x%02x%02x "
+                               "frame=%llu",
+                               shortPackets, packet.descriptorIndex, bytes.size(),
+                               bytes.size() > 0 ? bytes[0] : 0, bytes.size() > 1 ? bytes[1] : 0,
+                               bytes.size() > 2 ? bytes[2] : 0, bytes.size() > 3 ? bytes[3] : 0,
+                               bytes.size() > 4 ? bytes[4] : 0, bytes.size() > 5 ? bytes[5] : 0,
+                               bytes.size() > 6 ? bytes[6] : 0, bytes.size() > 7 ? bytes[7] : 0,
+                               absoluteFrameCursor_);
             }
         }
         return;
@@ -834,8 +834,9 @@ void DirectAudioReceiveConsumer::ResetReplayEpochForDiscontinuity(
         --bootstrapResetLogBudget_;
     }
     if (wasEstablished || logBootstrap) {
-        ASFW_LOG_ERROR(
-            DirectAudio,
+        // Rate-limited: older builds logged tens of thousands of these in a run.
+        ASFW_LOG_RL(
+            DirectAudio, "rx-replay-reset", 1000, Warning,
             "[RxReplayReset] phase=%{public}s epoch=%llu reason=%{public}s desc=%u bytes=%u "
             "drain=0x%08x rawTs=0x%04x syt=0x%04x expectedCycle=%u observedCycle=%u "
             "status=%u frame=%llu validTs=%llu invalidTs=%llu",
@@ -862,16 +863,16 @@ void DirectAudioReceiveConsumer::DrainReceiveTelemetry(uint32_t maxRecords) {
             if (!ztsTelemetryLogGate_.ShouldEmit(record, rate)) {
                 return;
             }
-            ASFW_LOG(Zts,
-                     "%{public}s count=%llu frame=%llu host=%llu drainHost=%llu "
-                     "drainCycle=0x%08x rxCycle=0x%08x age=%lld rawRxTs=0x%04x "
-                     "syt=0x%04x desc=%u dec=%u rate=%u rateQ8=%u",
-                     record.kind == static_cast<uint8_t>(::ASFW::Isoch::Rx::ZtsEventKind::kSeed)
+            ASFW_LOG_DEBUG(Zts,
+                           "%{public}s count=%llu frame=%llu host=%llu drainHost=%llu "
+                           "drainCycle=0x%08x rxCycle=0x%08x age=%lld rawRxTs=0x%04x "
+                           "syt=0x%04x desc=%u dec=%u rate=%u rateQ8=%u",
+                           record.kind == static_cast<uint8_t>(::ASFW::Isoch::Rx::ZtsEventKind::kSeed)
                          ? "SEED" : "UPD",
-                     record.publishCount, record.sampleFrame, record.hostTicks,
-                     record.drainHostTicks, record.drainCycleTimer, record.rxCycleTimer,
-                     record.ageTicks, record.rawRxTs, record.syt, record.descriptorIndex,
-                     record.framesDecoded, rate, record.hostNanosPerSampleQ8);
+                           record.publishCount, record.sampleFrame, record.hostTicks,
+                           record.drainHostTicks, record.drainCycleTimer, record.rxCycleTimer,
+                           record.ageTicks, record.rawRxTs, record.syt, record.descriptorIndex,
+                           record.framesDecoded, rate, record.hostNanosPerSampleQ8);
         });
     if (dropped != 0) {
         ASFW_LOG(Zts, "drain overflow: dropped=%llu (capacity=%u)", dropped,

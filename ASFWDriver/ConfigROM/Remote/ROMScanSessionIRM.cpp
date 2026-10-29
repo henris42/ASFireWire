@@ -75,8 +75,8 @@ void ROMScanSession::HandleIRMReadComplete(uint8_t nodeId, bool success, uint32_
     auto& node = *nodePtr;
 
     if (!success) {
-        ASFW_LOG_V1(ConfigROM, "ROMScanSession: Node %u IRM read verify failed - marking bad IRM",
-                    nodeId);
+        ASFW_LOG_WARNING(ConfigROM, "ROMScanSession: Node %u IRM read verify failed - marking bad IRM",
+                         nodeId);
         node.SetIRMIsBad(true);
         if (topologyManager_ != nullptr && topology_.irmNodeId != Driver::kInvalidPhysicalId &&
             topology_.irmNodeId == nodeId) {
@@ -156,8 +156,8 @@ void ROMScanSession::HandleIRMLockComplete(uint8_t nodeId, bool success) {
     auto& node = *nodePtr;
 
     if (!success) {
-        ASFW_LOG_V1(ConfigROM, "ROMScanSession: Node %u IRM lock verify failed - marking bad IRM",
-                    nodeId);
+        ASFW_LOG_WARNING(ConfigROM, "ROMScanSession: Node %u IRM lock verify failed - marking bad IRM",
+                         nodeId);
         node.SetIRMIsBad(true);
         if (topologyManager_ != nullptr && topology_.irmNodeId != Driver::kInvalidPhysicalId &&
             topology_.irmNodeId == nodeId) {

@@ -65,7 +65,7 @@ bool IsochDMAMemoryManager::Initialize(ASFW::Driver::HardwareInterface& hw) {
     // Alignment headroom logic: add cfg_.descriptorAlignment - 1 to be safe
     size_t descBytesRaw = 0;
     if (__builtin_mul_overflow(cfg_.numDescriptors, kDescriptorBudgetBytes, &descBytesRaw)) {
-         ASFW_LOG(Isoch, "IsochDMAMemoryManager: desc size overflow");
+         ASFW_LOG_ERROR(Isoch, "IsochDMAMemoryManager: desc size overflow");
          return false;
     }
     const size_t descHeaderRoom = (cfg_.descriptorAlignment > 0) ? (cfg_.descriptorAlignment - 1) : 0;
@@ -77,7 +77,7 @@ bool IsochDMAMemoryManager::Initialize(ASFW::Driver::HardwareInterface& hw) {
     size_t payloadBytesRaw = 0;
     if (cfg_.allocatePayloadSlab &&
         __builtin_mul_overflow(cfg_.numDescriptors, cfg_.packetSizeBytes, &payloadBytesRaw)) {
-         ASFW_LOG(Isoch, "IsochDMAMemoryManager: payload size overflow");
+         ASFW_LOG_ERROR(Isoch, "IsochDMAMemoryManager: payload size overflow");
          return false;
     }
     const size_t payloadSlabBytes = cfg_.allocatePayloadSlab
@@ -85,23 +85,23 @@ bool IsochDMAMemoryManager::Initialize(ASFW::Driver::HardwareInterface& hw) {
         : 0;
 
 
-    ASFW_LOG(Isoch,
-             "IsochDMAMemoryManager: Initialize desc=%zu bytes payload=%zu bytes (payloadAlign=%zu externalPayload=%d)",
-             descSlabBytes, payloadSlabBytes, cfg_.payloadPageAlignment,
-             !cfg_.allocatePayloadSlab);
+    ASFW_LOG_DEBUG(Isoch,
+                   "IsochDMAMemoryManager: Initialize desc=%zu bytes payload=%zu bytes (payloadAlign=%zu externalPayload=%d)",
+                   descSlabBytes, payloadSlabBytes, cfg_.payloadPageAlignment,
+                   !cfg_.allocatePayloadSlab);
 
     // Initialize descriptor slab
     if (!descMgr_.Initialize(hw, descSlabBytes)) {
-        ASFW_LOG(Isoch, "IsochDMAMemoryManager: descMgr.Initialize failed");
+        ASFW_LOG_ERROR(Isoch, "IsochDMAMemoryManager: descMgr.Initialize failed");
         return false;
     }
-    ASFW_LOG(Isoch,
-             "IsochDMAMemoryManager: Descriptor slab - vaddr=%p iova=0x%llx size=%zu",
-             descMgr_.BaseVirtual(), descMgr_.BaseIOVA(), descMgr_.TotalSize());
+    ASFW_LOG_DEBUG(Isoch,
+                   "IsochDMAMemoryManager: Descriptor slab - vaddr=%p iova=0x%llx size=%zu",
+                   descMgr_.BaseVirtual(), descMgr_.BaseIOVA(), descMgr_.TotalSize());
 
     if (cfg_.allocatePayloadSlab) {
         if (!payloadMgr_.Initialize(hw, payloadSlabBytes)) {
-            ASFW_LOG(Isoch, "IsochDMAMemoryManager: payloadMgr.Initialize failed");
+            ASFW_LOG_ERROR(Isoch, "IsochDMAMemoryManager: payloadMgr.Initialize failed");
             descMgr_.Reset();
             return false;
         }
@@ -110,7 +110,7 @@ bool IsochDMAMemoryManager::Initialize(ASFW::Driver::HardwareInterface& hw) {
                  payloadMgr_.BaseVirtual(), payloadMgr_.BaseIOVA(), payloadMgr_.TotalSize());
 
         if (!payloadMgr_.AlignCursorToIOVA(cfg_.payloadPageAlignment)) {
-            ASFW_LOG(Isoch, "IsochDMAMemoryManager: AlignCursorToIOVA(%zu) failed", cfg_.payloadPageAlignment);
+            ASFW_LOG_ERROR(Isoch, "IsochDMAMemoryManager: AlignCursorToIOVA(%zu) failed", cfg_.payloadPageAlignment);
             payloadMgr_.Reset();
             descMgr_.Reset();
             return false;
@@ -130,7 +130,7 @@ bool IsochDMAMemoryManager::Initialize(ASFW::Driver::HardwareInterface& hw) {
     // Default slab alloc is 64-aligned, so usually fine for 16/32/64.
     if (cfg_.descriptorAlignment > 64) {
          if (!descMgr_.AlignCursorToIOVA(cfg_.descriptorAlignment)) {
-            ASFW_LOG(Isoch, "IsochDMAMemoryManager: descMgr AlignCursorToIOVA(%zu) failed", cfg_.descriptorAlignment);
+            ASFW_LOG_ERROR(Isoch, "IsochDMAMemoryManager: descMgr AlignCursorToIOVA(%zu) failed", cfg_.descriptorAlignment);
             payloadMgr_.Reset();
             descMgr_.Reset();
             return false;
@@ -138,7 +138,7 @@ bool IsochDMAMemoryManager::Initialize(ASFW::Driver::HardwareInterface& hw) {
     }
 
     initialized_ = true;
-    ASFW_LOG(Isoch, "IsochDMAMemoryManager: Initialization complete - ready for allocation");
+    ASFW_LOG_DEBUG(Isoch, "IsochDMAMemoryManager: Initialization complete - ready for allocation");
     return true;
 }
 

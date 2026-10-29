@@ -72,7 +72,7 @@ void IRMFallbackCoordinator::MaybeEvaluate(uint64_t nowNs) noexcept {
     }
 
     if (!deps_.timing) {
-        ASFW_LOG(Controller, "⚠️ [IRM Fallback] Timing coordinator missing; evaluation suppressed");
+        ASFW_LOG_WARNING(Controller, "⚠️ [IRM Fallback] Timing coordinator missing; evaluation suppressed");
         return;
     }
 

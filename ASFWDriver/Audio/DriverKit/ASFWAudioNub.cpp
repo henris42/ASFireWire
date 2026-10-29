@@ -248,7 +248,7 @@ static kern_return_t ResolveProtocolRuntimeBinding(const ASFWAudioNub_IVars* iv,
 bool ASFWAudioNub::init()
 {
     if (const bool result = super::init(); !result) {
-        ASFW_LOG(Audio, "ASFWAudioNub: super::init() failed");
+        ASFW_LOG_ERROR(Audio, "ASFWAudioNub: super::init() failed");
         return false;
     }
 
@@ -299,7 +299,7 @@ kern_return_t IMPL(ASFWAudioNub, Start)
 {
     kern_return_t error = Start(provider, SUPERDISPATCH);
     if (error != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "ASFWAudioNub: super::Start() failed: %d", error);
+        ASFW_LOG_ERROR(Audio, "ASFWAudioNub: super::Start() failed: %d", error);
         return error;
     }
 
@@ -313,7 +313,7 @@ kern_return_t IMPL(ASFWAudioNub, Start)
     // Register the service so ASFWAudioDriver can match on us
     error = RegisterService();
     if (error != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "ASFWAudioNub: RegisterService() failed: %d", error);
+        ASFW_LOG_ERROR(Audio, "ASFWAudioNub: RegisterService() failed: %d", error);
         return error;
     }
 
@@ -563,16 +563,16 @@ kern_return_t IMPL(ASFWAudioNub, StartAudioStreaming)
 
     auto endpoint = FindEndpointRuntime(ivars);
     if (!endpoint) {
-        ASFW_LOG(DirectAudio,
-                 "ADK FATAL StartAudioStreaming missing endpoint runtime guid=0x%016llx",
-                 ivars->guid);
+        ASFW_LOG_ERROR(DirectAudio,
+                       "ADK FATAL StartAudioStreaming missing endpoint runtime guid=0x%016llx",
+                       ivars->guid);
         return kIOReturnNotReady;
     }
 
     if (!endpoint->HasCompleteDirectAudioMemory()) {
-        ASFW_LOG(DirectAudio,
-                 "ADK FATAL StartAudioStreaming direct memory not ready guid=0x%016llx",
-                 ivars->guid);
+        ASFW_LOG_ERROR(DirectAudio,
+                       "ADK FATAL StartAudioStreaming direct memory not ready guid=0x%016llx",
+                       ivars->guid);
         return kIOReturnNotReady;
     }
 
@@ -628,16 +628,16 @@ kern_return_t IMPL(ASFWAudioNub, StartAudioStreaming)
 
     auto* coordinator = GetAudioCoordinator(ivars);
     if (!coordinator) {
-        ASFW_LOG(Audio, "ASFWAudioNub: StartAudioStreaming: missing AudioCoordinator");
+        ASFW_LOG_ERROR(Audio, "ASFWAudioNub: StartAudioStreaming: missing AudioCoordinator");
         return kIOReturnNotReady;
     }
 
-    ASFW_LOG(Audio, "[SessionClock] HAL start GUID=%llx preparedRate=%u",
-             ivars->guid, sampleRateHz);
+    ASFW_LOG_DEBUG(Audio, "[SessionClock] HAL start GUID=%llx preparedRate=%u",
+                   ivars->guid, sampleRateHz);
     const IOReturn kr = coordinator->StartStreaming(ivars->guid,
         ASFW::Audio::AudioClockConfig{.sampleRateHz = sampleRateHz});
     if (kr != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "ASFWAudioNub: StartAudioStreaming failed GUID=0x%016llx kr=0x%x (%{public}s)", ivars->guid, kr, ASFW::Logging::IOReturnName(kr));
+        ASFW_LOG_ERROR(Audio, "ASFWAudioNub: StartAudioStreaming failed GUID=0x%016llx kr=0x%x (%{public}s)", ivars->guid, kr, ASFW::Logging::IOReturnName(kr));
     } else {
         endpoint->MarkStreaming(true);
     }
@@ -690,7 +690,7 @@ kern_return_t IMPL(ASFWAudioNub, StopAudioStreaming)
 
     const IOReturn kr = coordinator->StopStreaming(ivars->guid);
     if (kr != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "ASFWAudioNub: StopAudioStreaming failed GUID=0x%016llx kr=0x%x (%{public}s)", ivars->guid, kr, ASFW::Logging::IOReturnName(kr));
+        ASFW_LOG_ERROR(Audio, "ASFWAudioNub: StopAudioStreaming failed GUID=0x%016llx kr=0x%x (%{public}s)", ivars->guid, kr, ASFW::Logging::IOReturnName(kr));
     }
     if (kr == kIOReturnSuccess) {
         if (auto endpoint = FindEndpointRuntime(ivars)) endpoint->MarkStreaming(false);
@@ -714,15 +714,15 @@ kern_return_t IMPL(ASFWAudioNub, CopyDirectAudioMemory)
     if (!ivars || !outOutputMemory || !outInputMemory || !outControlMemory ||
         !outOutputFrames || !outOutputChannels || !outInputFrames || !outInputChannels ||
         !outSampleRateHz || !outGeneration) {
-        ASFW_LOG(DirectAudio, "ADK DBG MEM copy failed bad_args");
+        ASFW_LOG_WARNING(DirectAudio, "ADK DBG MEM copy failed bad_args");
         return kIOReturnBadArgument;
     }
 
     auto endpoint = FindEndpointRuntime(ivars);
     if (!endpoint) {
-        ASFW_LOG(DirectAudio,
-                 "ADK DBG MEM copy failed missing_endpoint_runtime guid=0x%016llx",
-                 ivars->guid);
+        ASFW_LOG_WARNING(DirectAudio,
+                         "ADK DBG MEM copy failed missing_endpoint_runtime guid=0x%016llx",
+                         ivars->guid);
         return kIOReturnNotReady;
     }
 
@@ -791,14 +791,14 @@ kern_return_t IMPL(ASFWAudioNub, FreeTxIsochResources)
 kern_return_t IMPL(ASFWAudioNub, RequestSampleRateChange)
 {
     if (!ivars) {
-        ASFW_LOG(Audio, "ASFWAudioNub: RequestSampleRateChange not ready (ivars=null)");
+        ASFW_LOG_WARNING(Audio, "ASFWAudioNub: RequestSampleRateChange not ready (ivars=null)");
         return kIOReturnNotReady;
     }
     auto* coordinator = GetAudioCoordinator(ivars);
     if (!coordinator) {
-        ASFW_LOG(Audio,
-                 "ASFWAudioNub: RequestSampleRateChange not ready (no coordinator) guid=0x%016llx",
-                 ivars->guid);
+        ASFW_LOG_WARNING(Audio,
+                         "ASFWAudioNub: RequestSampleRateChange not ready (no coordinator) guid=0x%016llx",
+                         ivars->guid);
         return kIOReturnNotReady;
     }
 
@@ -820,10 +820,10 @@ kern_return_t IMPL(ASFWAudioNub, RequestSampleRateChange)
     }
     if (!catalogRateAllowed && !ASFW::Audio::IsSupportedAudioClockConfig(desired) &&
         !ASFW::Audio::IsSupportedMAudioSpecialClockConfig(desired)) {
-        ASFW_LOG(Audio,
-                 "ASFWAudioNub: RequestSampleRateChange %u Hz refused - announced by the device "
-                 "but not streamable in this build (high rates parked)",
-                 sampleRateHz);
+        ASFW_LOG_WARNING(Audio,
+                         "ASFWAudioNub: RequestSampleRateChange %u Hz refused - announced by the device "
+                         "but not streamable in this build (high rates parked)",
+                         sampleRateHz);
         return kIOReturnUnsupported;
     }
 
@@ -1222,7 +1222,7 @@ kern_return_t IMPL(ASFWAudioNub, SetAvcFeatureControl) {
                     ASFW_LOG(Audio, "[AvcControlTrace] id=%llu phase=device-complete queue=controller elapsedUs=%llu ok=%u", traceId, ASFW::Timing::hostTicksToNanos(mach_absolute_time() - traceBegin) / 1000, reply.has_value());
                     if (!reply) {
                         const auto& error = reply.error();
-                        ASFW_LOG(Audio, "[AvcControl] transaction failed guid=0x%016llx token=0x%06x errorKind=%u response=%d operandOffset=%u", route.guid, token, static_cast<unsigned>(error.kind), error.response ? static_cast<int>(*error.response) : -1, error.operandOffset);
+                        ASFW_LOG_ERROR(Audio, "[AvcControl] transaction failed guid=0x%016llx token=0x%06x errorKind=%u response=%d operandOffset=%u", route.guid, token, static_cast<unsigned>(error.kind), error.response ? static_cast<int>(*error.response) : -1, error.operandOffset);
                         done(A::ToIOReturn(error), 0); return;
                     }
                     ASFW_LOG(Audio, "[AvcControl] readback guid=0x%016llx token=0x%06x mute=%u confirmedRaw=%d generation=%u", route.guid, token, muteControl, muteControl ? static_cast<int32_t>(reply->AsMute()) : reply->AsVolume().Raw(), route.generation.value);

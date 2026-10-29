@@ -302,8 +302,8 @@ kern_return_t ARContextBase<Derived, Tag>::Arm(uint32_t commandPtr) noexcept {
         return kIOReturnNoDevice;
     }
     if ((control & Driver::kContextControlDeadBit) != 0U) {
-        ASFW_LOG(Async, "%{public}s: arm failed, context dead (ContextControl=0x%08x)",
-                 this->ContextNameCString(), control);
+        ASFW_LOG_ERROR(Async, "%{public}s: arm failed, context dead (ContextControl=0x%08x)",
+                       this->ContextNameCString(), control);
         return kIOReturnDMAError;
     }
     ASFW_LOG(Async, "%{public}s: armed (info: not active yet after 50ms, may activate after reset)",
@@ -426,9 +426,9 @@ kern_return_t ARContextBase<Derived, Tag>::Recycle(size_t index) noexcept {
                  "♻️  %{public}s: Wrote WAKE bit after recycling buffer[%zu]",
                  this->ContextNameCString(), index);
     } else {
-        ASFW_LOG(Async,
-                 "⚠️  %{public}s: Recycle failed for buffer[%zu], kr=0x%08x (wake NOT written)",
-                 this->ContextNameCString(), index, result);
+        ASFW_LOG_WARNING(Async,
+                         "⚠️  %{public}s: Recycle failed for buffer[%zu], kr=0x%08x (wake NOT written)",
+                         this->ContextNameCString(), index, result);
     }
 
     IOLockUnlock(lock_);

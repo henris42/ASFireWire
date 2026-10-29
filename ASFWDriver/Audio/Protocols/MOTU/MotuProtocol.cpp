@@ -92,8 +92,8 @@ IOReturn MotuProtocol::Shutdown() {
         const auto report = [](Async::AsyncStatus status) {
             const auto result = Protocols::Ports::MapAsyncStatusToIOReturn(status);
             if (result != kIOReturnSuccess)
-                ASFW_LOG(Audio, "MotuProtocol: async address release failed: %{public}s (0x%x)",
-                         Logging::IOReturnName(result), result);
+                ASFW_LOG_WARNING(Audio, "MotuProtocol: async address release failed: %{public}s (0x%x)",
+                                 Logging::IOReturnName(result), result);
         };
         (void)releaseIo->WriteQuadBE(AddressOf(Reg::AsyncAddrHi), 0,
             [releaseIo, report](Async::AsyncStatus status) {
@@ -176,8 +176,8 @@ void MotuProtocol::SetSampleRate(uint32_t rateHz, CompletionCallback callback) {
         }
 
         if (*encoded == clock.raw) {
-            ASFW_LOG(Audio, "MotuProtocol: reg 0x%08x 0x%08x (clock already at %u Hz, not written)",
-                     AddressOf(ClockRegister()).addressLo, clock.raw, rateHz);
+            ASFW_LOG_DEBUG(Audio, "MotuProtocol: reg 0x%08x 0x%08x (clock already at %u Hz, not written)",
+                           AddressOf(ClockRegister()).addressLo, clock.raw, rateHz);
             if (callback) {
                 callback(kIOReturnSuccess);
             }
@@ -200,9 +200,9 @@ void MotuProtocol::SetSampleRate(uint32_t rateHz, CompletionCallback callback) {
                     AddressOf(ClockRegister()),
                     [this, written, callback = std::move(callback)](Async::AsyncStatus readStatus, uint32_t held) mutable {
                         if (readStatus == Async::AsyncStatus::kSuccess) {
-                            ASFW_LOG(Audio, "MotuProtocol: reg 0x%08x readback 0x%08x%{public}s",
-                                     AddressOf(ClockRegister()).addressLo, held,
-                                     held == written ? " (as written)" : " (DIFFERS from written)");
+                            ASFW_LOG_DEBUG(Audio, "MotuProtocol: reg 0x%08x readback 0x%08x%{public}s",
+                                           AddressOf(ClockRegister()).addressLo, held,
+                                           held == written ? " (as written)" : " (DIFFERS from written)");
                         }
                         if (callback) callback(kIOReturnSuccess);
                     });
@@ -337,9 +337,9 @@ void MotuProtocol::ModifyRegister(Reg reg,
             // waits 4 s "for the bus reset" after a clock-rate change), so a
             // device-initiated reset after a start must be matchable to the
             // register writes that preceded it.
-            ASFW_LOG(Audio, "MotuProtocol: reg 0x%08x 0x%08x -> 0x%08x%{public}s",
-                     AddressOf(reg).addressLo, current, next,
-                     next == current ? " (unchanged)" : "");
+            ASFW_LOG_DEBUG(Audio, "MotuProtocol: reg 0x%08x 0x%08x -> 0x%08x%{public}s",
+                           AddressOf(reg).addressLo, current, next,
+                           next == current ? " (unchanged)" : "");
             (void)io_.WriteQuadBE(
                 AddressOf(reg),
                 next,
@@ -387,8 +387,8 @@ void MotuProtocol::EnsureRuntimeStreamGeometry(std::function<void(IOReturn)> cal
     // V1/V2 never wait on a notification: register best effort, then read.
     EnsureAsyncAddress([read = std::move(read)](IOReturn status) mutable {
         if (status != kIOReturnSuccess)
-            ASFW_LOG(Audio, "MotuProtocol: notification address registration failed kr=0x%x (%{public}s)",
-                     status, Logging::IOReturnName(status));
+            ASFW_LOG_WARNING(Audio, "MotuProtocol: notification address registration failed kr=0x%x (%{public}s)",
+                             status, Logging::IOReturnName(status));
         read(kIOReturnSuccess);
     });
 }
@@ -404,10 +404,10 @@ void MotuProtocol::ReadOpticalGeometry(CompletionCallback callback) {
                                                uint32_t optRaw) mutable {
             const IOReturn result = Protocols::Ports::MapAsyncStatusToIOReturn(status);
             if (result != kIOReturnSuccess) {
-                ASFW_LOG(Audio,
-                         "[MotuGeometry] optical config read failed kr=0x%08x (%{public}s); "
-                         "geometry not loaded; no rate formations available",
-                         result, ASFW::Logging::IOReturnName(result));
+                ASFW_LOG_ERROR(Audio,
+                               "[MotuGeometry] optical config read failed kr=0x%08x (%{public}s); "
+                               "geometry not loaded; no rate formations available",
+                               result, ASFW::Logging::IOReturnName(result));
                 if (callback) {
                     callback(result);
                 }
@@ -425,12 +425,12 @@ void MotuProtocol::ReadOpticalGeometry(CompletionCallback callback) {
             // Optical modes: 0 off, 1 ADAT, 2 S/PDIF. Reserved encodings refuse publication.
             // This is a register read, not a publication of the device: the
             // b146 report took "published" for a re-publish at the first IO.
-            ASFW_LOG(Audio,
-                     "[MotuGeometry] optical config opt=0x%08x in=%u out=%u decoded=%u -> "
-                     "txChunks=%u rxChunks=%u at the device's current rate (mode %u)",
-                     optRaw, static_cast<unsigned>(chunks.inputMode),
-                     static_cast<unsigned>(chunks.outputMode), chunks.opticalDecoded ? 1U : 0U,
-                     chunks.tx, chunks.rx, mode);
+            ASFW_LOG_DEBUG(Audio,
+                           "[MotuGeometry] optical config opt=0x%08x in=%u out=%u decoded=%u -> "
+                           "txChunks=%u rxChunks=%u at the device's current rate (mode %u)",
+                           optRaw, static_cast<unsigned>(chunks.inputMode),
+                           static_cast<unsigned>(chunks.outputMode), chunks.opticalDecoded ? 1U : 0U,
+                           chunks.tx, chunks.rx, mode);
             if (callback) {
                 callback(kIOReturnSuccess);
             }
@@ -665,14 +665,14 @@ void MotuProtocol::PrepareDuplex(const AudioDuplexChannels& channels,
         [this, speedCode, rateHz, mode, callback = std::move(callback)](
             IOReturn rateStatus) mutable {
             if (rateStatus != kIOReturnSuccess) {
-                ASFW_LOG(Audio, "MotuProtocol: set clock rate %u failed: 0x%x", rateHz,
-                         rateStatus);
+                ASFW_LOG_ERROR(Audio, "MotuProtocol: set clock rate %u failed: 0x%x", rateHz,
+                               rateStatus);
                 if (callback) {
                     callback(rateStatus, DuplexPrepareResult{});
                 }
                 return;
             }
-            ASFW_LOG(Audio, "MotuProtocol: clock rate set to %u before prepare", rateHz);
+            ASFW_LOG_DEBUG(Audio, "MotuProtocol: clock rate set to %u before prepare", rateHz);
 
     (void)io_.ReadQuadBE(
         AddressOf(OpticalRegister()),
@@ -680,7 +680,7 @@ void MotuProtocol::PrepareDuplex(const AudioDuplexChannels& channels,
             Async::AsyncStatus status, uint32_t optRaw) mutable {
             const IOReturn readResult = Protocols::Ports::MapAsyncStatusToIOReturn(status);
             if (readResult != kIOReturnSuccess) {
-                ASFW_LOG(Audio, "MotuProtocol: optical config read failed: 0x%x", readResult);
+                ASFW_LOG_ERROR(Audio, "MotuProtocol: optical config read failed: 0x%x", readResult);
                 if (callback) {
                     callback(readResult, DuplexPrepareResult{});
                 }
@@ -706,16 +706,16 @@ void MotuProtocol::PrepareDuplex(const AudioDuplexChannels& channels,
             rxPcmChunks_.store(chunks.rx, std::memory_order_release);
             preparedRateHz_.store(rateHz, std::memory_order_release);
 
-            ASFW_LOG(Audio,
-                     "MotuProtocol: prepare duplex rate=%u opt=0x%08x txChunks=%u rxChunks=%u "
-                     "speed=%u rxCh=%u txCh=%u",
-                     rateHz,
-                     optRaw,
-                     txPcmChunks_.load(std::memory_order_acquire),
-                     rxPcmChunks_.load(std::memory_order_acquire),
-                     speedCode,
-                     deviceRxChannel_.load(std::memory_order_acquire),
-                     deviceTxChannel_.load(std::memory_order_acquire));
+            ASFW_LOG_DEBUG(Audio,
+                           "MotuProtocol: prepare duplex rate=%u opt=0x%08x txChunks=%u rxChunks=%u "
+                           "speed=%u rxCh=%u txCh=%u",
+                           rateHz,
+                           optRaw,
+                           txPcmChunks_.load(std::memory_order_acquire),
+                           rxPcmChunks_.load(std::memory_order_acquire),
+                           speedCode,
+                           deviceRxChannel_.load(std::memory_order_acquire),
+                           deviceTxChannel_.load(std::memory_order_acquire));
 
             ModifyRegister(
                 Reg::PacketFormat,
@@ -777,7 +777,7 @@ void MotuProtocol::ApplyFetchingModeIfNeeded(bool enable,
         },
         [callback = std::move(callback)](IOReturn status) mutable {
             if (status != kIOReturnSuccess) {
-                ASFW_LOG(Audio, "MotuProtocol: fetching-mode write failed: 0x%x", status);
+                ASFW_LOG_ERROR(Audio, "MotuProtocol: fetching-mode write failed: 0x%x", status);
             }
             if (callback) {
                 callback(status);

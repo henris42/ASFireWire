@@ -583,17 +583,17 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
     for (const auto& rom : roms) {
         const auto nodeId = ASFW::Discovery::TryOperationalNodeId(rom.nodeId);
         if (!nodeId.has_value()) {
-            ASFW_LOG(Discovery, "Skipping ROM with invalid nodeId=%u gen=%u during discovery",
-                     rom.nodeId, rom.gen.value);
+            ASFW_LOG_WARNING(Discovery, "Skipping ROM with invalid nodeId=%u gen=%u during discovery",
+                             rom.nodeId, rom.gen.value);
             continue;
         }
 
         if (rom.bib.guid == 0) {
-            ASFW_LOG(Discovery,
-                     "Skipping ROM with GUID=0 gen=%u node=%u; minimal/invalid Config ROM cannot "
-                     "anchor a stable device",
-                     rom.gen.value,
-                     rom.nodeId);
+            ASFW_LOG_WARNING(Discovery,
+                             "Skipping ROM with GUID=0 gen=%u node=%u; minimal/invalid Config ROM cannot "
+                             "anchor a stable device",
+                             rom.gen.value,
+                             rom.nodeId);
             continue;
         }
 

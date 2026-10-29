@@ -193,11 +193,11 @@ void MotuPayloadWriter::DumpFilledPacket(const PacketSlotSnapshot& snap, bool mu
         used += static_cast<size_t>(std::snprintf(sph + used, sizeof(sph) - used, " %u:%u",
                                                   (value >> 12) & 0x1fffU, value & 0xfffU));
     }
-    ASFW_LOG(DirectAudio,
-             "[MotuTxDump] pkt=%llu bytes=%u blocks=%u dbs=%u muted=%u cip=%08x %08x sph=%{public}s",
-             static_cast<unsigned long long>(snap.packetIndex), snap.packetSizeBytes,
-             snap.framesInPacket, snap.dbs, muted ? 1U : 0U, be32(snap.packetBytes),
-             be32(snap.packetBytes + 4), sph);
+    ASFW_LOG_TRACE(DirectAudio,
+                   "[MotuTxDump] pkt=%llu bytes=%u blocks=%u dbs=%u muted=%u cip=%08x %08x sph=%{public}s",
+                   static_cast<unsigned long long>(snap.packetIndex), snap.packetSizeBytes,
+                   snap.framesInPacket, snap.dbs, muted ? 1U : 0U, be32(snap.packetBytes),
+                   be32(snap.packetBytes + 4), sph);
 
     // Line 2: the first data block, as quadlets.
     char hex[19 * 9 + 1] = {};
@@ -208,8 +208,8 @@ void MotuPayloadWriter::DumpFilledPacket(const PacketSlotSnapshot& snap, bool mu
         used += static_cast<size_t>(std::snprintf(hex + used, sizeof(hex) - used, "%08x ",
                                                   be32(snap.packetBytes + at)));
     }
-    ASFW_LOG(DirectAudio, "[MotuTxDump] pkt=%llu block0=%{public}s",
-             static_cast<unsigned long long>(snap.packetIndex), hex);
+    ASFW_LOG_TRACE(DirectAudio, "[MotuTxDump] pkt=%llu block0=%{public}s",
+                   static_cast<unsigned long long>(snap.packetIndex), hex);
 }
 
 } // namespace ASFW::Encoding::Motu

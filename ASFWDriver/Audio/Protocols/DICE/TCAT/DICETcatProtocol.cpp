@@ -127,7 +127,7 @@ IOReturn DICETcatProtocol::Shutdown() {
         if (driver_->IsPrepared() || driver_->IsRunning()) {
             const IOReturn stopStatus = driver_->Stop();
             if (stopStatus != kIOReturnSuccess && stopStatus != kIOReturnUnsupported) {
-                ASFW_LOG(DICE, "DICETcatProtocol::Shutdown duplex stop failed: 0x%x (%{public}s)", stopStatus, ASFW::Logging::IOReturnName(stopStatus));
+                ASFW_LOG_WARNING(DICE, "DICETcatProtocol::Shutdown duplex stop failed: 0x%x (%{public}s)", stopStatus, ASFW::Logging::IOReturnName(stopStatus));
             }
         }
     }
@@ -231,8 +231,8 @@ bool DICETcatProtocol::DeviceSupportsRate(uint32_t rateHz) const noexcept {
     if (DiceClockCapsSupportRate(mask, rateHz)) {
         return true;
     }
-    ASFW_LOG(DICE, "DICETcatProtocol: device does not support %u Hz (rates=0x%02x); refused",
-             rateHz, mask);
+    ASFW_LOG_WARNING(DICE, "DICETcatProtocol: device does not support %u Hz (rates=0x%02x); refused",
+                     rateHz, mask);
     return false;
 }
 
@@ -304,7 +304,7 @@ std::expected<void, IOReturn> DICETcatProtocol::WriteRouterProgram(
     }
 
     if (const auto written = deviceIo_.WriteBlock(routerBase, buffer); !written) {
-        ASFW_LOG(DICE, "Startup router: write failed (0x%08x)", written.error());
+        ASFW_LOG_ERROR(DICE, "Startup router: write failed (0x%08x)", written.error());
         return std::unexpected(written.error());
     }
 
@@ -318,7 +318,7 @@ std::expected<void, IOReturn> DICETcatProtocol::WriteRouterProgram(
     if (const auto committed =
             deviceIo_.WriteQuad(commandBase + ExtensionCommandOffset::kOpcode, opcode);
         !committed) {
-        ASFW_LOG(DICE, "Startup router: commit failed (0x%08x)", committed.error());
+        ASFW_LOG_ERROR(DICE, "Startup router: commit failed (0x%08x)", committed.error());
         return std::unexpected(committed.error());
     }
 
@@ -343,7 +343,7 @@ void DICETcatProtocol::WriteStartupMixerCells(const ExtensionSections& ext) {
             ++written;
         } else {
             // One bad cell should not abort the rest.
-            ASFW_LOG(DICE, "Startup mixer: cell %u failed", cell.index);
+            ASFW_LOG_ERROR(DICE, "Startup mixer: cell %u failed", cell.index);
         }
     }
     ASFW_LOG(DICE, "Startup mixer: wrote %u of %u coefficients", written,
@@ -639,8 +639,8 @@ void DICETcatProtocol::EnsureRuntimeCapsLoaded(VoidCallback callback) {
                                 (void)GetRuntimeAudioStreamCaps(caps);
                                 LogRuntimeCaps("standard-dice", caps);
                                 if (!HasUsableRuntimeCaps(caps)) {
-                                    ASFW_LOG(DICE,
-                                             "DICETcatProtocol: standard DICE discovery produced zero or partial caps; audio publication should fail closed");
+                                    ASFW_LOG_ERROR(DICE,
+                                                   "DICETcatProtocol: standard DICE discovery produced zero or partial caps; audio publication should fail closed");
                                 }
                                 diceReader_.ReadRateFormats(caps.deviceRateMask,
                                     [this, caps, callback = std::move(callback)](IOReturn status,

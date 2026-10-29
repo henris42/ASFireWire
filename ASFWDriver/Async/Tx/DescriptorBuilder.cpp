@@ -151,17 +151,17 @@ DescriptorBuilder::DescriptorChain DescriptorBuilder::BuildTransactionChain(cons
             const size_t head = ring_.Head();
             const size_t tail = ring_.Tail();
             const size_t used = (tail >= head) ? (tail - head) : (capacity - head + tail);
-            ASFW_LOG(Async,
-                     "❌ ReserveBlocks failed (txid=%u blocks=%u head=%zu tail=%zu capacity=%zu used=%zu)",
-                     chain.txid,
-                     kImmediateBlocks,
-                     head,
-                     tail,
-                     capacity,
-                     used);
+            ASFW_LOG_ERROR(Async,
+                           "❌ ReserveBlocks failed (txid=%u blocks=%u head=%zu tail=%zu capacity=%zu used=%zu)",
+                           chain.txid,
+                           kImmediateBlocks,
+                           head,
+                           tail,
+                           capacity,
+                           used);
             // Ring is full - likely a descriptor leak. Log ring state for forensics.
             if (used > capacity - 4) {
-                ASFW_LOG(Async, "  ⚠️ RING NEARLY FULL: %zu/%zu slots used. Check ScanCompletion is advancing head.", used, capacity);
+                ASFW_LOG_WARNING(Async, "  ⚠️ RING NEARLY FULL: %zu/%zu slots used. Check ScanCompletion is advancing head.", used, capacity);
             }
             return chain;
         }
@@ -259,22 +259,22 @@ DescriptorBuilder::DescriptorChain DescriptorBuilder::BuildTransactionChain(cons
         const uint8_t keyField = (ctlHi >> OHCIDescriptor::kKeyShift) & 0x7;
 
         if (bField != OHCIDescriptor::kBranchAlways) {
-            ASFW_LOG(Async, "❌ ASSERTION FAILED: b field=%u (expected kBranchAlways=3)", bField);
+            ASFW_LOG_ERROR(Async, "❌ ASSERTION FAILED: b field=%u (expected kBranchAlways=3)", bField);
         }
         if (br != 0) {
-            ASFW_LOG(Async, "❌ ASSERTION FAILED: branchWord=0x%08x (expected 0 for EOL)", br);
+            ASFW_LOG_ERROR(Async, "❌ ASSERTION FAILED: branchWord=0x%08x (expected 0 for EOL)", br);
         }
         if (iField != OHCIDescriptor::kIntAlways) {
-            ASFW_LOG(Async, "❌ ASSERTION FAILED: i field=%u (expected kIntAlways=3)", iField);
+            ASFW_LOG_ERROR(Async, "❌ ASSERTION FAILED: i field=%u (expected kIntAlways=3)", iField);
         }
         if (cmdField != OHCIDescriptor::kCmdOutputLast) {
-            ASFW_LOG(Async, "❌ ASSERTION FAILED: cmd field=%u (expected kCmdOutputLast=1)", cmdField);
+            ASFW_LOG_ERROR(Async, "❌ ASSERTION FAILED: cmd field=%u (expected kCmdOutputLast=1)", cmdField);
         }
         if (keyField != OHCIDescriptor::kKeyImmediate) {
-            ASFW_LOG(Async, "❌ ASSERTION FAILED: key field=%u (expected kKeyImmediate=2)", keyField);
+            ASFW_LOG_ERROR(Async, "❌ ASSERTION FAILED: key field=%u (expected kKeyImmediate=2)", keyField);
         }
         if (reqCountField != headerSize) {
-            ASFW_LOG(Async, "❌ ASSERTION FAILED: reqCount=%u (expected %zu)", reqCountField, headerSize);
+            ASFW_LOG_ERROR(Async, "❌ ASSERTION FAILED: reqCount=%u (expected %zu)", reqCountField, headerSize);
         }
 
         // Get device-visible address from DMAMemoryManager
@@ -324,16 +324,16 @@ DescriptorBuilder::DescriptorChain DescriptorBuilder::BuildTransactionChain(cons
         const size_t head = ring_.Head();
         const size_t tail = ring_.Tail();
         const size_t used = (tail >= head) ? (tail - head) : (capacity - head + tail);
-        ASFW_LOG(Async,
-                 "❌ ReserveBlocks failed (txid=%u blocks=%u head=%zu tail=%zu capacity=%zu used=%zu)",
-                 chain.txid,
-                 kTotalBlocks,
-                 head,
-                 tail,
-                 capacity,
-                 used);
+        ASFW_LOG_ERROR(Async,
+                       "❌ ReserveBlocks failed (txid=%u blocks=%u head=%zu tail=%zu capacity=%zu used=%zu)",
+                       chain.txid,
+                       kTotalBlocks,
+                       head,
+                       tail,
+                       capacity,
+                       used);
         if (used > capacity - 4) {
-            ASFW_LOG(Async, "  ⚠️ RING NEARLY FULL: %zu/%zu slots used. Check ScanCompletion is advancing head.", used, capacity);
+            ASFW_LOG_WARNING(Async, "  ⚠️ RING NEARLY FULL: %zu/%zu slots used. Check ScanCompletion is advancing head.", used, capacity);
         }
         return chain;
     }
@@ -483,21 +483,21 @@ DescriptorBuilder::DescriptorChain DescriptorBuilder::BuildTransactionChain(cons
                  payloadReqCount, payloadDescriptor->dataAddress);
 
         if (headerReqCount != 16) {
-            ASFW_LOG_V1(Async, "   ❌ ERROR: Header reqCount is %u, should be 16!", headerReqCount);
+            ASFW_LOG_ERROR(Async, "   ❌ ERROR: Header reqCount is %u, should be 16!", headerReqCount);
         }
 
         // LOCK transactions can carry either 8-byte or 16-byte operands.
         if (tCode == 0x9 && payloadReqCount != payloadSize) {
-            ASFW_LOG_V1(Async,
-                        "   ❌ ERROR: LOCK payload reqCount is %u, should be %zu!",
-                        payloadReqCount,
-                        payloadSize);
+            ASFW_LOG_ERROR(Async,
+                           "   ❌ ERROR: LOCK payload reqCount is %u, should be %zu!",
+                           payloadReqCount,
+                           payloadSize);
         }
 
         // Re-check Q3 after descriptor configuration (ensure it wasn't corrupted)
         const uint32_t q3_after = headerImmDesc->immediateData[3];
         if (q3_after != q3_initial) {
-            ASFW_LOG_V1(Async,
+            ASFW_LOG_ERROR(Async,
                      "   ❌ CRITICAL: Q3 changed after descriptor config! was=0x%08x now=0x%08x",
                      q3_initial, q3_after);
         }
@@ -674,7 +674,7 @@ void DescriptorBuilder::UnlinkTail(size_t tailIndex) noexcept {
     const uint32_t ctlHi = prevLast->control >> HW::OHCIDescriptor::kControlHighShift;
     const uint8_t bField = (ctlHi >> HW::OHCIDescriptor::kBranchShift) & 0x3;
     if (bField != HW::OHCIDescriptor::kBranchAlways) {
-        ASFW_LOG_V1(Async, "❌ UnlinkTail: prevLast has b=%u (expected kBranchAlways=3)", bField);
+        ASFW_LOG_ERROR(Async, "❌ UnlinkTail: prevLast has b=%u (expected kBranchAlways=3)", bField);
     }
 }
 

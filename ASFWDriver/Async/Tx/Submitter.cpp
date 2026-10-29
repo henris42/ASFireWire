@@ -130,7 +130,7 @@ SubmitResult Submitter::submit_tx_chain(ATRequestContext* ctx, DescriptorBuilder
     const kern_return_t kr = atMgr->Submit(std::move(chain), opts);
 
     if (kr != kIOReturnSuccess) {
-        ASFW_LOG(Async, "ATManager::Submit failed for txid=%u: kr=0x%x", txid, kr);
+        ASFW_LOG_ERROR(Async, "ATManager::Submit failed for txid=%u: kr=0x%x", txid, kr);
         res.kr = kr;
         return res;
     }
@@ -173,7 +173,7 @@ SubmitResult Submitter::submit_tx_chain(ATResponseContext* ctx, DescriptorBuilde
 
     const kern_return_t kr = atMgr->Submit(std::move(chain), opts);
     if (kr != kIOReturnSuccess) {
-        ASFW_LOG(Async, "ATResponseManager::Submit failed for txid=%u: kr=0x%x", txid, kr);
+        ASFW_LOG_ERROR(Async, "ATResponseManager::Submit failed for txid=%u: kr=0x%x", txid, kr);
         res.kr = kr;
         return res;
     }

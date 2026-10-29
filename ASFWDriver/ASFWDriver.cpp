@@ -351,7 +351,7 @@ kern_return_t IMPL(ASFWDriver, Start) {
     ASFW::Logging::InitializeLogConfig(provider);
 #if ASFW_REQUIRE_ARMING
     if (!ProviderIsArmed(provider)) {
-        ASFW_LOG(Controller, "ASFWDriver::Start(): no asfw-armed property on the controller; not starting");
+        ASFW_LOG_WARNING(Controller, "ASFWDriver::Start(): no asfw-armed property on the controller; not starting");
         return kIOReturnNotPermitted;
     }
 #endif
@@ -494,7 +494,7 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
     }
     ctx.lifecycle->MarkStageComplete(StartStage::kDependenciesReady);
     const auto failStart = [&ctx](kern_return_t status, const char* detail) {
-        ASFW_LOG(Controller, "ASFWDriver::Start() failed at %{public}s: 0x%08x", detail, status);
+        ASFW_LOG_ERROR(Controller, "ASFWDriver::Start() failed at %{public}s: 0x%08x", detail, status);
         if (ctx.deps.hardware) {
             ctx.deps.hardware->BringUpTrace().Step("start failed at %s: 0x%08x", detail, status);
             ctx.deps.hardware->BringUpTrace().End("start failed");
@@ -552,7 +552,7 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
                                             ctx.interruptAction.get(), size_t{64} * 1024u,
                                             ctx.teardownCompletion);
         if (kr != kIOReturnSuccess) {
-            ASFW_LOG(Controller, "AsyncSubsystem::Start() failed: 0x%08x", kr);
+            ASFW_LOG_ERROR(Controller, "AsyncSubsystem::Start() failed: 0x%08x", kr);
             return failStart(kr, "async subsystem start failed");
         }
     }
@@ -561,7 +561,7 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
 
     kr = DriverWiring::PrepareWatchdog(*this, ctx);
     if (kr != kIOReturnSuccess) {
-        ASFW_LOG(Controller, "Failed to prepare async watchdog: 0x%08x", kr);
+        ASFW_LOG_ERROR(Controller, "Failed to prepare async watchdog: 0x%08x", kr);
         return failStart(kr, "watchdog preparation failed");
     }
     ScheduleAsyncWatchdog(kAsyncWatchdogPeriodUsec);
@@ -611,8 +611,8 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
                 return;
             }
             const kern_return_t terminateKr = Terminate(0);
-            ASFW_LOG(Controller, "❌ Fatal: %{public}s; terminating (Terminate -> 0x%08x)",
-                     reason, terminateKr);
+            ASFW_LOG_ERROR(Controller, "❌ Fatal: %{public}s; terminating (Terminate -> 0x%08x)",
+                           reason, terminateKr);
         });
     }
 
@@ -832,8 +832,8 @@ kern_return_t IMPL(ASFWDriver, SetPowerState) {
                 ASFW_LOG(Controller, "SetPowerState: wake - rebuilding runtime");
                 const kern_return_t kr = StartRuntime(ivars->powerProvider);
                 if (kr != kIOReturnSuccess) {
-                    ASFW_LOG(Controller,
-                             "SetPowerState: ❌ wake runtime rebuild failed: 0x%08x", kr);
+                    ASFW_LOG_ERROR(Controller,
+                                   "SetPowerState: ❌ wake runtime rebuild failed: 0x%08x", kr);
                 } else {
                     // The On callback can arrive during dark wake; verify the
                     // rebuild actually took once the platform has settled.
@@ -888,24 +888,24 @@ void ASFWDriver::VerifyWakeRuntime(uint64_t attempt) {
     if (!mmioAlive) {
         intEvent = 0;
     }
-    ASFW_LOG(Controller,
-             "Wake verify: ❌ dead controller (resets=%u HCControl=0x%08x IntEvent=0x%08x "
-             "attempt=%llu/%llu) - rebuilding",
-             resets, hcControl, intEvent, attempt, kWakeVerifyMaxAttempts);
+    ASFW_LOG_WARNING(Controller,
+                     "Wake verify: ❌ dead controller (resets=%u HCControl=0x%08x IntEvent=0x%08x "
+                     "attempt=%llu/%llu) - rebuilding",
+                     resets, hcControl, intEvent, attempt, kWakeVerifyMaxAttempts);
 
     if (attempt >= kWakeVerifyMaxAttempts) {
-        ASFW_LOG(Controller, "Wake verify: ❌ giving up after %llu attempts", attempt);
+        ASFW_LOG_ERROR(Controller, "Wake verify: ❌ giving up after %llu attempts", attempt);
         return;
     }
     if (!ivars->powerProvider) {
-        ASFW_LOG(Controller, "Wake verify: no provider; cannot rebuild");
+        ASFW_LOG_ERROR(Controller, "Wake verify: no provider; cannot rebuild");
         return;
     }
 
     RequestRuntimeQuiesce(static_cast<uint32_t>(QuiesceReason::kWakeRebuild));
     const kern_return_t kr = StartRuntime(ivars->powerProvider);
     if (kr != kIOReturnSuccess) {
-        ASFW_LOG(Controller, "Wake verify: ❌ rebuild failed: 0x%08x", kr);
+        ASFW_LOG_ERROR(Controller, "Wake verify: ❌ rebuild failed: 0x%08x", kr);
     }
     ScheduleWakeVerify(attempt + 1);
 }
@@ -925,19 +925,19 @@ void ASFWDriver::ScheduleWakeVerify(uint64_t attempt) {
         IOTimerDispatchSource* timer = nullptr;
         kern_return_t kr = IOTimerDispatchSource::Create(queue.get(), &timer);
         if (kr != kIOReturnSuccess || !timer) {
-            ASFW_LOG(Controller, "Wake verify: ❌ timer create failed: 0x%08x", kr);
+            ASFW_LOG_ERROR(Controller, "Wake verify: ❌ timer create failed: 0x%08x", kr);
             return;
         }
         OSAction* action = nullptr;
         kr = CreateActionWakeVerifyTimerFired(0, &action);
         if (kr != kIOReturnSuccess || !action) {
-            ASFW_LOG(Controller, "Wake verify: ❌ timer action create failed: 0x%08x", kr);
+            ASFW_LOG_ERROR(Controller, "Wake verify: ❌ timer action create failed: 0x%08x", kr);
             timer->release();
             return;
         }
         kr = timer->SetHandler(action);
         if (kr != kIOReturnSuccess) {
-            ASFW_LOG(Controller, "Wake verify: ❌ timer SetHandler failed: 0x%08x", kr);
+            ASFW_LOG_ERROR(Controller, "Wake verify: ❌ timer SetHandler failed: 0x%08x", kr);
             action->release();
             timer->release();
             return;
@@ -1074,13 +1074,13 @@ kern_return_t IMPL(ASFWDriver, NewUserClient) {
     IOService* userClientService = nullptr;
     auto ret = Create(this, "ASFWDriverUserClientProperties", &userClientService);
     if (ret != kIOReturnSuccess || !userClientService) {
-        ASFW_LOG(Controller, "NewUserClient Create failed: 0x%08x", ret);
+        ASFW_LOG_ERROR(Controller, "NewUserClient Create failed: 0x%08x", ret);
         return ret != kIOReturnSuccess ? ret : kIOReturnNoResources;
     }
 
     auto client = OSDynamicCast(ASFWDriverUserClient, userClientService);
     if (!client) {
-        ASFW_LOG(Controller, "NewUserClient cast failure");
+        ASFW_LOG_ERROR(Controller, "NewUserClient cast failure");
         userClientService->release();
         return kIOReturnNoResources;
     }
@@ -1088,7 +1088,7 @@ kern_return_t IMPL(ASFWDriver, NewUserClient) {
     ASFW_LOG(UserClient, "[Lifecycle] NewUserClient manual Start client=%p provider=%p", client, this);
     ret = client->Start(this);
     if (ret != kIOReturnSuccess) {
-        ASFW_LOG(Controller, "NewUserClient Start failed: 0x%08x", ret);
+        ASFW_LOG_ERROR(Controller, "NewUserClient Start failed: 0x%08x", ret);
         client->release();
         return ret;
     }
@@ -1362,9 +1362,9 @@ kern_return_t ASFWDriver::StartAudioStreaming(uint64_t guid) {
     }
     auto avcUnit = ctx.deps.avcDiscovery->LiveUnit(guid);
     if (!ASFW::Audio::HasReadyAVCStartRoute(record->nodeId, avcUnit != nullptr)) {
-        ASFW_LOG(Audio,
-                 "[BeBoB] developer stream start refused; no live FCP route GUID=0x%016llx node=%u",
-                 guid, record->nodeId);
+        ASFW_LOG_WARNING(Audio,
+                         "[BeBoB] developer stream start refused; no live FCP route GUID=0x%016llx node=%u",
+                         guid, record->nodeId);
         return kIOReturnNotReady;
     }
     const auto route = ctx.deps.deviceRegistry->CurrentRoute(guid);
@@ -1395,7 +1395,7 @@ kern_return_t ASFWDriver::StartDVCapture(uint64_t deviceGuid,
     }
     auto& ctx = *ivars->context;
     if (!ctx.deps.hardware) {
-        ASFW_LOG(Controller, "[Isoch] ❌ StartDVCapture: hardware not ready");
+        ASFW_LOG_ERROR(Controller, "[Isoch] ❌ StartDVCapture: hardware not ready");
         return kIOReturnNotReady;
     }
     // dev2 replaced the ServiceContext::stopping flag with the lifecycle
@@ -1510,7 +1510,7 @@ kern_return_t ASFWDriver::StartIsochTransmit(uint8_t channel) {
     }
     auto& ctx = *ivars->context;
     if (!ctx.deps.asyncSubsystem || !ctx.deps.hardware) {
-        ASFW_LOG(Controller, "[Isoch] ❌ StartIsochTransmit: Subsystems not ready");
+        ASFW_LOG_ERROR(Controller, "[Isoch] ❌ StartIsochTransmit: Subsystems not ready");
         return kIOReturnNotReady;
     }
 

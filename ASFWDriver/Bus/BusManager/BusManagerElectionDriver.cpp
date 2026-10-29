@@ -153,7 +153,7 @@ void BusManagerElectionDriver::OnTopologyReady(const ASFW::Driver::TopologySnaps
     BMCandidateClass candidateClass = (action == DecisionAction::ContendImmediately) ? BMCandidateClass::Incumbent : BMCandidateClass::NonIncumbent;
 
     if (!deps_.timing) {
-        ASFW_LOG(Controller, "⚠️ [BM Election] Cannot check Annex H gate: timing coordinator missing");
+        ASFW_LOG_WARNING(Controller, "⚠️ [BM Election] Cannot check Annex H gate: timing coordinator missing");
         return;
     }
 
@@ -291,7 +291,7 @@ void BusManagerElectionDriver::Contend(uint32_t generation, uint8_t localNodeId,
             result = deps_.localIrmController->CompareSwapBusManagerId(Driver::IRMCSR::kNoBusManagerId, localNodeId);
         } else {
             if (deps_.hardware == nullptr) {
-                ASFW_LOG(Controller, "[BM Election] Cannot perform local CompareSwap: hardware interface is null");
+                ASFW_LOG_ERROR(Controller, "[BM Election] Cannot perform local CompareSwap: hardware interface is null");
                 inFlight_ = false;
                 if (observer_) {
                     observer_->OnBMElectionFailed(generation, ASFW::Async::AsyncStatus::kHardwareError);
@@ -305,8 +305,8 @@ void BusManagerElectionDriver::Contend(uint32_t generation, uint8_t localNodeId,
         }
         
         if (result.status != ASFW::Driver::LocalCSRLockResult::Status::Success) {
-            ASFW_LOG(Controller, "[BM Election] Local CompareSwap failed (status=%d)",
-                     static_cast<int>(result.status));
+            ASFW_LOG_WARNING(Controller, "[BM Election] Local CompareSwap failed (status=%d)",
+                             static_cast<int>(result.status));
             inFlight_ = false;
             if (observer_) {
                 observer_->OnBMElectionFailed(generation, ASFW::Async::AsyncStatus::kHardwareError);
@@ -363,8 +363,8 @@ void BusManagerElectionDriver::HandleCompareSwapResult(uint32_t generation, uint
     }
 
     if (status != ASFW::Async::AsyncStatus::kSuccess) {
-        ASFW_LOG(Controller, "[BM Election] CompareSwap failed with status %d (%{public}s)",
-                 static_cast<int>(status), ASFW::Async::ToString(status));
+        ASFW_LOG_WARNING(Controller, "[BM Election] CompareSwap failed with status %d (%{public}s)",
+                         static_cast<int>(status), ASFW::Async::ToString(status));
         if (observer_) {
             observer_->OnBMElectionFailed(generation, status);
         }

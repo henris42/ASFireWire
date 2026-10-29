@@ -57,7 +57,7 @@ void TargetLifecycle::OnEdge(uint64_t guid, bool loggedIn) {
                      "[SCSIHBA] target 0 created (SBP-2 login, guid=0x%016llx)", guid);
         } else {
             // Not retried here: a reconnect or replug re-fires the up edge.
-            ASFW_LOG(Controller, "[SCSIHBA] UserCreateTargetForID(0) failed: 0x%x", kr);
+            ASFW_LOG_ERROR(Controller, "[SCSIHBA] UserCreateTargetForID(0) failed: 0x%x", kr);
         }
         return;
     }
@@ -76,9 +76,9 @@ void TargetLifecycle::OnEdge(uint64_t guid, bool loggedIn) {
             ASFW_LOG(Controller,
                      "[SCSIHBA] target 0 destroyed (SBP-2 logout, guid=0x%016llx)", guid);
         } else {
-            ASFW_LOG(Controller,
-                     "[SCSIHBA] UserDestroyTargetForID(0) failed: 0x%x (guid=0x%016llx)",
-                     kr, guid);
+            ASFW_LOG_ERROR(Controller,
+                           "[SCSIHBA] UserDestroyTargetForID(0) failed: 0x%x (guid=0x%016llx)",
+                           kr, guid);
         }
     }
 }

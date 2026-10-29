@@ -92,8 +92,8 @@ ARPacketParser::ParseNext(std::span<const uint8_t> buffer, size_t offset) {
 
     const size_t headerLength = GetHeaderLength(tCode);
     if (headerLength == 0) {
-        ASFW_LOG_V0(Async, "❌ ARPacketParser::ParseNext: Unknown tCode=0x%X at offset %zu", tCode,
-                    offset);
+        ASFW_LOG_ERROR(Async, "❌ ARPacketParser::ParseNext: Unknown tCode=0x%X at offset %zu", tCode,
+                       offset);
         return std::unexpected(ParseFailure::UnknownTCode);
     }
 
@@ -110,7 +110,7 @@ ARPacketParser::ParseNext(std::span<const uint8_t> buffer, size_t offset) {
         // treated as a stitchable fragment — it can never complete.
         // Cross-validated with Linux ohci.c handle_ar_packet:
         // payload_length > MAX_ASYNC_PAYLOAD → ar_context_abort("invalid packet length").
-        ASFW_LOG_V0(
+        ASFW_LOG_ERROR(
             Async,
             "❌ ARPacketParser::ParseNext: data_length %zu exceeds max %zu (tCode=0x%X offset=%zu)",
             dataLength, kMaxAsyncPayloadBytes, tCode, offset);
@@ -212,7 +212,7 @@ size_t ARPacketParser::GetHeaderLength(uint8_t tCode) {
         // Any other tCode (incl. cycle start 0x8, iso 0xA — never delivered
         // to AR contexts with our LinkControl, same as Linux) is invalid
         // here; Linux ar_context_abort()s on it ("invalid tcode").
-        ASFW_LOG_V0(Async, "❌ GetHeaderLength: Unknown tCode=0x%X", tCode);
+        ASFW_LOG_ERROR(Async, "❌ GetHeaderLength: Unknown tCode=0x%X", tCode);
         return 0; // Unknown tCode
     }
 
@@ -251,9 +251,9 @@ size_t ARPacketParser::GetDataLength(std::span<const uint8_t> header, uint8_t tC
         // Extract data_length from quadlet 3, bits[31:16]
         // Header quadlet 3 is at offset 12 (bytes 12-15)
         if (header.size() < 16) {
-            ASFW_LOG_V0(Async,
-                        "❌ GetDataLength: Header too small (%zu bytes) for block tCode=0x%X",
-                        header.size(), tCode);
+            ASFW_LOG_ERROR(Async,
+                           "❌ GetDataLength: Header too small (%zu bytes) for block tCode=0x%X",
+                           header.size(), tCode);
             return 0;
         }
 

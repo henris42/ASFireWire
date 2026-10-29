@@ -19,7 +19,7 @@ bool ASFWAudioDriver::init()
 {
     bool result = super::init();
     if (!result) {
-        ASFW_LOG(Audio, "ASFWAudioDriver: super::init() failed");
+        ASFW_LOG_ERROR(Audio, "ASFWAudioDriver: super::init() failed");
         return false;
     }
 

@@ -34,7 +34,7 @@ namespace {
 #ifndef ASFW_HOST_TEST
 // !!! DIAGNOSTIC: BeBoB CMP path tracing. Remove after FW-94 resolution.
 #define BBPTRACE(fmt, ...) \
-    ASFW_LOG(Audio, "!!! [BeBoB] " fmt, ##__VA_ARGS__)
+    ASFW_LOG_DEBUG(Audio, "!!! [BeBoB] " fmt, ##__VA_ARGS__)
 #else
 #define BBPTRACE(fmt, ...) ((void)0)
 #endif

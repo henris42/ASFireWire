@@ -126,7 +126,7 @@ void AsyncSubsystem::RearmATContexts() {
 
     // Re-arm AT contexts: ContextManager is the authoritative owner.
     if (!contextManager_) { // NOSONAR(cpp:S3923): branches log different diagnostic messages
-        ASFW_LOG(Async, "RearmATContexts: ContextManager unavailable - cannot rearm");
+        ASFW_LOG_ERROR(Async, "RearmATContexts: ContextManager unavailable - cannot rearm");
         return;
     }
 
@@ -151,7 +151,7 @@ void AsyncSubsystem::StopATContextsOnly() {
     if (contextManager_) {
         const kern_return_t stopKr = contextManager_->stopAT();
         if (stopKr != kIOReturnSuccess) {
-            ASFW_LOG(Async, "StopATContextsOnly: ContextManager::stopAT failed (kr=0x%08x)", stopKr);
+            ASFW_LOG_ERROR(Async, "StopATContextsOnly: ContextManager::stopAT failed (kr=0x%08x)", stopKr);
         }
     } else {
         ASFW_LOG(Async, "StopATContextsOnly: ContextManager not present - nothing to stop");

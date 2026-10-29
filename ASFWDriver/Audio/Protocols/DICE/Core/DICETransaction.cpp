@@ -96,11 +96,11 @@ void ReadSectionChunked(Protocols::Ports::ProtocolRegisterIO& io,
          done = std::move(done)](Async::AsyncStatus status,
                                  std::span<const uint8_t> payload) mutable {
             if (status != Async::AsyncStatus::kSuccess || payload.empty()) {
-                ASFW_LOG(DICE,
-                         "ReadSectionChunked: chunk at +%zu of %zu failed (status=%{public}s)",
-                         accumulated->size(),
-                         totalBytes,
-                         ASFW::Async::ToString(status));
+                ASFW_LOG_ERROR(DICE,
+                               "ReadSectionChunked: chunk at +%zu of %zu failed (status=%{public}s)",
+                               accumulated->size(),
+                               totalBytes,
+                               ASFW::Async::ToString(status));
                 done(status == Async::AsyncStatus::kSuccess ? kIOReturnUnderrun
                                                             : MapReadStatus(status));
                 return;
@@ -164,7 +164,7 @@ void ReadGeneralSectionsAtSpeed(
         // A unit that does not answer like a DICE gets no further traffic; the
         // owner claim that follows is a write.
         if (!GeneralSections::IsPlausibleWire(payload.data())) {
-            ASFW_LOG(DICE, "ReadGeneralSections: section table is not a DICE layout; refusing");
+            ASFW_LOG_WARNING(DICE, "ReadGeneralSections: section table is not a DICE layout; refusing");
             Common::InvokeSharedCallback(callbackState, kIOReturnUnsupported, GeneralSections{});
             return;
         }
@@ -463,8 +463,8 @@ std::expected<StreamConfig, IOReturn> ParseStreamConfig(const uint8_t* data, siz
     config.isRxLayout = isRxLayout;
 
     if (!data || size < kStreamSectionHeaderBytes) {
-        ASFW_LOG(DICE, "DICE %{public}s stream format: section header missing (readSize=%zu)",
-                 direction, size);
+        ASFW_LOG_WARNING(DICE, "DICE %{public}s stream format: section header missing (readSize=%zu)",
+                         direction, size);
         return std::unexpected(kIOReturnUnderrun);
     }
 

@@ -668,11 +668,11 @@ kern_return_t ATContextBase<Derived, Tag>::PrepareSubmitState(
         return kIOReturnNotReady;
     }
     if (chain.Empty()) {
-        ASFW_LOG(Async, "  ❌ SubmitChain FAILED: empty chain");
+        ASFW_LOG_ERROR(Async, "  ❌ SubmitChain FAILED: empty chain");
         return kIOReturnBadArgument;
     }
     if (!chain.last) {
-        ASFW_LOG(Async, "  ❌ SubmitChain FAILED: chain tail descriptor missing");
+        ASFW_LOG_ERROR(Async, "  ❌ SubmitChain FAILED: chain tail descriptor missing");
         return kIOReturnInternalError;
     }
 
@@ -683,7 +683,7 @@ kern_return_t ATContextBase<Derived, Tag>::PrepareSubmitState(
     state.tailIndex = ring_->Tail();
     state.capacity = ring_->Capacity();
     if (state.capacity <= 1) {
-        ASFW_LOG(Async, "  ❌ SubmitChain FAILED: ring capacity insufficient (capacity=%zu)", state.capacity);
+        ASFW_LOG_ERROR(Async, "  ❌ SubmitChain FAILED: ring capacity insufficient (capacity=%zu)", state.capacity);
         return kIOReturnInternalError;
     }
 
@@ -698,16 +698,16 @@ kern_return_t ATContextBase<Derived, Tag>::PrepareSubmitState(
     ASFW_LOG(Async, "  🔧 Space check: freeBlocks=%zu needed=%zu", state.freeBlocks, state.neededBlocks);
 
     if (state.neededBlocks == 0 || state.neededBlocks > state.freeBlocks) {
-        ASFW_LOG(Async, "  ❌ SubmitChain FAILED: insufficient space (freeBlocks=%zu needed=%zu)",
-                 state.freeBlocks, state.neededBlocks);
+        ASFW_LOG_ERROR(Async, "  ❌ SubmitChain FAILED: insufficient space (freeBlocks=%zu needed=%zu)",
+                       state.freeBlocks, state.neededBlocks);
         return kIOReturnNoSpace;
     }
 
     state.ringEmpty = (state.headIndex == state.tailIndex);
     state.commandPtr = HW::MakeBranchWordAT(chain.firstIOVA32, chain.TotalBlocks());
     if (state.commandPtr == 0) {
-        ASFW_LOG(Async, "  ❌ SubmitChain FAILED: invalid CommandPtr encoding (iova=0x%08x blocks=%u)",
-                 chain.firstIOVA32, static_cast<unsigned>(chain.firstBlocks));
+        ASFW_LOG_ERROR(Async, "  ❌ SubmitChain FAILED: invalid CommandPtr encoding (iova=0x%08x blocks=%u)",
+                       chain.firstIOVA32, static_cast<unsigned>(chain.firstBlocks));
         return kIOReturnInternalError;
     }
 
@@ -730,7 +730,7 @@ kern_return_t ATContextBase<Derived, Tag>::SubmitViaRearm(
 
     const kern_return_t armResult = this->Arm(state.commandPtr);
     if (armResult != kIOReturnSuccess) {
-        ASFW_LOG(Async, "  ❌ PATH 1 Arm() failed: 0x%x", armResult);
+        ASFW_LOG_ERROR(Async, "  ❌ PATH 1 Arm() failed: 0x%x", armResult);
         return armResult;
     }
 
@@ -749,9 +749,9 @@ kern_return_t ATContextBase<Derived, Tag>::SubmitViaAppend(
     size_t prevLastIndex = 0;
     uint8_t prevBlocks = 0;
     if (!ring_->LocatePreviousLast(state.tailIndex, prevLast, prevLastIndex, prevBlocks)) {
-        ASFW_LOG(Async,
-                 "  ❌ SubmitChain FAILED: unable to locate previous LAST descriptor (tail=%zu)",
-                 state.tailIndex);
+        ASFW_LOG_ERROR(Async,
+                       "  ❌ SubmitChain FAILED: unable to locate previous LAST descriptor (tail=%zu)",
+                       state.tailIndex);
         return kIOReturnInternalError;
     }
 
@@ -880,9 +880,9 @@ bool ATContextBase<Derived, Tag>::DecodeCompletionState(ScanState& state) const 
     state.eventCode = static_cast<OHCIEventCode>(state.eventCodeRaw);
 
     if (state.eventCodeRaw == 0x10 && hw_->HasAgereQuirk()) {
-        ASFW_LOG(Async,
-                 "  ⚠️  Agere/LSI quirk: eventCode 0x10→kAckComplete (ackCount=%u exceeds ATRetries maxReq=15)",
-                 state.ackCount);
+        ASFW_LOG_DEBUG(Async,
+                       "  ⚠️  Agere/LSI quirk: eventCode 0x10→kAckComplete (ackCount=%u exceeds ATRetries maxReq=15)",
+                       state.ackCount);
         state.eventCode = OHCIEventCode::kAckComplete;
         state.eventCodeRaw = static_cast<uint8_t>(OHCIEventCode::kAckComplete);
     }
@@ -1027,17 +1027,17 @@ void ATContextBase<Derived, Tag>::LogCompletionTelemetry(const ScanState& state)
                 state.xferStatus, state.ackCount, state.eventCodeRaw, ToString(state.eventCode));
 
     if (state.ackCount > 3 && hw_->HasAgereQuirk()) {
-        ASFW_LOG(Async,
-                 "  ⚠️  Hardware retry limit exceeded: ackCount=%u > configured maxReq=15 (Agere/LSI ignores ATRetries register)",
-                 state.ackCount);
+        ASFW_LOG_DEBUG(Async,
+                       "  ⚠️  Hardware retry limit exceeded: ackCount=%u > configured maxReq=15 (Agere/LSI ignores ATRetries register)",
+                       state.ackCount);
     }
 
     if (state.ackCount == 0 &&
         (state.eventCodeRaw == 0x1B || state.eventCodeRaw == 0x14 ||
          state.eventCodeRaw == 0x15 || state.eventCodeRaw == 0x16)) {
-        ASFW_LOG(Async,
-                 "  ⚠️  SUSPICIOUS: ackCount=0 for %{public}s (hardware should retry!)",
-                 ToString(state.eventCode));
+        ASFW_LOG_DEBUG(Async,
+                       "  ⚠️  SUSPICIOUS: ackCount=0 for %{public}s (hardware should retry!)",
+                       ToString(state.eventCode));
     } else if (state.ackCount == 3 &&
                (state.eventCodeRaw == 0x1B || state.eventCodeRaw == 0x14 ||
                 state.eventCodeRaw == 0x15 || state.eventCodeRaw == 0x16)) {

@@ -60,13 +60,13 @@ bool ASFWAudioDevice::init(IOUserAudioDriver* in_driver,
                            uint32_t in_zero_timestamp_period) {
     if (!super::init(in_driver, in_supports_prewarming, in_device_uid,
                      in_model_uid, in_manufacturer_uid, in_zero_timestamp_period)) {
-        ASFW_LOG(Audio, "ASFWAudioDevice::init - super::init failed");
+        ASFW_LOG_ERROR(Audio, "ASFWAudioDevice::init - super::init failed");
         return false;
     }
     auto* storage = IONewZero(ASFWAudioDevice_IVars, 1);
     ivars = storage ? ::new (storage) ASFWAudioDevice_IVars{} : nullptr;
     if (!ivars) {
-        ASFW_LOG(Audio, "ASFWAudioDevice::init - failed to allocate ivars");
+        ASFW_LOG_ERROR(Audio, "ASFWAudioDevice::init - failed to allocate ivars");
         return false;
     }
     ivars->modelUid = OSSharedPtr(in_model_uid, OSRetain);
@@ -231,12 +231,12 @@ void EndTransmitInSilence(ASFWAudioDriver_IVars& ivars, bool waitForWire) noexce
             ++waitedMs;
         }
     }
-    ASFW_LOG(DirectAudio,
-             "[TxEnd] guid=0x%016llx faded=%llu held=%llu silenced=%llu missed=%llu peakQ24=%u "
-             "lastAudiblePacket=%llu waitMs=%u%{public}s",
-             ivars.device.guid, tail.fadedFrames, tail.heldFrames, tail.silencedFrames,
-             tail.missedFrames, tail.peakQ24, tail.lastAudiblePacket, waitedMs,
-             waitForWire ? "" : " (wire kept)");
+    ASFW_LOG_DEBUG(DirectAudio,
+                   "[TxEnd] guid=0x%016llx faded=%llu held=%llu silenced=%llu missed=%llu peakQ24=%u "
+                   "lastAudiblePacket=%llu waitMs=%u%{public}s",
+                   ivars.device.guid, tail.fadedFrames, tail.heldFrames, tail.silencedFrames,
+                   tail.missedFrames, tail.peakQ24, tail.lastAudiblePacket, waitedMs,
+                   waitForWire ? "" : " (wire kept)");
 }
 
 // The wire state is serialised on the driver's work queue. StartIO/StopIO and
@@ -287,14 +287,14 @@ void LogOutputWrites(const ASFWAudioDriver_IVars& ivars) noexcept {
         sample[i] = control->outputWriteLogSample[i].load(std::memory_order_relaxed);
         frames[i] = control->outputWriteLogFrames[i].load(std::memory_order_relaxed);
     }
-    ASFW_LOG(DirectAudio,
-             "[OutputWrites] guid=0x%016llx first=%llu/%u %llu/%u %llu/%u %llu/%u maxFrames=%u "
-             "rewinds=%llu discont=%llu overruns=%llu",
-             ivars.device.guid, sample[0], frames[0], sample[1], frames[1], sample[2], frames[2],
-             sample[3], frames[3], control->outputWriteMaxFrames.load(std::memory_order_relaxed),
-             control->playbackRingRewinds.load(std::memory_order_relaxed),
-             control->playbackRingDiscontinuityGeneration.load(std::memory_order_relaxed),
-             control->playbackRingOverruns.load(std::memory_order_relaxed));
+    ASFW_LOG_DEBUG(DirectAudio,
+                   "[OutputWrites] guid=0x%016llx first=%llu/%u %llu/%u %llu/%u %llu/%u maxFrames=%u "
+                   "rewinds=%llu discont=%llu overruns=%llu",
+                   ivars.device.guid, sample[0], frames[0], sample[1], frames[1], sample[2], frames[2],
+                   sample[3], frames[3], control->outputWriteMaxFrames.load(std::memory_order_relaxed),
+                   control->playbackRingRewinds.load(std::memory_order_relaxed),
+                   control->playbackRingDiscontinuityGeneration.load(std::memory_order_relaxed),
+                   control->playbackRingOverruns.load(std::memory_order_relaxed));
 }
 
 // Stop the wire and release the audio-owned TX slabs. The body StopIO always
@@ -311,64 +311,64 @@ kern_return_t ReleaseWireTransport(ASFWAudioDriver_IVars& ivars,
     ivars.runtime.mAudioInternalTxActive = false;
 
     const auto& fill = ivars.runtime.txStreamEngine.PayloadWriterCounters();
-    ASFW_LOG(Audio,
-             "[TxFillSummary] visited=%llu written=%llu withoutPacket=%llu outsidePacket=%llu missedFinality=%llu",
-             fill.framesVisited.load(std::memory_order_relaxed),
-             fill.framesWritten.load(std::memory_order_relaxed),
-             fill.framesWithoutPacket.load(std::memory_order_relaxed),
-             fill.framesOutsidePacket.load(std::memory_order_relaxed),
-             fill.framesMissedFinality.load(std::memory_order_relaxed));
+    ASFW_LOG_DEBUG(Audio,
+                   "[TxFillSummary] visited=%llu written=%llu withoutPacket=%llu outsidePacket=%llu missedFinality=%llu",
+                   fill.framesVisited.load(std::memory_order_relaxed),
+                   fill.framesWritten.load(std::memory_order_relaxed),
+                   fill.framesWithoutPacket.load(std::memory_order_relaxed),
+                   fill.framesOutsidePacket.load(std::memory_order_relaxed),
+                   fill.framesMissedFinality.load(std::memory_order_relaxed));
 
     if (ivars.runtime.directAudioGraph.control) {
         const auto* control = ivars.runtime.directAudioGraph.control;
-        ASFW_LOG(DirectAudio,
-                 "ADK DBG STOPIO guid=0x%016llx callbacks=%llu outsideRun=%llu zts=%llu rxZts=%llu rxAdk=%llu beginRead=%llu writeEnd=%llu writtenEndFrame=%llu txPackets=%llu txSilence=%llu txUnderruns=%llu",
-                 ivars.device.guid,
-                 ivars.runtime.ioDebugCallbacks.load(std::memory_order_relaxed),
-                 ivars.runtime.ioCallbacksOutsideRun.load(std::memory_order_relaxed),
-                 control->counters.ztsPublished.load(std::memory_order_relaxed),
-                 control->counters.ztsRxPublished.load(std::memory_order_relaxed),
-                 control->counters.ztsRxAdkPublished.load(std::memory_order_relaxed),
-                 control->counters.ioBeginReadCount.load(std::memory_order_relaxed),
-                 control->counters.ioWriteEndCount.load(std::memory_order_relaxed),
-                 control->client.outputClientWriteEndFrame.load(std::memory_order_acquire),
-                 control->counters.txPackets.load(std::memory_order_relaxed),
-                 control->counters.txSilenceSubstitutions.load(std::memory_order_relaxed),
-                 control->counters.txUnderruns.load(std::memory_order_relaxed));
+        ASFW_LOG_DEBUG(DirectAudio,
+                       "ADK DBG STOPIO guid=0x%016llx callbacks=%llu outsideRun=%llu zts=%llu rxZts=%llu rxAdk=%llu beginRead=%llu writeEnd=%llu writtenEndFrame=%llu txPackets=%llu txSilence=%llu txUnderruns=%llu",
+                       ivars.device.guid,
+                       ivars.runtime.ioDebugCallbacks.load(std::memory_order_relaxed),
+                       ivars.runtime.ioCallbacksOutsideRun.load(std::memory_order_relaxed),
+                       control->counters.ztsPublished.load(std::memory_order_relaxed),
+                       control->counters.ztsRxPublished.load(std::memory_order_relaxed),
+                       control->counters.ztsRxAdkPublished.load(std::memory_order_relaxed),
+                       control->counters.ioBeginReadCount.load(std::memory_order_relaxed),
+                       control->counters.ioWriteEndCount.load(std::memory_order_relaxed),
+                       control->client.outputClientWriteEndFrame.load(std::memory_order_acquire),
+                       control->counters.txPackets.load(std::memory_order_relaxed),
+                       control->counters.txSilenceSubstitutions.load(std::memory_order_relaxed),
+                       control->counters.txUnderruns.load(std::memory_order_relaxed));
         // The capture side of the same stream: packets seen, frames the
         // decoder wrote into the input ring, and why it did not write.
-        ASFW_LOG(DirectAudio,
-                 "ADK DBG STOPIO RX guid=0x%016llx seen=%llu sytData=%llu sytNoInfo=%llu decoded=%llu noBind=%llu "
-                 "range=%llu geom=%llu badCip=%llu short=%llu lastStatus=%u word=0x%08x ringWrite=%llu ringRead=%llu",
-                 ivars.device.guid,
-                 control->rxPacketsSeen.load(std::memory_order_relaxed),
-                 control->rxDataPackets.load(std::memory_order_relaxed),
-                 control->rxNoDataPackets.load(std::memory_order_relaxed),
-                 control->counters.rxDecodedFrames.load(std::memory_order_relaxed),
-                 control->counters.rxInvalidBinding.load(std::memory_order_relaxed),
-                 control->counters.rxInvalidRange.load(std::memory_order_relaxed),
-                 control->rxGeometryMismatch.load(std::memory_order_relaxed),
-                 control->rxInvalidCipHeaders.load(std::memory_order_relaxed),
-                 control->rxShortPackets.load(std::memory_order_relaxed),
-                 control->counters.rxLastStatus.load(std::memory_order_relaxed),
-                 control->counters.rxLastSampleWord.load(std::memory_order_relaxed),
-                 control->captureRingWriteFrame.load(std::memory_order_relaxed),
-                 control->captureRingReadFrame.load(std::memory_order_relaxed));
+        ASFW_LOG_DEBUG(DirectAudio,
+                       "ADK DBG STOPIO RX guid=0x%016llx seen=%llu sytData=%llu sytNoInfo=%llu decoded=%llu noBind=%llu "
+                       "range=%llu geom=%llu badCip=%llu short=%llu lastStatus=%u word=0x%08x ringWrite=%llu ringRead=%llu",
+                       ivars.device.guid,
+                       control->rxPacketsSeen.load(std::memory_order_relaxed),
+                       control->rxDataPackets.load(std::memory_order_relaxed),
+                       control->rxNoDataPackets.load(std::memory_order_relaxed),
+                       control->counters.rxDecodedFrames.load(std::memory_order_relaxed),
+                       control->counters.rxInvalidBinding.load(std::memory_order_relaxed),
+                       control->counters.rxInvalidRange.load(std::memory_order_relaxed),
+                       control->rxGeometryMismatch.load(std::memory_order_relaxed),
+                       control->rxInvalidCipHeaders.load(std::memory_order_relaxed),
+                       control->rxShortPackets.load(std::memory_order_relaxed),
+                       control->counters.rxLastStatus.load(std::memory_order_relaxed),
+                       control->counters.rxLastSampleWord.load(std::memory_order_relaxed),
+                       control->captureRingWriteFrame.load(std::memory_order_relaxed),
+                       control->captureRingReadFrame.load(std::memory_order_relaxed));
         // Whole-stream cadence, for streams too short for a [TxCadence] heartbeat.
         const uint64_t data = control->counters.txDataPackets.load(std::memory_order_relaxed);
         const uint64_t noData = control->counters.txNoDataPackets.load(std::memory_order_relaxed);
         const uint64_t empty = control->counters.txEmptyPackets.load(std::memory_order_relaxed);
         const uint64_t total = data + noData + empty;
-        ASFW_LOG(DirectAudio, "[TxCadence] stream total: data=%llu noData=%llu empty=%llu dataPerMille=%llu",
-                 data, noData, empty, total ? (data * 1000) / total : 0);
+        ASFW_LOG_DEBUG(DirectAudio, "[TxCadence] stream total: data=%llu noData=%llu empty=%llu dataPerMille=%llu",
+                       data, noData, empty, total ? (data * 1000) / total : 0);
     }
 
     if (ivars.device.audioNub) {
         const kern_return_t stopKr = ivars.device.audioNub->StopAudioStreamingOrRemoteResult();
         stopStatus.store(stopKr, std::memory_order_release);
         if (stopKr != kIOReturnSuccess) {
-            ASFW_LOG(Audio, "ASFWAudioDevice: StopAudioStreaming failed: 0x%x (%{public}s)", stopKr, ASFW::Logging::IOReturnName(stopKr));
-            ASFW_LOG(Audio, "[StreamStop] failed; retaining TX mappings and refusing rate/start work kr=0x%x (%{public}s)", stopKr, ASFW::Logging::IOReturnName(stopKr));
+            ASFW_LOG_ERROR(Audio, "ASFWAudioDevice: StopAudioStreaming failed: 0x%x (%{public}s)", stopKr, ASFW::Logging::IOReturnName(stopKr));
+            ASFW_LOG_ERROR(Audio, "[StreamStop] failed; retaining TX mappings and refusing rate/start work kr=0x%x (%{public}s)", stopKr, ASFW::Logging::IOReturnName(stopKr));
             return stopKr;
         }
     }
@@ -473,12 +473,12 @@ kern_return_t ReleaseIdleKeptWire(ASFWAudioDevice_IVars& local,
 
 kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
     if (!ivars || !ivars->driverIvars) {
-        ASFW_LOG(Audio, "ASFWAudioDevice: StartIO failed - no driver ivars");
+        ASFW_LOG_ERROR(Audio, "ASFWAudioDevice: StartIO failed - no driver ivars");
         return kIOReturnNotReady;
     }
 
-    ASFW_LOG(DirectAudio, "ASFWAudioDevice: StartIO flags=0x%llx",
-             static_cast<uint64_t>(in_flags));
+    ASFW_LOG_DEBUG(DirectAudio, "ASFWAudioDevice: StartIO flags=0x%llx",
+                   static_cast<uint64_t>(in_flags));
 
     if (this->ivars->rateUnavailable.load(std::memory_order_acquire)) return kIOReturnNotReady;
     const auto stopStatus = this->ivars->transportStopStatus.load(std::memory_order_acquire);
@@ -550,12 +550,12 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                     ivars.device.audioNub->StopAudioStreamingOrRemoteResult();
                 if (stopKr != kIOReturnSuccess) {
                     this->ivars->transportStopStatus.store(stopKr, std::memory_order_release);
-                    ASFW_LOG(
+                    ASFW_LOG_ERROR(
                         Audio,
                         "ASFWAudioDevice: StopAudioStreaming failed while unwinding %{public}s: 0x%x (%{public}s)",
                         stage,
                         stopKr, ASFW::Logging::IOReturnName(stopKr));
-                    ASFW_LOG(Audio, "[StreamStop] unwind failed; retaining TX mappings stage=%{public}s kr=0x%x (%{public}s)", stage, stopKr, ASFW::Logging::IOReturnName(stopKr));
+                    ASFW_LOG_ERROR(Audio, "[StreamStop] unwind failed; retaining TX mappings stage=%{public}s kr=0x%x (%{public}s)", stage, stopKr, ASFW::Logging::IOReturnName(stopKr));
                     return result;
                 }
             }
@@ -564,10 +564,10 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                 ivars.device.audioNub->ReleaseAudioTransportClaim();
             }
             transportClaimed = false;
-            ASFW_LOG(Audio,
-                     "ASFWAudioDevice: StartIO failed at %{public}s: 0x%x (%{public}s)",
-                     stage,
-                     result, ASFW::Logging::IOReturnName(result));
+            ASFW_LOG_ERROR(Audio,
+                           "ASFWAudioDevice: StartIO failed at %{public}s: 0x%x (%{public}s)",
+                           stage,
+                           result, ASFW::Logging::IOReturnName(result));
             return result;
         };
 
@@ -641,11 +641,11 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
         ivars.runtime.ioDebugCallbacks.store(0, std::memory_order_relaxed);
         ivars.runtime.ioCallbacksOutsideRun.store(0, std::memory_order_relaxed);
         ivars.runtime.isRunning.store(false, std::memory_order_release);
-        ASFW_LOG(DirectAudio, "ADK DBG StartIO running=0 while arming transport");
+        ASFW_LOG_DEBUG(DirectAudio, "ADK DBG StartIO running=0 while arming transport");
 
         auto* control = ivars.runtime.directAudioGraph.control;
         if (!control) {
-            ASFW_LOG(Audio, "ASFWAudioDevice: StartIO failed - no direct audio control");
+            ASFW_LOG_ERROR(Audio, "ASFWAudioDevice: StartIO failed - no direct audio control");
             kr = failStart(kIOReturnNotReady, "ResolveDirectAudioControl");
             return;
         }
@@ -665,7 +665,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             const auto* profile =
                 static_cast<const ASFW::Isoch::Audio::IAudioStreamProfile*>(ivars.device.profile);
             if (!profile) {
-                ASFW_LOG(Audio, "ASFWAudioDevice: StartIO failed - graph did not resolve a profile");
+                ASFW_LOG_ERROR(Audio, "ASFWAudioDevice: StartIO failed - graph did not resolve a profile");
                 kr = failStart(kIOReturnNotReady, "ResolveProfile");
                 return;
             }
@@ -699,10 +699,10 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             // failure mode the geometry work exists to end.
             constexpr uint32_t kMaxPlaybackStreamsThisBuild = 2;
             if (playbackStreamCount > kMaxPlaybackStreamsThisBuild) {
-                ASFW_LOG(Audio,
-                         "ASFWAudioDevice: StartIO failed - device carries %u playback streams, "
-                         "this build configures at most %u",
-                         playbackStreamCount, kMaxPlaybackStreamsThisBuild);
+                ASFW_LOG_ERROR(Audio,
+                               "ASFWAudioDevice: StartIO failed - device carries %u playback streams, "
+                               "this build configures at most %u",
+                               playbackStreamCount, kMaxPlaybackStreamsThisBuild);
                 kr = failStart(kIOReturnUnsupported, "PlaybackStreamCount");
                 return;
             }
@@ -713,9 +713,9 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                     // reinstate the exact mismatch the resolution removed -- a
                     // Venice F24 framed as an F32 -- so this is a transport
                     // fault, not a device without geometry.
-                    ASFW_LOG(Audio,
-                             "ASFWAudioDevice: StartIO failed - device requires resolved "
-                             "playback geometry but none crossed the nub");
+                    ASFW_LOG_ERROR(Audio,
+                                   "ASFWAudioDevice: StartIO failed - device requires resolved "
+                                   "playback geometry but none crossed the nub");
                     kr = failStart(kIOReturnNotFound, "MissingResolvedGeometry");
                     return;
                 }
@@ -747,7 +747,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
 
             ASFW::Isoch::Audio::AudioStreamConfig txConfig{};
             if (!buildTxConfig(0, txConfig)) {
-                ASFW_LOG(Audio, "ASFWAudioDevice: StartIO failed - BuildDefaultTxStreamConfig failed");
+                ASFW_LOG_ERROR(Audio, "ASFWAudioDevice: StartIO failed - BuildDefaultTxStreamConfig failed");
                 kr = failStart(kIOReturnError, "BuildDefaultTxStreamConfig");
                 return;
             }
@@ -762,7 +762,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                 ASFW::IsochTransport::AudioTimingGeometry::kTxSharedSlotPackets;
             const uint32_t maxPacketBytes =
                 ASFW::Isoch::Audio::TxPacketBytesForStreamConfig(txConfig);
-            ASFW_LOG(Audio,
+            ASFW_LOG_DEBUG(Audio,
                 "[TxWire] rate=%u mode=%u fdf=0x%02x dbs=%u pcm=%u midi=%u frames=%u maxBytes=%u ring=%u allocationBytes=%llu",
                 txConfig.sampleRate, static_cast<uint32_t>(txConfig.streamMode), txConfig.fdf,
                 txConfig.dbs, txConfig.pcmChannels, txConfig.midiSlots, txConfig.framesPerDataPacket,
@@ -780,9 +780,9 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             // the running device's ring (two 828mkIIs, 2026-10-28).
             const kern_return_t claimKr = ivars.device.audioNub->ClaimAudioTransport();
             if (claimKr != kIOReturnSuccess) {
-                ASFW_LOG(Audio, "ASFWAudioDevice: StartIO refused before touching TX resources: another device "
+                ASFW_LOG_WARNING(Audio, "ASFWAudioDevice: StartIO refused before touching TX resources: another device "
                                 "streams on this controller (0x%x %{public}s)",
-                         claimKr, ASFW::Logging::IOReturnName(claimKr));
+                                 claimKr, ASFW::Logging::IOReturnName(claimKr));
                 kr = failStart(claimKr, "ClaimAudioTransport");
                 return;
             }
@@ -793,7 +793,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                 &rawPayload, &rawMetadata, &rawControl
             );
             if (allocKr != kIOReturnSuccess) {
-                ASFW_LOG(Audio, "ASFWAudioDevice: AllocateTxIsochResources failed: 0x%x (%{public}s)", allocKr, ASFW::Logging::IOReturnName(allocKr));
+                ASFW_LOG_ERROR(Audio, "ASFWAudioDevice: AllocateTxIsochResources failed: 0x%x (%{public}s)", allocKr, ASFW::Logging::IOReturnName(allocKr));
                 kr = failStart(allocKr, "AllocateTxIsochResources");
                 return;
             }
@@ -839,12 +839,12 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                     ? static_cast<uint32_t>(ivars.device.currentSampleRate)
                     : 48000u;
 
-            ASFW_LOG(Audio,
-                     "ASFWAudioDevice: Allocated & configured TX isoch resources channel=%u rxTransferDelay=%u txTransferDelay=%u (rate=%u)",
-                     txConfig.sid,
-                     control->rxTransferDelayTicks.load(std::memory_order_relaxed),
-                     control->txTransferDelayTicks.load(std::memory_order_relaxed),
-                     timingRateHz);
+            ASFW_LOG_DEBUG(Audio,
+                           "ASFWAudioDevice: Allocated & configured TX isoch resources channel=%u rxTransferDelay=%u txTransferDelay=%u (rate=%u)",
+                           txConfig.sid,
+                           control->rxTransferDelayTicks.load(std::memory_order_relaxed),
+                           control->txTransferDelayTicks.load(std::memory_order_relaxed),
+                           timingRateHz);
 
         // Secondary playback uses its own wire shape and source-channel slice.
         // It shadows the master's packet timing; the duplex bring-up wires its
@@ -926,7 +926,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
         const uint32_t expectedPrefill =
             ivars.runtime.txSlotProvider.numSlots;
         if (!prefillControl || prefillExpose != expectedPrefill) {
-            ASFW_LOG(
+            ASFW_LOG_ERROR(
                 Audio,
                 "ASFWAudioDevice: StartIO failed - ValidateTxPrefill control=%u expose=%llu expected=%u",
                 prefillControl != nullptr,
@@ -946,9 +946,9 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             ivars.device.audioNub->StartAudioStreaming(
                 static_cast<uint32_t>(ivars.device.currentSampleRate));
         if (startKr != kIOReturnSuccess) {
-            ASFW_LOG(Audio,
-                     "ASFWAudioDevice: StartAudioStreaming failed: 0x%x",
-                     startKr);
+            ASFW_LOG_ERROR(Audio,
+                           "ASFWAudioDevice: StartAudioStreaming failed: 0x%x",
+                           startKr);
             kr = failStart(startKr, "StartAudioStreaming");
             return;
         }
@@ -963,13 +963,13 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             txControl->slotStrideBytes != ivars.runtime.txSlotProvider.slotStrideBytes ||
             txControl->maxPacketBytes != ivars.runtime.txSlotProvider.slotStrideBytes ||
             txControl->interruptInterval != ASFW::IsochTransport::AudioTimingGeometry::kTxPacketsPerGroup) {
-            ASFW_LOG(Audio,
-                     "ASFWAudioDevice: TX queue ABI/geometry mismatch abi=%u slots=%u stride=%u max=%u group=%u",
-                     txControl ? txControl->abiVersion : 0,
-                     txControl ? txControl->numSlots : 0,
-                     txControl ? txControl->slotStrideBytes : 0,
-                     txControl ? txControl->maxPacketBytes : 0,
-                     txControl ? txControl->interruptInterval : 0);
+            ASFW_LOG_ERROR(Audio,
+                           "ASFWAudioDevice: TX queue ABI/geometry mismatch abi=%u slots=%u stride=%u max=%u group=%u",
+                           txControl ? txControl->abiVersion : 0,
+                           txControl ? txControl->numSlots : 0,
+                           txControl ? txControl->slotStrideBytes : 0,
+                           txControl ? txControl->maxPacketBytes : 0,
+                           txControl ? txControl->interruptInterval : 0);
             kr = failStart(
                 kIOReturnUnsupported, "ValidateTxTransportGeometry");
             return;
@@ -1011,20 +1011,20 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             // M-Audio uses qualified TX completion stamps and reports those
             // independently above.
             if (const auto* control = ivars.runtime.directAudioGraph.control) {
-                ASFW_LOG(Audio,
-                         "ASFWAudioDevice: initial hardware ZTS timed out after %u ms "
-                         "rxSeen=%llu data=%llu noData=%llu short=%llu badCip=%llu "
-                         "zeroDbs=%llu geometry=%llu",
-                         ztsWaitMs,
-                         control->rxPacketsSeen.load(std::memory_order_relaxed),
-                         control->rxDataPackets.load(std::memory_order_relaxed),
-                         control->rxNoDataPackets.load(std::memory_order_relaxed),
-                         control->rxShortPackets.load(std::memory_order_relaxed),
-                         control->rxInvalidCipHeaders.load(std::memory_order_relaxed),
-                         control->rxZeroDataBlockSize.load(std::memory_order_relaxed),
-                         control->rxGeometryMismatch.load(std::memory_order_relaxed));
+                ASFW_LOG_ERROR(Audio,
+                               "ASFWAudioDevice: initial hardware ZTS timed out after %u ms "
+                               "rxSeen=%llu data=%llu noData=%llu short=%llu badCip=%llu "
+                               "zeroDbs=%llu geometry=%llu",
+                               ztsWaitMs,
+                               control->rxPacketsSeen.load(std::memory_order_relaxed),
+                               control->rxDataPackets.load(std::memory_order_relaxed),
+                               control->rxNoDataPackets.load(std::memory_order_relaxed),
+                               control->rxShortPackets.load(std::memory_order_relaxed),
+                               control->rxInvalidCipHeaders.load(std::memory_order_relaxed),
+                               control->rxZeroDataBlockSize.load(std::memory_order_relaxed),
+                               control->rxGeometryMismatch.load(std::memory_order_relaxed));
             } else {
-                ASFW_LOG(
+                ASFW_LOG_ERROR(
                     Audio,
                     "ASFWAudioDevice: initial hardware ZTS timed out after %u ms "
                     "(no control block)",
@@ -1052,7 +1052,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             local.wire.OnReleased();
             return;
         }
-        ASFW_LOG(
+        ASFW_LOG_DEBUG(
             DirectAudio,
             "ADK DBG StartIO initial hardware ZTS sampleFrame=%llu hostTicks=%llu waitMs=%u",
             ivars.runtime.lastHalZeroTimestampSampleFrame.load(
@@ -1070,21 +1070,21 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             return;
         }
         local.wire.OnStarted(startRateHz);
-        ASFW_LOG(
+        ASFW_LOG_DEBUG(
             DirectAudio,
             "ADK DBG StartIO super::StartIO ok callbacks=%llu outsideRun=%llu",
             ivars.runtime.ioDebugCallbacks.load(std::memory_order_relaxed),
             ivars.runtime.ioCallbacksOutsideRun.load(std::memory_order_relaxed));
 
-        ASFW_LOG(DirectAudio,
-                 "ADK DBG StartIO transport and hardware clock ready");
-        ASFW_LOG(DirectAudio,
-                 "ADK DBG DUPLEX ready guid=0x%016llx rxStarted=1 txStarted=1 bindValid=%d hasIn=%d hasOut=%d audioDevice=%p",
-                 ivars.device.guid,
-                 ivars.runtime.directAudioSkeletonBound.load(std::memory_order_acquire),
-                 ivars.runtime.directAudioGraph.HasInput(),
-                 ivars.runtime.directAudioGraph.HasOutput(),
-                 static_cast<void*>(ivars.runtime.directAudioGraph.audioDevice));
+        ASFW_LOG_DEBUG(DirectAudio,
+                       "ADK DBG StartIO transport and hardware clock ready");
+        ASFW_LOG_DEBUG(DirectAudio,
+                       "ADK DBG DUPLEX ready guid=0x%016llx rxStarted=1 txStarted=1 bindValid=%d hasIn=%d hasOut=%d audioDevice=%p",
+                       ivars.device.guid,
+                       ivars.runtime.directAudioSkeletonBound.load(std::memory_order_acquire),
+                       ivars.runtime.directAudioGraph.HasInput(),
+                       ivars.runtime.directAudioGraph.HasOutput(),
+                       static_cast<void*>(ivars.runtime.directAudioGraph.audioDevice));
     });
 
     if (kr == kIOReturnSuccess) {
@@ -1121,14 +1121,14 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
         uint64_t ztsHost = 0;
         GetCurrentZeroTimestamp(&ztsSample, &ztsHost);
 
-        ASFW_LOG(
+        ASFW_LOG_DEBUG(
             DirectAudio,
             "ADK STATE after StartIO geometry ztsPeriod=%u inputRingFrames=%u outputRingFrames=%u maxIoFrames=%u",
             GetZeroTimestampPeriod(),
             ivars.runtime.directAudioGraph.memory.inputFrameCapacity,
             ivars.runtime.directAudioGraph.memory.outputFrameCapacity,
             ASFW::IsochTransport::AudioTimingGeometry::kHalIoPeriodFrames);
-        ASFW_LOG(
+        ASFW_LOG_DEBUG(
             DirectAudio,
             "ADK STATE after StartIO streams input(active=%d formats=%llu rate=%.0f flags=0x%x bytesFrame=%u channels=%u bits=%u) output(active=%d formats=%llu rate=%.0f flags=0x%x bytesFrame=%u channels=%u bits=%u)",
             inputActive,
@@ -1145,7 +1145,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             outputFormat.mBytesPerFrame,
             outputFormat.mChannelsPerFrame,
             outputFormat.mBitsPerChannel);
-        ASFW_LOG(
+        ASFW_LOG_DEBUG(
             DirectAudio,
             "ADK STATE after StartIO timing input(sample=%llu host=%llu) output(sample=%llu host=%llu) zts(sample=%llu host=%llu)",
             inputClientSample,
@@ -1161,12 +1161,12 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
 
 kern_return_t ASFWAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags) {
     if (!ivars || !ivars->driverIvars) {
-        ASFW_LOG(Audio, "ASFWAudioDevice: StopIO failed - no driver ivars");
+        ASFW_LOG_ERROR(Audio, "ASFWAudioDevice: StopIO failed - no driver ivars");
         return kIOReturnNotReady;
     }
 
-    ASFW_LOG(DirectAudio, "ASFWAudioDevice: StopIO flags=0x%llx",
-             static_cast<uint64_t>(in_flags));
+    ASFW_LOG_DEBUG(DirectAudio, "ASFWAudioDevice: StopIO flags=0x%llx",
+                   static_cast<uint64_t>(in_flags));
 
     auto& ivars = *this->ivars->driverIvars;
     auto& local = *this->ivars;
@@ -1320,7 +1320,7 @@ ValidateSampleRate(ASFWAudioDriver_IVars& ivars, uint32_t rateHz, const char* or
         }
     }
     if (!rateSupported) {
-        ASFW_LOG(Audio, "[Timing] %{public}s rate %u refused - not advertised", origin, rateHz);
+        ASFW_LOG_WARNING(Audio, "[Timing] %{public}s rate %u refused - not advertised", origin, rateHz);
         return std::unexpected(kIOReturnUnsupported);
     }
     // Legacy endpoints use scalar clock policy. Catalog endpoints take the
@@ -1328,27 +1328,27 @@ ValidateSampleRate(ASFWAudioDriver_IVars& ivars, uint32_t rateHz, const char* or
     const ASFW::Audio::AudioClockConfig requested{.sampleRateHz = rateHz};
     if (!ASFW::Audio::IsSupportedAudioClockConfig(requested) &&
         !ASFW::Audio::IsSupportedMAudioSpecialClockConfig(requested)) {
-        ASFW_LOG(Audio,
-                 "[Timing] %{public}s rate %u refused - announced by the device but not "
-                 "streamable in this build (high rates parked)",
-                 origin, rateHz);
+        ASFW_LOG_WARNING(Audio,
+                         "[Timing] %{public}s rate %u refused - announced by the device but not "
+                         "streamable in this build (high rates parked)",
+                         origin, rateHz);
         return std::unexpected(kIOReturnUnsupported);
     }
     // Without the nub the device clock can't be programmed; succeeding would
     // make CoreAudio believe the hardware moved when it didn't.
     if (!ivars.device.audioNub) {
-        ASFW_LOG(Audio, "[Timing] %{public}s rate %u refused - no audio nub", origin, rateHz);
+        ASFW_LOG_WARNING(Audio, "[Timing] %{public}s rate %u refused - no audio nub", origin, rateHz);
         return std::unexpected(kIOReturnNotReady);
     }
     if (!ivars.device.profile) {
-        ASFW_LOG(Audio, "[Timing] %{public}s rate %u refused - no resolved profile", origin, rateHz);
+        ASFW_LOG_WARNING(Audio, "[Timing] %{public}s rate %u refused - no resolved profile", origin, rateHz);
         return std::unexpected(kIOReturnNotReady);
     }
     const auto next = ASFW::Audio::DriverKit::ResolveProfileTimingGeometry(
         *ivars.device.profile, rateHz, ivars.device.streamModeRaw);
     if (!next) {
-        ASFW_LOG(Audio, "[Timing] %{public}s rate %u refused: %{public}s", origin, rateHz,
-                 ASFW::Audio::Runtime::TimingGeometryErrorName(next.error()));
+        ASFW_LOG_WARNING(Audio, "[Timing] %{public}s rate %u refused: %{public}s", origin, rateHz,
+                         ASFW::Audio::Runtime::TimingGeometryErrorName(next.error()));
         return std::unexpected(kIOReturnUnsupported);
     }
     return *next;
@@ -1397,7 +1397,7 @@ void RemoveNamesPastCount(IOUserAudioDevice& device,
     // skips the redundant CLOCK_SELECT write.
     kern_return_t kr = programHardware ? ivars.device.audioNub->RequestSampleRateChange(rateHz) : kIOReturnSuccess;
     if (kr != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "[Timing] rate %u: transport reconfig failed 0x%x (%{public}s)", rateHz, kr, ASFW::Logging::IOReturnName(kr));
+        ASFW_LOG_ERROR(Audio, "[Timing] rate %u: transport reconfig failed 0x%x (%{public}s)", rateHz, kr, ASFW::Logging::IOReturnName(kr));
         return kr;
     }
     ivars.device.currentSampleRate = rate;
@@ -1405,7 +1405,7 @@ void RemoveNamesPastCount(IOUserAudioDevice& device,
     // The validated ADK contract (ADKVirtualAudioLab) moves the active format
     // with SetSampleRate; the base implementation does nothing more.
     if ((kr = device.SetSampleRate(rate)) != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "[Timing] rate %u: SetSampleRate failed 0x%x (%{public}s)", rateHz, kr, ASFW::Logging::IOReturnName(kr));
+        ASFW_LOG_ERROR(Audio, "[Timing] rate %u: SetSampleRate failed 0x%x (%{public}s)", rateHz, kr, ASFW::Logging::IOReturnName(kr));
         return kr;
     }
 
@@ -1415,8 +1415,8 @@ void RemoveNamesPastCount(IOUserAudioDevice& device,
     if (priorPeriod != next.zeroTimestampPeriodFrames) {
         if ((kr = device.SetZeroTimeStampPeriod(next.zeroTimestampPeriodFrames)) !=
             kIOReturnSuccess) {
-            ASFW_LOG(Audio, "[Timing] rate %u: SetZeroTimeStampPeriod(%u) failed 0x%x (%{public}s)",
-                     rateHz, next.zeroTimestampPeriodFrames, kr, ASFW::Logging::IOReturnName(kr));
+            ASFW_LOG_ERROR(Audio, "[Timing] rate %u: SetZeroTimeStampPeriod(%u) failed 0x%x (%{public}s)",
+                           rateHz, next.zeroTimestampPeriodFrames, kr, ASFW::Logging::IOReturnName(kr));
             return kr;
         }
         ASFW_LOG(Audio, "[Timing] rate %u: ZTS period %u -> %u", rateHz, priorPeriod,
@@ -1433,12 +1433,12 @@ void RemoveNamesPastCount(IOUserAudioDevice& device,
     ASFW::Audio::DriverKit::FillFloat32Format(outputFormat, rate, ivars.device.outputChannelCount);
     if (ivars.inputStream &&
         (kr = ivars.inputStream->SetCurrentStreamFormat(&inputFormat)) != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "[Timing] rate %u: input SetCurrentStreamFormat failed 0x%x (%{public}s)", rateHz, kr, ASFW::Logging::IOReturnName(kr));
+        ASFW_LOG_ERROR(Audio, "[Timing] rate %u: input SetCurrentStreamFormat failed 0x%x (%{public}s)", rateHz, kr, ASFW::Logging::IOReturnName(kr));
         return kr;
     }
     if (ivars.outputStream &&
         (kr = ivars.outputStream->SetCurrentStreamFormat(&outputFormat)) != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "[Timing] rate %u: output SetCurrentStreamFormat failed 0x%x (%{public}s)", rateHz, kr, ASFW::Logging::IOReturnName(kr));
+        ASFW_LOG_ERROR(Audio, "[Timing] rate %u: output SetCurrentStreamFormat failed 0x%x (%{public}s)", rateHz, kr, ASFW::Logging::IOReturnName(kr));
         return kr;
     }
 
@@ -1453,7 +1453,7 @@ void RemoveNamesPastCount(IOUserAudioDevice& device,
     };
     for (const kern_return_t declared : declKr) {
         if (declared != kIOReturnSuccess) {
-            ASFW_LOG(Audio, "[Timing] rate %u: re-declaration failed 0x%x (%{public}s)", rateHz, declared, ASFW::Logging::IOReturnName(declared));
+            ASFW_LOG_ERROR(Audio, "[Timing] rate %u: re-declaration failed 0x%x (%{public}s)", rateHz, declared, ASFW::Logging::IOReturnName(declared));
             return declared;
         }
     }
@@ -1527,10 +1527,10 @@ kern_return_t ASFWAudioDevice::HandleChangeSampleRate(double in_sample_rate) {
 kern_return_t ASFWAudioDevice::StageSampleRate(double in_sample_rate, bool hardwareObservation) {
     ASFW_LOG(Audio, "ASFWAudioDevice: HandleChangeSampleRate %.0f Hz (entry)", in_sample_rate);
     if (!ivars || !ivars->driverIvars) {
-        ASFW_LOG(Audio,
-                 "ASFWAudioDevice: HandleChangeSampleRate NOT READY (ivars=%p driverIvars=%p)",
-                 static_cast<void*>(ivars),
-                 static_cast<void*>(ivars ? ivars->driverIvars : nullptr));
+        ASFW_LOG_WARNING(Audio,
+                         "ASFWAudioDevice: HandleChangeSampleRate NOT READY (ivars=%p driverIvars=%p)",
+                         static_cast<void*>(ivars),
+                         static_cast<void*>(ivars ? ivars->driverIvars : nullptr));
         return kIOReturnNotReady;
     }
     const auto stopStatus = ivars->transportStopStatus.load(std::memory_order_acquire);
@@ -1601,10 +1601,10 @@ kern_return_t ASFWAudioDevice::StageSampleRate(double in_sample_rate, bool hardw
     // cross-service seam. Returning an error makes CoreAudio keep the current
     // rate rather than believe the hardware moved.
     if (ivars.runtime.isRunning.load(std::memory_order_acquire)) {
-        ASFW_LOG(Audio,
-                 "ASFWAudioDevice: HandleChangeSampleRate %.0f Hz refused - IO active "
-                 "(stop playback to change sample rate)",
-                 in_sample_rate);
+        ASFW_LOG_WARNING(Audio,
+                         "ASFWAudioDevice: HandleChangeSampleRate %.0f Hz refused - IO active "
+                         "(stop playback to change sample rate)",
+                         in_sample_rate);
         return kIOReturnBusy;
     }
     const auto next = ValidateSampleRate(ivars, rateHz, "HAL");
@@ -1621,9 +1621,9 @@ kern_return_t ASFWAudioDevice::StageSampleRate(double in_sample_rate, bool hardw
         RequestDeviceConfigurationChange(kConfigChangeActionSampleRate, nullptr);
     if (kr != kIOReturnSuccess) {
         ivars.device.pendingSampleRateHz.store(0, std::memory_order_release);
-        ASFW_LOG(Audio,
-                 "ASFWAudioDevice: HandleChangeSampleRate %u Hz window request failed 0x%x (%{public}s)",
-                 rateHz, kr, ASFW::Logging::IOReturnName(kr));
+        ASFW_LOG_ERROR(Audio,
+                       "ASFWAudioDevice: HandleChangeSampleRate %u Hz window request failed 0x%x (%{public}s)",
+                       rateHz, kr, ASFW::Logging::IOReturnName(kr));
     }
     return kr;
 }
@@ -1660,10 +1660,10 @@ kern_return_t ASFWAudioDevice::RequestExternalRateResync(uint32_t nominalRateHz)
 }
 
 kern_return_t ASFWAudioDevice::RequestIoRestart(uint32_t reason) {
-    ASFW_LOG(Audio,
-             "ASFWAudioDevice: transport requests an IO restart (reason=%u) -- "
-             "requesting configuration-change window",
-             reason);
+    ASFW_LOG_DEBUG(Audio,
+                   "ASFWAudioDevice: transport requests an IO restart (reason=%u) -- "
+                   "requesting configuration-change window",
+                   reason);
     if (ivars && ivars->driverIvars) {
         // An idle kept wire is released now: no StopIO will come for it. A live
         // wire is marked, so the StopIO inside the window releases it and the
@@ -1838,12 +1838,12 @@ kern_return_t ASFWAudioDevice::PerformDeviceConfigurationChange(
         } else restored = priorRead == kIOReturnSuccess ? kIOReturnNotReady : priorRead;
         (void)advance(RecoveryRestoredInWindow{transaction.identity, {prior}, restored == kIOReturnSuccess});
         local.rateUnavailable.store(restored != kIOReturnSuccess, std::memory_order_release);
-        ASFW_LOG(Audio, "[RateTxn] phase=rollback token=%llu gen=%u prior=%u out=%u in=%u failure=0x%x (%{public}s) restore=0x%x (%{public}s)",
+        ASFW_LOG_WARNING(Audio, "[RateTxn] phase=rollback token=%llu gen=%u prior=%u out=%u in=%u failure=0x%x (%{public}s) restore=0x%x (%{public}s)",
             transaction.identity.token, generation, prior.sampleRate, output, input, failure, ASFW::Logging::IOReturnName(failure), restored, ASFW::Logging::IOReturnName(restored));
         return failure;
     }
     if (change_action == kConfigChangeActionIoRestart) {
-        ASFW_LOG(Audio, "ASFWAudioDevice: IO restart window (StopIO done; StartIO follows)");
+        ASFW_LOG_DEBUG(Audio, "ASFWAudioDevice: IO restart window (StopIO done; StartIO follows)");
         return super::PerformDeviceConfigurationChange(change_action, in_change_info);
     }
     if (change_action != kConfigChangeActionSampleRate || !ivars ||

@@ -57,7 +57,7 @@ void FWDevice::ParseUnits(const ConfigROM& rom)
             auto unitEntries = ExtractUnitDirectory(rom, unitDirOffset);
 
             if (unitEntries.empty()) {
-                ASFW_LOG_V1(Discovery, "Failed to extract unit directory at offset %u", unitDirOffset);
+                ASFW_LOG_WARNING(Discovery, "Failed to extract unit directory at offset %u", unitDirOffset);
                 continue;
             }
 

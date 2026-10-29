@@ -219,16 +219,16 @@ void ControllerCore::LogInterruptContext(const InterruptSnapshot& snapshot,
 
 void ControllerCore::HandleFaultInterrupts(uint32_t events) {
     if ((events & IntEventBits::kUnrecoverableError) != 0U) {
-        ASFW_LOG_V0(Controller,
-                    "❌ CRITICAL: UnrecoverableError interrupt - hardware fault detected!");
+        ASFW_LOG_ERROR(Controller,
+                       "❌ CRITICAL: UnrecoverableError interrupt - hardware fault detected!");
         DiagnoseUnrecoverableError();
     }
 
     if ((events & IntEventBits::kRegAccessFail) != 0U) {
-        ASFW_LOG_V0(Controller, "❌ CRITICAL: regAccessFail - CSR register access failed!");
-        ASFW_LOG_V0(Controller,
-                    "This indicates hardware could not complete a register read/write operation");
-        ASFW_LOG_V0(
+        ASFW_LOG_ERROR(Controller, "❌ CRITICAL: regAccessFail - CSR register access failed!");
+        ASFW_LOG_ERROR(Controller,
+                       "This indicates hardware could not complete a register read/write operation");
+        ASFW_LOG_ERROR(
             Controller,
             "Common causes: Self-ID buffer access, Config ROM mapping, or context register access");
     }
@@ -260,9 +260,9 @@ void ControllerCore::HandleFaultInterrupts(uint32_t events) {
     }
 
     if ((events & IntEventBits::kPostedWriteErr) != 0U) {
-        ASFW_LOG(Controller,
-                 "❌ CRITICAL: Posted write error - DMA posted write to host memory failed!");
-        ASFW_LOG(Controller, "This indicates IOMMU mapping error or invalid DMA target address");
+        ASFW_LOG_ERROR(Controller,
+                       "❌ CRITICAL: Posted write error - DMA posted write to host memory failed!");
+        ASFW_LOG_ERROR(Controller, "This indicates IOMMU mapping error or invalid DMA target address");
         ASFW_LOG(Controller, "Common causes: Self-ID buffer DMA, Config ROM shadow update");
     }
 

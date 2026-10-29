@@ -44,7 +44,7 @@ bool TopologyMapService::StartLocked() noexcept {
         return true;
     }
     if (hardware_ == nullptr) {
-        ASFW_LOG(Controller, "❌ TopologyMapService: Start failed, hardware_ is null");
+        ASFW_LOG_ERROR(Controller, "❌ TopologyMapService: Start failed, hardware_ is null");
         InvalidateLocked();
         return false;
     }
@@ -52,7 +52,7 @@ bool TopologyMapService::StartLocked() noexcept {
     // Allocate 1 KiB DMA buffer
     auto opt = hardware_->AllocateDMA(1024, kIOMemoryDirectionInOut, 1024);
     if (!opt) {
-        ASFW_LOG(Controller, "❌ TopologyMapService: Start failed, AllocateDMA failed");
+        ASFW_LOG_ERROR(Controller, "❌ TopologyMapService: Start failed, AllocateDMA failed");
         InvalidateLocked();
         return false;
     }
@@ -62,7 +62,7 @@ bool TopologyMapService::StartLocked() noexcept {
     IOMemoryMap* rawMap = nullptr;
     const kern_return_t kr = dmaOpt_->descriptor->CreateMapping(0, 0, 0, 0, 0, &rawMap);
     if (kr != kIOReturnSuccess || rawMap == nullptr) {
-        ASFW_LOG(Controller, "❌ TopologyMapService: Start failed, CreateMapping failed kr=0x%x", kr);
+        ASFW_LOG_ERROR(Controller, "❌ TopologyMapService: Start failed, CreateMapping failed kr=0x%x", kr);
         dmaOpt_.reset();
         InvalidateLocked();
         return false;
@@ -97,7 +97,7 @@ void TopologyMapService::Stop() noexcept {
 void TopologyMapService::Rebuild(const ASFW::Driver::TopologySnapshot& snapshot) noexcept {
     ASFW::Async::IOScopedLock guard(lock_);
     if (!started_ && !StartLocked()) {
-        ASFW_LOG(Controller, "❌ TopologyMapService: Rebuild failed, service cannot be started");
+        ASFW_LOG_ERROR(Controller, "❌ TopologyMapService: Rebuild failed, service cannot be started");
         return;
     }
 

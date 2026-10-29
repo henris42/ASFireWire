@@ -102,7 +102,7 @@ void DMAMemoryManager::Reset() noexcept {
 }
 
 bool DMAMemoryManager::Initialize(Driver::HardwareInterface& hw, size_t totalSize) {
-    ASFW_LOG(Async, "DMAMemoryManager: Initializing with totalSize=%zu", totalSize);
+    ASFW_LOG_DEBUG(Async, "DMAMemoryManager: Initializing with totalSize=%zu", totalSize);
 
     if (slabVirt_ != nullptr) {
         ASFW_LOG(Async, "DMAMemoryManager: Already initialized");
@@ -118,12 +118,12 @@ bool DMAMemoryManager::Initialize(Driver::HardwareInterface& hw, size_t totalSiz
     // of them straddles a page it should not.
     const size_t alignedSize = (totalSize + (kPageGranule - 1)) & ~(kPageGranule - 1);
 
-    ASFW_LOG(Async, "DMAMemoryManager: Allocating %zu bytes (requested %zu), scattered pages",
-             alignedSize, totalSize);
+    ASFW_LOG_DEBUG(Async, "DMAMemoryManager: Allocating %zu bytes (requested %zu), scattered pages",
+                   alignedSize, totalSize);
 
     auto dmaBufferOpt = hw.AllocateDMAPaged(alignedSize, kIOMemoryDirectionInOut);
     if (!dmaBufferOpt.has_value()) {
-        ASFW_LOG(Async, "DMAMemoryManager: AllocateDMAPaged failed for %zu bytes", alignedSize);
+        ASFW_LOG_ERROR(Async, "DMAMemoryManager: AllocateDMAPaged failed for %zu bytes", alignedSize);
         return false;
     }
 
@@ -213,13 +213,13 @@ bool DMAMemoryManager::Initialize(Driver::HardwareInterface& hw, size_t totalSiz
     // Zero entire slab for deterministic descriptor state
     ZeroSlab(slabSize_);
 
-    ASFW_LOG(Async,
-             "DMAMemoryManager: Initialized - vaddr=%p first iova=0x%llx size=%zu mapped=%zu page runs=%zu",
-             slabVirt_, slabIOVA_, slabSize_, mappingLength_, runs_.size());
-    ASFW_LOG(Async, "  Cache mode: %{public}s",
-             kDMAMappingIsUncached ? "UNCACHED (kIOMemoryMapCacheModeInhibit)"
+    ASFW_LOG_DEBUG(Async,
+                   "DMAMemoryManager: Initialized - vaddr=%p first iova=0x%llx size=%zu mapped=%zu page runs=%zu",
+                   slabVirt_, slabIOVA_, slabSize_, mappingLength_, runs_.size());
+    ASFW_LOG_DEBUG(Async, "  Cache mode: %{public}s",
+                   kDMAMappingIsUncached ? "UNCACHED (kIOMemoryMapCacheModeInhibit)"
                                    : "cached, coherent DMA (kIOMemoryMapCacheModeDefault), mfence on publish/fetch");
-    ASFW_LOG(Async, "  Alignment: 16B (OHCI §1.7)");
+    ASFW_LOG_DEBUG(Async, "  Alignment: 16B (OHCI §1.7)");
 
     return true;
 }
@@ -272,9 +272,9 @@ std::optional<DMAMemoryManager::Region> DMAMemoryManager::AllocateRegion(size_t 
 
     cursor_ = alignedCursor + alignedSize;
 
-    ASFW_LOG(Async, "DMAMemoryManager: Allocated region - vaddr=%p iova=0x%llx size=%zu (requested %zu, align %zu%{public}s)",
-             region.virtualBase, region.deviceBase, region.size, size, alignment,
-             paged ? ", paged: translate per element" : "");
+    ASFW_LOG_DEBUG(Async, "DMAMemoryManager: Allocated region - vaddr=%p iova=0x%llx size=%zu (requested %zu, align %zu%{public}s)",
+                   region.virtualBase, region.deviceBase, region.size, size, alignment,
+                   paged ? ", paged: translate per element" : "");
 
     return region;
 }
@@ -290,7 +290,7 @@ bool DMAMemoryManager::AlignCursorToIOVA(size_t alignment) noexcept {
     }
     // Verify power of 2
     if ((alignment & (alignment - 1)) != 0) {
-        ASFW_LOG(Async, "DMAMemoryManager: AlignCursorToIOVA invalid alignment=%zu", alignment);
+        ASFW_LOG_ERROR(Async, "DMAMemoryManager: AlignCursorToIOVA invalid alignment=%zu", alignment);
         return false;
     }
 
@@ -304,10 +304,10 @@ bool DMAMemoryManager::AlignCursorToIOVA(size_t alignment) noexcept {
 
     cursor_ = alignedCursor;
 
-    ASFW_LOG(Async,
-             "DMAMemoryManager: AlignCursorToIOVA(%zu) -> cursor=%zu (iova now 0x%llx)",
-             alignment, cursor_,
-             VirtToIOVA(reinterpret_cast<const std::byte*>(slabVirt_ + cursor_)));
+    ASFW_LOG_DEBUG(Async,
+                   "DMAMemoryManager: AlignCursorToIOVA(%zu) -> cursor=%zu (iova now 0x%llx)",
+                   alignment, cursor_,
+                   VirtToIOVA(reinterpret_cast<const std::byte*>(slabVirt_ + cursor_)));
     return true;
 }
 

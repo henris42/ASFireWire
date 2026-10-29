@@ -45,7 +45,7 @@ bool SPro24DspProtocol::GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCap
 IOReturn SPro24DspProtocol::Initialize() {
     InitializeAsync([](IOReturn status) {
         if (status != kIOReturnSuccess) {
-            ASFW_LOG(DICE, "SPro24DspProtocol initialization failed: 0x%x", status);
+            ASFW_LOG_ERROR(DICE, "SPro24DspProtocol initialization failed: 0x%x", status);
         }
     });
     return kIOReturnSuccess;
@@ -60,7 +60,7 @@ void SPro24DspProtocol::HandleExtensionSectionsRead(IOReturn status,
                                                     ExtensionSections sections,
                                                     InitCallback callback) {
     if (status != kIOReturnSuccess) {
-        ASFW_LOG(DICE, "Failed to read Focusrite extension sections: 0x%x", status);
+        ASFW_LOG_ERROR(DICE, "Failed to read Focusrite extension sections: 0x%x", status);
         callback(status);
         return;
     }

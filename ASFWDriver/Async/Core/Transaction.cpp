@@ -27,12 +27,12 @@ void Transaction::TransitionTo(TransactionState newState, const char* reason) no
 
     // V0: Always log errors/failures/timeouts
     if (newState == TransactionState::Failed || newState == TransactionState::TimedOut) {
-        ASFW_LOG_V0(Async,
-                    "t%u: %{public}s → %{public}s (%{public}s)",
-                    static_cast<unsigned>(label_.value),
-                    ToString(state_),
-                    ToString(newState),
-                    reason ? reason : "no reason");
+        ASFW_LOG(Async,
+                 "t%u: %{public}s → %{public}s (%{public}s)",
+                 static_cast<unsigned>(label_.value),
+                 ToString(state_),
+                 ToString(newState),
+                 reason ? reason : "no reason");
     }
 
     // V2: Log key transitions

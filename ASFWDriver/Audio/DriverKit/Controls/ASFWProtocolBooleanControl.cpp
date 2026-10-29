@@ -108,12 +108,12 @@ kern_return_t ASFWProtocolBooleanControl::HandleChangeControlValue(bool in_contr
                                                         ivars->routedElement,
                                                         in_control_value);
     if (applyStatus != kIOReturnSuccess) {
-        ASFW_LOG(Audio,
-                 "ASFWProtocolBooleanControl: apply failed class=0x%08x element=%u value=%u status=0x%x",
-                 ivars->classIdFourCC,
-                 ivars->routedElement,
-                 in_control_value ? 1u : 0u,
-                 applyStatus);
+        ASFW_LOG_ERROR(Audio,
+                       "ASFWProtocolBooleanControl: apply failed class=0x%08x element=%u value=%u status=0x%x",
+                       ivars->classIdFourCC,
+                       ivars->routedElement,
+                       in_control_value ? 1u : 0u,
+                       applyStatus);
         return applyStatus;
     }
 

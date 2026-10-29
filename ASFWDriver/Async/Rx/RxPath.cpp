@@ -321,8 +321,8 @@ void RxPath::ProcessReceivedPacket(ARContextType contextType,
     // Fix: copy payload into stack buffer using quadlet-aligned reads before passing downstream.
     static constexpr size_t kMaxARPayloadBytes = ASFW::FW::MaxPayload::kS800;  // 4096
     if (payloadLen > kMaxARPayloadBytes) {
-        ASFW_LOG(Async, "⚠️ AR/RSP: payload %zu exceeds max %zu — dropping packet",
-                 payloadLen, kMaxARPayloadBytes);
+        ASFW_LOG_WARNING(Async, "⚠️ AR/RSP: payload %zu exceeds max %zu — dropping packet",
+                         payloadLen, kMaxARPayloadBytes);
         return;
     }
     alignas(4) uint8_t payloadCopy[kMaxARPayloadBytes];
@@ -426,8 +426,8 @@ void RxPath::HandleSyntheticBusResetPacket(const ARPacketView& view, uint8_t new
              tCode, genFromPacket, newGeneration, q0, q1, q2);
 
     if (genFromPacket != newGeneration) {
-        ASFW_LOG(Async, "⚠️  WARNING: Generation mismatch in bus-reset packet! (%u vs %u)",
-                 genFromPacket, newGeneration);
+        ASFW_LOG_WARNING(Async, "⚠️  WARNING: Generation mismatch in bus-reset packet! (%u vs %u)",
+                         genFromPacket, newGeneration);
     }
 
     // Capture packet for debugging/GUI

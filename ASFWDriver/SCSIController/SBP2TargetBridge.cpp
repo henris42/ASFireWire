@@ -291,9 +291,9 @@ void SBP2TargetBridge::OnUnitPublished(const std::shared_ptr<Discovery::FWUnit>&
     if (!handle.has_value()) {
         // kIOReturnExclusiveAccess: someone else (e.g. the probe tool) owns this
         // target — stay out of the way.
-        ASFW_LOG(Controller,
-                 "[SBP2Bridge] CreateSession failed 0x%x (guid=0x%016llx romOffset=%u)",
-                 handle.error(), guid, romOffset);
+        ASFW_LOG_ERROR(Controller,
+                       "[SBP2Bridge] CreateSession failed 0x%x (guid=0x%016llx romOffset=%u)",
+                       handle.error(), guid, romOffset);
         return;
     }
     {
@@ -307,7 +307,7 @@ void SBP2TargetBridge::OnUnitPublished(const std::shared_ptr<Discovery::FWUnit>&
     ASFW_LOG(Controller, "[SBP2Bridge] session %llu created for guid=0x%016llx — logging in",
              *handle, guid);
     if (!reg->StartLogin(this, *handle)) {
-        ASFW_LOG(Controller, "[SBP2Bridge] StartLogin failed for session %llu", *handle);
+        ASFW_LOG_ERROR(Controller, "[SBP2Bridge] StartLogin failed for session %llu", *handle);
     }
 }
 

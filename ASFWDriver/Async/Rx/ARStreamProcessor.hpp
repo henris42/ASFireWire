@@ -49,17 +49,17 @@ ARStreamStats ProcessARStream(Ctx& ctx,
     auto recycle = [&](size_t descriptorIndex) {
         const kern_return_t recycleKr = ctx.Recycle(descriptorIndex);
         if (recycleKr != kIOReturnSuccess) {
-            ASFW_LOG(Async,
-                     "[%{public}s] failed to recycle descriptor %zu (kr=0x%08x)",
-                     ctxLabel, descriptorIndex, recycleKr);
+            ASFW_LOG_ERROR(Async,
+                           "[%{public}s] failed to recycle descriptor %zu (kr=0x%08x)",
+                           ctxLabel, descriptorIndex, recycleKr);
         }
     };
     auto commitConsumed = [&](size_t descriptorIndex, size_t consumedBytes) {
         const kern_return_t kr = ctx.CommitConsumed(descriptorIndex, consumedBytes);
         if (kr != kIOReturnSuccess) {
-            ASFW_LOG(Async,
-                     "[%{public}s] failed to commit %zu bytes for descriptor %zu (kr=0x%08x)",
-                     ctxLabel, consumedBytes, descriptorIndex, kr);
+            ASFW_LOG_ERROR(Async,
+                           "[%{public}s] failed to commit %zu bytes for descriptor %zu (kr=0x%08x)",
+                           ctxLabel, consumedBytes, descriptorIndex, kr);
         }
     };
     auto logGarbageHead = [&](const uint8_t* bufferStart, size_t offset, size_t bufferSize,
@@ -143,9 +143,9 @@ ARStreamStats ProcessARStream(Ctx& ctx,
                         const kern_return_t consumeKr =
                             ctx.ConsumeReadableBytes(stitched->totalLength);
                         if (consumeKr != kIOReturnSuccess) {
-                            ASFW_LOG(Async,
-                                     "[%{public}s] failed to consume stitched packet (%zu bytes, kr=0x%08x)",
-                                     ctxLabel, stitched->totalLength, consumeKr);
+                            ASFW_LOG_ERROR(Async,
+                                           "[%{public}s] failed to consume stitched packet (%zu bytes, kr=0x%08x)",
+                                           ctxLabel, stitched->totalLength, consumeKr);
                             // Nothing advanced, so Dequeue() would present the
                             // same bytes again and this loop would never end.
                             return stats;

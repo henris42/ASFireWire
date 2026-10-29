@@ -217,12 +217,12 @@ struct PayloadContext {
                     /*options*/ 0,
                     /*offset*/ 0, static_cast<uint64_t>(length));
                 if (syncKr != kIOReturnSuccess) {
-                    ASFW_LOG(Async, "PayloadContext(Stream): Synchronize failed kr=0x%x len=%zu",
-                             syncKr, length);
+                    ASFW_LOG_ERROR(Async, "PayloadContext(Stream): Synchronize failed kr=0x%x len=%zu",
+                                   syncKr, length);
                     OSSynchronizeIO();
                 }
             } else {
-                ASFW_LOG(Async, "PayloadContext(Stream): Missing DMA command for cache sync");
+                ASFW_LOG_WARNING(Async, "PayloadContext(Stream): Missing DMA command for cache sync");
                 OSSynchronizeIO();
             }
 #else

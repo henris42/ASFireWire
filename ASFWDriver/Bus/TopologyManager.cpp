@@ -80,10 +80,10 @@ void LogTopologySummary(const TopologySnapshot& snapshot) {
              static_cast<uint8_t>(snapshot.graphStatus),
              static_cast<uint8_t>(snapshot.errorCode));
     for (const auto& node : snapshot.physical.nodes) {
-        ASFW_LOG(Topology,
-                 "[SelfIDSpeed] gen=%u node=%u phyCode=%u phyMbps=%u linkActive=%d local=%d baseRaw=0x%08x",
-                 snapshot.generation, node.physicalId, node.speedCode,
-                 node.maxSpeedMbps, node.linkActive, node.isLocal, node.baseRaw);
+        ASFW_LOG_DEBUG(Topology,
+                       "[SelfIDSpeed] gen=%u node=%u phyCode=%u phyMbps=%u linkActive=%d local=%d baseRaw=0x%08x",
+                       snapshot.generation, node.physicalId, node.speedCode,
+                       node.maxSpeedMbps, node.linkActive, node.isLocal, node.baseRaw);
         // Self-ID packet #0: L is bit 22, C is bit 11. The local node is the
         // one whose PHY this driver programs; missing bits mean register 4 was
         // not written and there can be no IRM for this bus.
@@ -226,7 +226,7 @@ void TopologyManager::MarkNodeAsBadIRM(uint8_t nodeID) {
         badIRMFlags_.resize(63, false);
     }
     if (!badIRMFlags_[nodeID]) {
-        ASFW_LOG(Topology, "⚠️  Node %u marked as bad IRM (failed verification)", nodeID);
+        ASFW_LOG_WARNING(Topology, "⚠️  Node %u marked as bad IRM (failed verification)", nodeID);
         badIRMFlags_[nodeID] = true;
     }
 }

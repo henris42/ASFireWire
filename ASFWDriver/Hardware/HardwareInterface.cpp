@@ -98,7 +98,7 @@ kern_return_t HardwareInterface::Attach(IOService* owner, IOService* provider) {
     pci->ConfigurationRead16(kIOPCIConfigurationOffsetVendorID, &vendorId);
     pci->ConfigurationRead16(kIOPCIConfigurationOffsetDeviceID, &deviceId);
     if (vendorId == 0xFFFF) {
-        ASFW_LOG(Hardware, "❌ PCI config space reads all-ones; device not accessible");
+        ASFW_LOG_ERROR(Hardware, "❌ PCI config space reads all-ones; device not accessible");
         pci->Close(owner);
         return kIOReturnNoDevice;
     }
@@ -626,7 +626,7 @@ std::optional<uint8_t> HardwareInterface::ReadPhyRegisterUnlocked(uint8_t addres
         const uint32_t val = access.Read(Register32::kPhyControl);
 
         if (val == 0xFFFFFFFF) {
-            ASFW_LOG(Hardware, "[PHY] Read reg %u failed - card ejected", address);
+            ASFW_LOG_ERROR(Hardware, "[PHY] Read reg %u failed - card ejected", address);
             return std::nullopt;
         }
 
@@ -641,7 +641,7 @@ std::optional<uint8_t> HardwareInterface::ReadPhyRegisterUnlocked(uint8_t addres
         }
     }
 
-    ASFW_LOG(Hardware, "[PHY] Read reg %u TIMEOUT", address);
+    ASFW_LOG_WARNING(Hardware, "[PHY] Read reg %u TIMEOUT", address);
     return std::nullopt;
 }
 
@@ -669,7 +669,7 @@ bool HardwareInterface::WritePhyRegisterUnlocked(uint8_t address, uint8_t value)
         const uint32_t val = access.Read(Register32::kPhyControl);
 
         if (val == 0xFFFFFFFF) {
-            ASFW_LOG(Hardware, "PHY write failed - card ejected");
+            ASFW_LOG_ERROR(Hardware, "PHY write failed - card ejected");
             return false;
         }
 
@@ -683,7 +683,7 @@ bool HardwareInterface::WritePhyRegisterUnlocked(uint8_t address, uint8_t value)
         }
     }
 
-    ASFW_LOG(Hardware, "PHY[%u] write timeout: 0x%02x", address, value);
+    ASFW_LOG_WARNING(Hardware, "PHY[%u] write timeout: 0x%02x", address, value);
     return false;
 }
 
@@ -694,7 +694,7 @@ bool HardwareInterface::UpdatePhyRegister(uint8_t address, uint8_t clearBits, ui
 
     const auto currentOpt = ReadPhyRegisterUnlocked(address);
     if (!currentOpt.has_value()) {
-        ASFW_LOG_V0(Hardware, "PHY register %u update failed - read failed", address);
+        ASFW_LOG_ERROR(Hardware, "PHY register %u update failed - read failed", address);
         return false;
     }
 
@@ -737,7 +737,7 @@ std::optional<HardwareInterface::DMABuffer>
 HardwareInterface::AllocateDMA(size_t length, uint64_t options, size_t alignment) {
     auto access = TryBeginAccess();
     if (!access || !device_) {
-        ASFW_LOG_V0(Hardware, "DMA allocation failed - no PCI device");
+        ASFW_LOG_ERROR(Hardware, "DMA allocation failed - no PCI device");
         return std::nullopt;
     }
 
@@ -751,7 +751,7 @@ HardwareInterface::AllocateDMA(size_t length, uint64_t options, size_t alignment
     if (alignment < 16)
         alignment = 16;
     if ((alignment & (alignment - 1)) != 0) {
-        ASFW_LOG_V0(Hardware, "AllocateDMA: alignment=%zu is not power-of-two", alignment);
+        ASFW_LOG_ERROR(Hardware, "AllocateDMA: alignment=%zu is not power-of-two", alignment);
         return std::nullopt;
     }
 
@@ -766,9 +766,9 @@ HardwareInterface::AllocateDMA(size_t length, uint64_t options, size_t alignment
     // just must not straddle one, which aligning it to its own size guarantees.
     constexpr size_t kContiguousAlignment = 32768;
     if (length > kMaxContiguousDMABytes) {
-        ASFW_LOG_V0(Hardware,
-                    "AllocateDMA: %zu bytes exceeds the %zu-byte contiguous limit; use AllocateDMAPaged",
-                    length, kMaxContiguousDMABytes);
+        ASFW_LOG_ERROR(Hardware,
+                       "AllocateDMA: %zu bytes exceeds the %zu-byte contiguous limit; use AllocateDMAPaged",
+                       length, kMaxContiguousDMABytes);
         return std::nullopt;
     }
     if (length > kDMAPageGranule) {
@@ -780,16 +780,16 @@ HardwareInterface::AllocateDMA(size_t length, uint64_t options, size_t alignment
     IOBufferMemoryDescriptor* buffer = nullptr;
     kern_return_t kr = IOBufferMemoryDescriptor::Create(options, length, alignment, &buffer);
     if (kr != kIOReturnSuccess || buffer == nullptr) {
-        ASFW_LOG_V0(Hardware,
-                    "IOBufferMemoryDescriptor::Create failed: 0x%08x (%zu bytes, alignment %zu%{public}s)",
-                    kr, length, alignment,
-                    length > kDMAPageGranule ? ", physically contiguous; memory may be fragmented" : "");
+        ASFW_LOG_ERROR(Hardware,
+                       "IOBufferMemoryDescriptor::Create failed: 0x%08x (%zu bytes, alignment %zu%{public}s)",
+                       kr, length, alignment,
+                       length > kDMAPageGranule ? ", physically contiguous; memory may be fragmented" : "");
         return std::nullopt;
     }
 
     kr = buffer->SetLength(length);
     if (kr != kIOReturnSuccess) {
-        ASFW_LOG_V0(Hardware, "IOBufferMemoryDescriptor::SetLength failed: 0x%08x", kr);
+        ASFW_LOG_ERROR(Hardware, "IOBufferMemoryDescriptor::SetLength failed: 0x%08x", kr);
         buffer->release();
         return std::nullopt;
     }
@@ -801,7 +801,7 @@ HardwareInterface::AllocateDMA(size_t length, uint64_t options, size_t alignment
     IODMACommand* dmaCmd = nullptr;
     kr = IODMACommand::Create(device_.get(), kIODMACommandCreateNoOptions, &spec, &dmaCmd);
     if (kr != kIOReturnSuccess || dmaCmd == nullptr) {
-        ASFW_LOG_V0(Hardware, "IODMACommand::Create failed: 0x%08x", kr);
+        ASFW_LOG_ERROR(Hardware, "IODMACommand::Create failed: 0x%08x", kr);
         buffer->release();
         return std::nullopt;
     }
@@ -815,22 +815,22 @@ HardwareInterface::AllocateDMA(size_t length, uint64_t options, size_t alignment
                                 &segmentCount, segments);
 
     if (kr != kIOReturnSuccess) {
-        ASFW_LOG_V0(Hardware, "IODMACommand::PrepareForDMA failed: 0x%08x", kr);
+        ASFW_LOG_ERROR(Hardware, "IODMACommand::PrepareForDMA failed: 0x%08x", kr);
         command->CompleteDMA(kIODMACommandCompleteDMANoOptions);
         buffer->release();
         return std::nullopt;
     }
 
     if (segmentCount != 1) {
-        ASFW_LOG_V0(Hardware, "❌ AllocateDMA: invalid segment count components=%u", segmentCount);
+        ASFW_LOG_ERROR(Hardware, "❌ AllocateDMA: invalid segment count components=%u", segmentCount);
         command->CompleteDMA(kIODMACommandCompleteDMANoOptions);
         buffer->release();
         return std::nullopt;
     }
 
     if (segments[0].length < length) {
-        ASFW_LOG_V0(Hardware, "❌ AllocateDMA: partial mapping len=%llu need=%zu",
-                    (unsigned long long)segments[0].length, length);
+        ASFW_LOG_ERROR(Hardware, "❌ AllocateDMA: partial mapping len=%llu need=%zu",
+                       (unsigned long long)segments[0].length, length);
         command->CompleteDMA(kIODMACommandCompleteDMANoOptions);
         buffer->release();
         return std::nullopt;
@@ -839,15 +839,15 @@ HardwareInterface::AllocateDMA(size_t length, uint64_t options, size_t alignment
     const uint64_t mappedAddress = segments[0].address;
 
     if (mappedAddress > 0xFFFFFFFFULL) {
-        ASFW_LOG_V0(Hardware, "DMA IOVA 0x%llx exceeds 32-bit range", mappedAddress);
+        ASFW_LOG_ERROR(Hardware, "DMA IOVA 0x%llx exceeds 32-bit range", mappedAddress);
         command->CompleteDMA(kIODMACommandCompleteDMANoOptions);
         buffer->release();
         return std::nullopt;
     }
 
     if ((mappedAddress & (alignment - 1)) != 0) {
-        ASFW_LOG_V0(Hardware, "❌ CRITICAL: DMA buffer misaligned! iova=0x%llx requested=%zu",
-                    mappedAddress, alignment);
+        ASFW_LOG_ERROR(Hardware, "❌ CRITICAL: DMA buffer misaligned! iova=0x%llx requested=%zu",
+                       mappedAddress, alignment);
         command->CompleteDMA(kIODMACommandCompleteDMANoOptions);
         buffer->release();
         return std::nullopt;
@@ -875,7 +875,7 @@ std::optional<HardwareInterface::DMABuffer>
 HardwareInterface::AllocateDMAPaged(size_t length, uint64_t options) {
     auto access = TryBeginAccess();
     if (!access || !device_) {
-        ASFW_LOG_V0(Hardware, "DMA allocation failed - no PCI device");
+        ASFW_LOG_ERROR(Hardware, "DMA allocation failed - no PCI device");
         return std::nullopt;
     }
     if (length == 0) {
@@ -888,14 +888,14 @@ HardwareInterface::AllocateDMAPaged(size_t length, uint64_t options) {
     IOBufferMemoryDescriptor* rawBuffer = nullptr;
     kern_return_t kr = IOBufferMemoryDescriptor::Create(options, length, kDMAPageGranule, &rawBuffer);
     if (kr != kIOReturnSuccess || rawBuffer == nullptr) {
-        ASFW_LOG_V0(Hardware, "AllocateDMAPaged: IOBufferMemoryDescriptor::Create failed: 0x%08x (%zu bytes)",
-                    kr, length);
+        ASFW_LOG_ERROR(Hardware, "AllocateDMAPaged: IOBufferMemoryDescriptor::Create failed: 0x%08x (%zu bytes)",
+                       kr, length);
         return std::nullopt;
     }
     OSSharedPtr<IOBufferMemoryDescriptor> buffer(rawBuffer, OSNoRetain);
     kr = buffer->SetLength(length);
     if (kr != kIOReturnSuccess) {
-        ASFW_LOG_V0(Hardware, "AllocateDMAPaged: SetLength failed: 0x%08x", kr);
+        ASFW_LOG_ERROR(Hardware, "AllocateDMAPaged: SetLength failed: 0x%08x", kr);
         return std::nullopt;
     }
 
@@ -923,7 +923,7 @@ HardwareInterface::AllocateDMAPaged(size_t length, uint64_t options) {
         IODMACommand* rawCommand = nullptr;
         kr = IODMACommand::Create(device_.get(), kIODMACommandCreateNoOptions, &spec, &rawCommand);
         if (kr != kIOReturnSuccess || rawCommand == nullptr) {
-            ASFW_LOG_V0(Hardware, "AllocateDMAPaged: IODMACommand::Create failed: 0x%08x", kr);
+            ASFW_LOG_ERROR(Hardware, "AllocateDMAPaged: IODMACommand::Create failed: 0x%08x", kr);
             return failWindows();
         }
         OSSharedPtr<IODMACommand> command(rawCommand, OSNoRetain);
@@ -934,8 +934,8 @@ HardwareInterface::AllocateDMAPaged(size_t length, uint64_t options) {
         kr = command->PrepareForDMA(kIODMACommandPrepareForDMANoOptions, buffer.get(), offset, window,
                                     &flags, &segmentCount, segments);
         if (kr != kIOReturnSuccess || segmentCount == 0) {
-            ASFW_LOG_V0(Hardware, "AllocateDMAPaged: PrepareForDMA failed at offset %zu: 0x%08x (segments=%u)",
-                        offset, kr, segmentCount);
+            ASFW_LOG_ERROR(Hardware, "AllocateDMAPaged: PrepareForDMA failed at offset %zu: 0x%08x (segments=%u)",
+                           offset, kr, segmentCount);
             return failWindows();
         }
         result.windowCommands.push_back(command);
@@ -946,8 +946,8 @@ HardwareInterface::AllocateDMAPaged(size_t length, uint64_t options) {
         size_t windowCovered = 0;
         for (uint32_t i = 0; i < segmentCount; ++i) {
             if (segments[i].address + segments[i].length - 1 > 0xFFFFFFFFULL) {
-                ASFW_LOG_V0(Hardware, "AllocateDMAPaged: segment iova=0x%llx len=%llu exceeds the OHCI 32-bit range",
-                            segments[i].address, segments[i].length);
+                ASFW_LOG_ERROR(Hardware, "AllocateDMAPaged: segment iova=0x%llx len=%llu exceeds the OHCI 32-bit range",
+                               segments[i].address, segments[i].length);
                 return failWindows();
             }
             // Merge runs that happen to be physically adjacent.
@@ -960,21 +960,21 @@ HardwareInterface::AllocateDMAPaged(size_t length, uint64_t options) {
             windowCovered += segments[i].length;
         }
         if (windowCovered != window) {
-            ASFW_LOG_V0(Hardware, "AllocateDMAPaged: window at %zu mapped %zu of %zu bytes",
-                        offset, windowCovered, window);
+            ASFW_LOG_ERROR(Hardware, "AllocateDMAPaged: window at %zu mapped %zu of %zu bytes",
+                           offset, windowCovered, window);
             return failWindows();
         }
         covered += windowCovered;
     }
     if (covered != length || result.segments.empty()) {
-        ASFW_LOG_V0(Hardware, "AllocateDMAPaged: mapped %zu of %zu bytes", covered, length);
+        ASFW_LOG_ERROR(Hardware, "AllocateDMAPaged: mapped %zu of %zu bytes", covered, length);
         return failWindows();
     }
 
     result.dmaCommand = result.windowCommands.front();
     result.deviceAddress = result.segments.front().address;
-    ASFW_LOG(Hardware, "DMA paged buffer allocated: %zu bytes in %zu page run(s), %zu window(s), first iova=0x%llx",
-             length, result.segments.size(), result.windowCommands.size(), result.deviceAddress);
+    ASFW_LOG_DEBUG(Hardware, "DMA paged buffer allocated: %zu bytes in %zu page run(s), %zu window(s), first iova=0x%llx",
+                   length, result.segments.size(), result.windowCommands.size(), result.deviceAddress);
     if (bringUpTrace_.Active()) {
         uint64_t lowest = UINT64_MAX;
         uint64_t highestEnd = 0;
@@ -999,7 +999,7 @@ bool HardwareInterface::VerifyDirectDMA(IODMACommand& command, IOMemoryDescripto
     // A probe that cannot run must not stop the driver; it only loses the
     // early diagnosis.
     const auto skip = [what](const char* why, kern_return_t kr) {
-        ASFW_LOG(Hardware, "⚠️  DMA reach probe skipped for %{public}s: %{public}s (0x%08x)", what, why, kr);
+        ASFW_LOG_WARNING(Hardware, "⚠️  DMA reach probe skipped for %{public}s: %{public}s (0x%08x)", what, why, kr);
         return true;
     };
 
@@ -1077,10 +1077,10 @@ bool HardwareInterface::VerifyDirectDMA(IODMACommand& command, IOMemoryDescripto
         return skip("PerformOperation failed", kr);
     }
     if (!direct) {
-        ASFW_LOG_V0(Hardware,
-                    "❌ DMA to %{public}s is bounced: RAM above 4 GiB and no IOMMU. Enable VT-d in the BIOS "
-                    "and set DisableIoMapper=false (asfw-opencore-arm.sh --vtd), or boot with maxmem=2048.",
-                    what);
+        ASFW_LOG_ERROR(Hardware,
+                       "❌ DMA to %{public}s is bounced: RAM above 4 GiB and no IOMMU. Enable VT-d in the BIOS "
+                       "and set DisableIoMapper=false (asfw-opencore-arm.sh --vtd), or boot with maxmem=2048.",
+                       what);
         return false;
     }
     ASFW_LOG_V2(Hardware, "DMA reach probe OK for %{public}s (offset %llu): device sees the driver's pages",
@@ -1368,7 +1368,7 @@ LocalCSRWriteResult HardwareInterface::WriteLocalIRMResource(uint32_t selectCode
             // OHCI places the previous value into CSRData upon completion.
             const uint32_t actualOld = access.Read(Register32::kCSRData);
             if (actualOld != expectedOld) {
-                ASFW_LOG(Hardware, "❌ WriteLocalIRMResource raced: expected old 0x%08x, got 0x%08x", expectedOld, actualOld);
+                ASFW_LOG_WARNING(Hardware, "❌ WriteLocalIRMResource raced: expected old 0x%08x, got 0x%08x", expectedOld, actualOld);
                 return {LocalCSRLockResult::Status::Timeout}; // Reuse timeout or add Raced
             }
 
@@ -1376,7 +1376,7 @@ LocalCSRWriteResult HardwareInterface::WriteLocalIRMResource(uint32_t selectCode
             access = {};
             const auto finalVal = ReadLocalIRMResource(selectCode);
             if (finalVal.status == LocalCSRLockResult::Status::Success && finalVal.value != value) {
-                ASFW_LOG(Hardware, "❌ WriteLocalIRMResource verification failed: expected 0x%08x, read back 0x%08x", value, finalVal.value);
+                ASFW_LOG_ERROR(Hardware, "❌ WriteLocalIRMResource verification failed: expected 0x%08x, read back 0x%08x", value, finalVal.value);
                 return {LocalCSRLockResult::Status::Timeout};
             }
 
@@ -1388,7 +1388,7 @@ LocalCSRWriteResult HardwareInterface::WriteLocalIRMResource(uint32_t selectCode
         std::this_thread::sleep_for(std::chrono::microseconds(5));
 #endif
     }
-    ASFW_LOG(Hardware, "WriteLocalIRMResource timeout select=%u value=0x%08x", selectCode, value);
+    ASFW_LOG_WARNING(Hardware, "WriteLocalIRMResource timeout select=%u value=0x%08x", selectCode, value);
     return {LocalCSRLockResult::Status::Timeout};
 }
 
@@ -1432,7 +1432,7 @@ LocalCSRReadResult HardwareInterface::ReadLocalIRMResource(uint32_t selectCode) 
         std::this_thread::sleep_for(std::chrono::microseconds(5));
 #endif
     }
-    ASFW_LOG(Hardware, "ReadLocalIRMResource timeout select=%u", selectCode);
+    ASFW_LOG_WARNING(Hardware, "ReadLocalIRMResource timeout select=%u", selectCode);
     return {LocalCSRLockResult::Status::Timeout, 0};
 }
 
@@ -1466,7 +1466,7 @@ LocalCSRLockResult HardwareInterface::CompareSwapLocalIRMResource(uint32_t selec
         std::this_thread::sleep_for(std::chrono::microseconds(5));
 #endif
     }
-    ASFW_LOG(Hardware, "CompareSwapLocalIRMResource timeout select=%u compare=0x%08x new=0x%08x", selectCode, compareValue, newValue);
+    ASFW_LOG_WARNING(Hardware, "CompareSwapLocalIRMResource timeout select=%u compare=0x%08x new=0x%08x", selectCode, compareValue, newValue);
     return {LocalCSRLockResult::Status::Timeout, 0, false};
 }
 
@@ -1492,8 +1492,8 @@ kern_return_t HardwareInterface::ProgramInitialIRMResourceRegisters() noexcept {
     uint32_t lo = access.Read(Register32::kInitialChannelsAvailableLo);
 
     if (bw != kInitialBandwidthAvailable || hi != kInitialChannelsAvailableHi || lo != kInitialChannelsAvailableLo) {
-        ASFW_LOG(Hardware, "❌ [IRM] Initial register readback mismatch! read: bw=0x%08x hi=0x%08x lo=0x%08x",
-                 bw, hi, lo);
+        ASFW_LOG_ERROR(Hardware, "❌ [IRM] Initial register readback mismatch! read: bw=0x%08x hi=0x%08x lo=0x%08x",
+                       bw, hi, lo);
         initialIRMRegistersProgrammed_ = false;
         return kIOReturnError;
     }

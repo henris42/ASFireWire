@@ -108,7 +108,7 @@ public:
         if (source_) {
             kern_return_t kr = source_->SetEnable(true);
             if (kr != kIOReturnSuccess) {
-                ASFW_LOG(Async, "CompletionQueue::Activate() - SetEnable failed: 0x%x", kr);
+                ASFW_LOG_ERROR(Async, "CompletionQueue::Activate() - SetEnable failed: 0x%x", kr);
             }
         }
         ASFW_LOG(Async, "CompletionQueue::Activate() - queue now active");
@@ -194,8 +194,8 @@ public:
                 std::memcpy(buffer, &token, kTokenSize);
             } else {
                 // CRITICAL: Don't crash, just log the mismatch
-                ASFW_LOG(Async, "❌ CompletionQueue::Push: SIZE MISMATCH! requested=%zu actual=%zu - DROPPING",
-                         kTokenSize, size);
+                ASFW_LOG_ERROR(Async, "❌ CompletionQueue::Push: SIZE MISMATCH! requested=%zu actual=%zu - DROPPING",
+                               kTokenSize, size);
             }
         });
 
@@ -213,10 +213,10 @@ public:
         } else if (ret != kIOReturnNotReady) {
             // Other errors (notReady means queue deactivated, which we already checked)
             // Log but don't crash
-            ASFW_LOG(Async, "CompletionQueue::Push: ENQUEUE FAILED - ret=0x%x", ret);
+            ASFW_LOG_ERROR(Async, "CompletionQueue::Push: ENQUEUE FAILED - ret=0x%x", ret);
             dropped_.fetch_add(1, std::memory_order_relaxed);
         } else {
-            ASFW_LOG(Async, "CompletionQueue::Push: NOT READY - ret=0x%x", ret);
+            ASFW_LOG_WARNING(Async, "CompletionQueue::Push: NOT READY - ret=0x%x", ret);
         }
         return false;
     }
@@ -251,7 +251,7 @@ private:
             if (done) done();
         });
         if (kr != kIOReturnSuccess) {
-            ASFW_LOG(Async, "[Teardown] completion queue source cancel failed source=%p kr=0x%08x", source, kr);
+            ASFW_LOG_ERROR(Async, "[Teardown] completion queue source cancel failed source=%p kr=0x%08x", source, kr);
             source->release();
             if (done) done();
         }

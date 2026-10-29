@@ -77,7 +77,7 @@ public:
         lock_ = ::IOLockAlloc();
         if (lock_ == nullptr) {
             // Log error but don't crash - caller should check via RegisterTx return value
-            ASFW_LOG(Async, "ERROR: Track_Tracking: IOLockAlloc failed!");
+            ASFW_LOG_ERROR(Async, "ERROR: Track_Tracking: IOLockAlloc failed!");
         }
 
         if (!txnMgr_) { // NOSONAR(cpp:S3923): branches log different diagnostic messages
@@ -114,7 +114,7 @@ public:
         uint8_t label = labelAllocator_->Allocate();
         if (label == LabelAllocator::kInvalidLabel) {
             ::IOLockUnlock(lock_);
-            ASFW_LOG(Async, "ERROR: RegisterTx failed - no available tLabels");
+            ASFW_LOG_ERROR(Async, "ERROR: RegisterTx failed - no available tLabels");
             return AsyncHandle{0};
         }
 
@@ -179,7 +179,7 @@ public:
                 callback(AsyncHandle{static_cast<uint32_t>(label) + 1}, status, responseCode, data);
                 ASFW_LOG_V3(Async, "🔍 [Wrapper Lambda] Callback returned");
             } else {
-                ASFW_LOG(Async, "⚠️ [Wrapper Lambda] callback is NULL!");
+                ASFW_LOG_WARNING(Async, "⚠️ [Wrapper Lambda] callback is NULL!");
             }
         });
 

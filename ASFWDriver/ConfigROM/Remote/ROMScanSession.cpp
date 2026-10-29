@@ -28,14 +28,14 @@ void LogBIBBootingRetry(uint8_t nodeId) {
 }
 
 void LogBIBParseFailed(uint8_t nodeId, ConfigROMParser::Error error) {
-    ASFW_LOG_V1(ConfigROM, "ROMScanSession: Node %u BIB parse failed (code=%u offset=%u)", nodeId,
-                static_cast<uint8_t>(error.code), error.offsetQuadlets);
+    ASFW_LOG_WARNING(ConfigROM, "ROMScanSession: Node %u BIB parse failed (code=%u offset=%u)", nodeId,
+                     static_cast<uint8_t>(error.code), error.offsetQuadlets);
 }
 
 void LogBIBCRCMismatch(uint8_t nodeId, uint16_t computed, uint16_t expected) {
-    ASFW_LOG_V1(ConfigROM,
-                "ROMScanSession: Node %u BIB CRC mismatch (computed=0x%04x expected=0x%04x)",
-                nodeId, computed, expected);
+    ASFW_LOG_WARNING(ConfigROM,
+                     "ROMScanSession: Node %u BIB CRC mismatch (computed=0x%04x expected=0x%04x)",
+                     nodeId, computed, expected);
 }
 
 void LogConfigROMReadyRetry(uint8_t nodeId, const char* reason, uint8_t retriesLeft) {
@@ -109,12 +109,12 @@ void ROMScanSession::Start(ROMScanRequest request, ScanCompletionCallback comple
                                     ? std::min(session->params_.startSpeed,
                                                static_cast<FwSpeed>(*pathSpeed))
                                     : session->params_.startSpeed;
-            ASFW_LOG(ConfigROM,
-                     "[ROMScanSpeed] gen=%u local=%u node=%u pathCode=%d configuredStart=S%u selectedStart=S%u",
-                     session->gen_.value, session->localNodeId_, nodeId,
-                     pathSpeed ? static_cast<int>(*pathSpeed) : -1,
-                     100u << static_cast<uint8_t>(session->params_.startSpeed),
-                     100u << static_cast<uint8_t>(chosen));
+            ASFW_LOG_DEBUG(ConfigROM,
+                           "[ROMScanSpeed] gen=%u local=%u node=%u pathCode=%d configuredStart=S%u selectedStart=S%u",
+                           session->gen_.value, session->localNodeId_, nodeId,
+                           pathSpeed ? static_cast<int>(*pathSpeed) : -1,
+                           100u << static_cast<uint8_t>(session->params_.startSpeed),
+                           100u << static_cast<uint8_t>(chosen));
             return chosen;
         };
 
@@ -396,9 +396,9 @@ void ROMScanSession::RetryAtSameSpeed(ROMScanNodeStateMachine& node) {
                     node.RetriesLeft());
         break;
     case RetryBackoffPolicy::Decision::FailedExhausted:
-        ASFW_LOG(ConfigROM,
-                 "ROMScanSession: Node %u -> Failed (no answer at S%u; never read at a lower speed)",
-                 node.NodeId(), SpeedMbps(node.CurrentSpeed()));
+        ASFW_LOG_ERROR(ConfigROM,
+                       "ROMScanSession: Node %u -> Failed (no answer at S%u; never read at a lower speed)",
+                       node.NodeId(), SpeedMbps(node.CurrentSpeed()));
         break;
     }
 }
@@ -723,11 +723,11 @@ void ROMScanSession::HandleRootDirComplete(uint8_t nodeId, ROMReader::ReadResult
         }
     } else {
         const auto error = rootDir.error();
-        ASFW_LOG(ConfigROM,
-                 "ROMScanSession: Node %u root directory parse failed code=%u offset=q%u "
-                 "quadlets=%u status=%{public}s",
-                 nodeId, static_cast<uint8_t>(error.code), error.offsetQuadlets, quadletCount,
-                 Async::ToString(result.status));
+        ASFW_LOG_WARNING(ConfigROM,
+                         "ROMScanSession: Node %u root directory parse failed code=%u offset=q%u "
+                         "quadlets=%u status=%{public}s",
+                         nodeId, static_cast<uint8_t>(error.code), error.offsetQuadlets, quadletCount,
+                         Async::ToString(result.status));
         node.MutableROM().rootDirMinimal.clear();
     }
 

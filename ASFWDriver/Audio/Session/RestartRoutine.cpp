@@ -176,8 +176,8 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
     const auto* policy = DeviceProfiles::Audio::CurrentAudioPolicy(record);
     if (policy == nullptr || policy->route != *route ||
         !DeviceProfiles::Audio::AllowsAudioRuntime(policy->plan.support)) {
-        ASFW_LOG(Audio,
-                 "[Session] no current supported audio policy; refusing start GUID=0x%016llx", guid);
+        ASFW_LOG_WARNING(Audio,
+                         "[Session] no current supported audio policy; refusing start GUID=0x%016llx", guid);
         return refused(kIOReturnNotReady, "Policy");
     }
     const FW::Generation generation = route->generation;
@@ -226,8 +226,8 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
     // stream. Not fatal: Configure surfaces a real device error. Cross-validated
     // with FFADO dice_avdevice.cpp prepare() (m_nb_rx/m_nb_tx).
     if (const IOReturn geometry = family.LoadGeometry(); geometry != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "[Session] stream-geometry read failed (0x%x); planning with known caps",
-                 geometry);
+        ASFW_LOG_WARNING(Audio, "[Session] stream-geometry read failed (0x%x); planning with known caps",
+                         geometry);
     }
 
     // The first section read may have verified a lower link speed than ROM
@@ -282,8 +282,8 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
     if (request.binding == nullptr) {
         return refused(kIOReturnNotReady, "BindingSource");
     }
-    ASFW_LOG(Audio, "[Session] provisional isoch channels d2h=%u h2d=%u GUID=%llx (the IRM assigns the live ones)",
-             channels.deviceToHostIsoChannel, channels.hostToDeviceIsoChannel, guid);
+    ASFW_LOG_DEBUG(Audio, "[Session] provisional isoch channels d2h=%u h2d=%u GUID=%llx (the IRM assigns the live ones)",
+                   channels.deviceToHostIsoChannel, channels.hostToDeviceIsoChannel, guid);
 
     if (TeardownRequested()) {
         return aborted("BeginSplitDuplex");
@@ -307,7 +307,7 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
         auto outcome = stage();
         if (!outcome && outcome.error() == kIOReturnTimeout && retryStages && stillWanted() &&
             !TeardownRequested()) {
-            ASFW_LOG(Audio, "[Session] %{public}s timed out; retrying once GUID=%llx", step, guid);
+            ASFW_LOG_WARNING(Audio, "[Session] %{public}s timed out; retrying once GUID=%llx", step, guid);
             outcome = stage();
         }
         return outcome;
@@ -678,8 +678,8 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
     }
 
     if (readiness.requireTransmitTiming || readiness.minimumHostRunMs)
-        ASFW_LOG(Audio, "[SessionTiming] playback presentation acquired GUID=%llx elapsedMs=%llu",
-                 request.guid, UptimeMilliseconds() - readyStartMs);
+        ASFW_LOG_DEBUG(Audio, "[SessionTiming] playback presentation acquired GUID=%llx elapsedMs=%llu",
+                       request.guid, UptimeMilliseconds() - readyStartMs);
 
     // 8. Confirm the device runs what was armed.
     if (TeardownRequested()) {

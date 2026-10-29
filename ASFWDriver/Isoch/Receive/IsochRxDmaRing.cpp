@@ -191,8 +191,13 @@ uint32_t IsochRxDmaRing::VerifyProgram(Memory::IIsochDMAMemory& dma) noexcept {
                            lastIOVA, desc->branchWord, static_cast<const void*>(nextDesc), branchBack);
         }
     }
-    ASFW_LOG(Isoch, "IR: descriptor program checked: %u descriptors, %zu-byte buffers, %u mismatches",
-             count, bufferBytes, mismatches);
+    if (mismatches != 0) {
+        ASFW_LOG_WARNING(Isoch, "IR: descriptor program checked: %u descriptors, %zu-byte buffers, %u mismatches",
+                         count, bufferBytes, mismatches);
+    } else {
+        ASFW_LOG_DEBUG(Isoch, "IR: descriptor program checked: %u descriptors, %zu-byte buffers, 0 mismatches",
+                       count, bufferBytes);
+    }
     return mismatches;
 }
 

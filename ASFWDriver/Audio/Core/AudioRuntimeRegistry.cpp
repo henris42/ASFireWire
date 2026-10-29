@@ -148,8 +148,8 @@ std::shared_ptr<IDeviceProtocol> AudioRuntimeRegistry::EnsureForDevice(
         // the protocol alive across async registration, independently of a nub.
         existing->RebindNotifications([existing, guid](IOReturn status) {
             if (status != kIOReturnSuccess)
-                ASFW_LOG(Audio, "AudioRuntimeRegistry: notification rebind failed guid=0x%016llx kr=0x%x (%{public}s)",
-                         guid, status, Logging::IOReturnName(status));
+                ASFW_LOG_ERROR(Audio, "AudioRuntimeRegistry: notification rebind failed guid=0x%016llx kr=0x%x (%{public}s)",
+                               guid, status, Logging::IOReturnName(status));
         });
         return existing;
     }

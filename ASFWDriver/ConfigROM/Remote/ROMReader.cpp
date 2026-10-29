@@ -65,8 +65,8 @@ void ROMReader::ReadQuadletsBEImpl(Async::IFireWireBus& bus,
                                    uint32_t quadletCount, CompletionCallback callback,
                                    QuadletReadPolicy policy) {
     if (FW::ConfigROMAddr::kAddressHi != 0xFFFF) {
-        ASFW_LOG_V0(ConfigROM, "ERROR: Config ROM addressHigh changed from 0xFFFF to 0x%04x!",
-                    FW::ConfigROMAddr::kAddressHi);
+        ASFW_LOG_ERROR(ConfigROM, "ERROR: Config ROM addressHigh changed from 0xFFFF to 0x%04x!",
+                       FW::ConfigROMAddr::kAddressHi);
         if (callback) {
             ReadResult out{};
             out.success = false;
@@ -135,16 +135,16 @@ void ROMReader::ScheduleQuadletReadStep(const std::shared_ptr<QuadletReadContext
     }
 
     // TODO: Temporary ROM discovery triage log. Remove once Saffire init is understood.
-    ASFW_LOG(ConfigROM,
-             "[TempROMScanTX] gen=%u node=%u quadIndex=%u/%u speed=%u addrNode=0x%04x addr=0x%04x_%08x",
-             ctx->generation.value,
-             ctx->nodeId,
-             ctx->quadletIndex,
-             ctx->quadletCount,
-             static_cast<unsigned>(ctx->speed),
-             addr.nodeID,
-             addr.addressHi,
-             addr.addressLo);
+    ASFW_LOG_TRACE(ConfigROM,
+                   "[TempROMScanTX] gen=%u node=%u quadIndex=%u/%u speed=%u addrNode=0x%04x addr=0x%04x_%08x",
+                   ctx->generation.value,
+                   ctx->nodeId,
+                   ctx->quadletIndex,
+                   ctx->quadletCount,
+                   static_cast<unsigned>(ctx->speed),
+                   addr.nodeID,
+                   addr.addressHi,
+                   addr.addressLo);
 
     const auto handle = ctx->bus->ReadQuad(ctx->generation, FW::NodeId{ctx->nodeId}, addr,
                                            ctx->speed, std::move(completionHandler));
@@ -157,17 +157,17 @@ void ROMReader::HandleQuadletReadComplete(const std::shared_ptr<QuadletReadConte
                                           Async::AsyncStatus status,
                                           std::span<const uint8_t> responsePayload) {
     // TODO: Temporary ROM discovery triage log. Remove once Saffire init is understood.
-    ASFW_LOG(ConfigROM,
-             "[TempROMScanRX] gen=%u node=%u quadIndex=%u/%u status=%{public}s payloadBytes=%zu successSoFar=%u addr=0x%04x_%08x",
-             ctx->generation.value,
-             ctx->nodeId,
-             ctx->quadletIndex,
-             ctx->quadletCount,
-             Async::ToString(status),
-             responsePayload.size(),
-             ctx->successCount,
-             FW::ConfigROMAddr::kAddressHi,
-             ctx->baseAddress + (ctx->quadletIndex * ASFW::ConfigROM::kQuadletBytes));
+    ASFW_LOG_TRACE(ConfigROM,
+                   "[TempROMScanRX] gen=%u node=%u quadIndex=%u/%u status=%{public}s payloadBytes=%zu successSoFar=%u addr=0x%04x_%08x",
+                   ctx->generation.value,
+                   ctx->nodeId,
+                   ctx->quadletIndex,
+                   ctx->quadletCount,
+                   Async::ToString(status),
+                   responsePayload.size(),
+                   ctx->successCount,
+                   FW::ConfigROMAddr::kAddressHi,
+                   ctx->baseAddress + (ctx->quadletIndex * ASFW::ConfigROM::kQuadletBytes));
 
     if (CanTreatAsEOF(ctx->policy, status, responsePayload.size(), ctx->successCount)) {
         EmitQuadletReadResult(ctx, /*success=*/true, status, ctx->successCount);

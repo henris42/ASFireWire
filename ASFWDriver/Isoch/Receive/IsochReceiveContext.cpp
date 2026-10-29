@@ -83,13 +83,13 @@ kern_return_t IsochReceiveContext::Start() {
     }
 
     if (!hardware_) {
-        ASFW_LOG(Isoch, "❌ Start: hardware_ is null!");
+        ASFW_LOG_ERROR(Isoch, "❌ Start: hardware_ is null!");
         return kIOReturnNotReady;
     }
 
     const uint32_t cmdPtr = rxRing_.InitialCommandPtrWord();
     if (cmdPtr == 0) {
-        ASFW_LOG(Isoch, "❌ Start: Invalid descriptor cmdPtr");
+        ASFW_LOG_ERROR(Isoch, "❌ Start: Invalid descriptor cmdPtr");
         return kIOReturnInternalError;
     }
     const uint32_t contextMatch = 0xF0000000 | (channel_ & 0x3F);
@@ -115,8 +115,8 @@ kern_return_t IsochReceiveContext::Start() {
         access.Write(ASFW::Driver::Register32::kIsoRecvIntMaskSet, contextMask);
         access.Write(registers_.ContextControlSet, ctlValue);
     }
-    ASFW_LOG(Isoch, "IR: start ctx=%u ctrlBefore=0x%08x pendingEvents=0x%08x",
-             contextIndex_, ctrlBefore, pendingEvents);
+    ASFW_LOG_DEBUG(Isoch, "IR: start ctx=%u ctrlBefore=0x%08x pendingEvents=0x%08x",
+                   contextIndex_, ctrlBefore, pendingEvents);
 
     IOLockLock(lock_);
     Transition(IRPolicy::State::Running, 0, "Start");
@@ -173,7 +173,7 @@ kern_return_t IsochReceiveContext::Stop() {
     // audio binding.  See Linux firewire/ohci.c:1361-1378 for the same
     // teardown ordering; freeing this mapping while ACTIVE is set can fault
     // the host when OHCI completes a late DMA write.
-    ASFW_LOG(Isoch, "Stop: Disabled IR interrupt for context %u", contextIndex_);
+    ASFW_LOG_DEBUG(Isoch, "Stop: Disabled IR interrupt for context %u", contextIndex_);
 
     // Two complementary guards, both required: the revocable access scope keeps
     // us from issuing MMIO after Detach, and the all-ones sentinel catches a

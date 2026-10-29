@@ -61,7 +61,7 @@ IsochService::PrepareReceive(uint8_t channel, HardwareInterface& hardware,
     const kern_return_t kr =
         isochReceiveContext_->Configure(channel, contextBase_);
     if (kr != kIOReturnSuccess) {
-        ASFW_LOG(Isoch, "IsochService: IR Configure failed: 0x%08x", kr);
+        ASFW_LOG_ERROR(Isoch, "IsochService: IR Configure failed: 0x%08x", kr);
         return kr;
     }
 
@@ -69,7 +69,7 @@ IsochService::PrepareReceive(uint8_t channel, HardwareInterface& hardware,
     // races a std::function assignment.
     isochReceiveContext_->SetCallback(std::move(packetCallback));
 
-    ASFW_LOG(Isoch, "IsochService: Prepared IR on channel %u (Direct-Only)", channel);
+    ASFW_LOG_DEBUG(Isoch, "IsochService: Prepared IR on channel %u (Direct-Only)", channel);
     return kIOReturnSuccess;
 }
 
@@ -92,8 +92,8 @@ kern_return_t IsochService::PrepareReceiveStream(
 
         auto isochMem = ASFW::Isoch::Memory::IsochDMAMemoryManager::Create(config);
         if (!isochMem || !isochMem->Initialize(hardware)) {
-            ASFW_LOG(Isoch, "IsochService: secondary RX DMA memory init failed (stream %u)",
-                     streamIndex);
+            ASFW_LOG_ERROR(Isoch, "IsochService: secondary RX DMA memory init failed (stream %u)",
+                           streamIndex);
             return kIOReturnNoMemory;
         }
 
@@ -114,8 +114,8 @@ kern_return_t IsochService::PrepareReceiveStream(
     const kern_return_t kr =
         slot->Configure(channel, static_cast<uint8_t>(contextBase_ + streamIndex));
     if (kr != kIOReturnSuccess) {
-        ASFW_LOG(Isoch, "IsochService: secondary IR Configure failed (stream %u): 0x%08x",
-                 streamIndex, kr);
+        ASFW_LOG_ERROR(Isoch, "IsochService: secondary IR Configure failed (stream %u): 0x%08x",
+                       streamIndex, kr);
         return kr;
     }
 
@@ -130,7 +130,7 @@ kern_return_t IsochService::StartPreparedReceive() {
     if (!isochReceiveContext_) {
         return kIOReturnNotReady;
     }
-    ASFW_LOG(Isoch, "IsochService: Starting prepared IR (Direct-Only)");
+    ASFW_LOG_DEBUG(Isoch, "IsochService: Starting prepared IR (Direct-Only)");
     const kern_return_t kr = isochReceiveContext_->Start();
     if (kr != kIOReturnSuccess) {
         return kr;
@@ -139,7 +139,7 @@ kern_return_t IsochService::StartPreparedReceive() {
         if (ctx) {
             const kern_return_t skr = ctx->Start();
             if (skr != kIOReturnSuccess) {
-                ASFW_LOG(Isoch, "IsochService: secondary IR start failed: 0x%08x", skr);
+                ASFW_LOG_ERROR(Isoch, "IsochService: secondary IR start failed: 0x%08x", skr);
                 UpdateStreamingActiveState();
                 return skr;
             }
@@ -256,7 +256,7 @@ kern_return_t IsochService::PrepareTransmit(uint8_t channel, HardwareInterface& 
 
     const kern_return_t kr = isochTransmitContext_->Configure(channel, sid, speed);
     if (kr != kIOReturnSuccess) {
-        ASFW_LOG(Isoch, "IsochService: IT Configure failed: 0x%08x", kr);
+        ASFW_LOG_ERROR(Isoch, "IsochService: IT Configure failed: 0x%08x", kr);
         return kr;
     }
 
@@ -265,12 +265,12 @@ kern_return_t IsochService::PrepareTransmit(uint8_t channel, HardwareInterface& 
             txPayloadSlab_[0].get(), txMetadataRing_[0].get(), txControlBlock_[0].get(),
             interruptInterval_);
         if (memKr != kIOReturnSuccess) {
-            ASFW_LOG(Isoch, "IsochService: IT shared-memory setup failed: 0x%08x", memKr);
+            ASFW_LOG_ERROR(Isoch, "IsochService: IT shared-memory setup failed: 0x%08x", memKr);
             return memKr;
         }
     }
 
-    ASFW_LOG(Isoch, "IsochService: Prepared IT on channel %u (Direct-Only)", channel);
+    ASFW_LOG_DEBUG(Isoch, "IsochService: Prepared IT on channel %u (Direct-Only)", channel);
     return kIOReturnSuccess;
 }
 
@@ -294,8 +294,8 @@ kern_return_t IsochService::PrepareTransmitStream(uint32_t streamIndex, uint8_t 
 
         auto isochMem = ASFW::Isoch::Memory::IsochDMAMemoryManager::Create(config);
         if (!isochMem || !isochMem->Initialize(hardware)) {
-            ASFW_LOG(Isoch, "IsochService: secondary TX DMA memory init failed (stream %u)",
-                     streamIndex);
+            ASFW_LOG_ERROR(Isoch, "IsochService: secondary TX DMA memory init failed (stream %u)",
+                           streamIndex);
             return kIOReturnNoMemory;
         }
 
@@ -314,8 +314,8 @@ kern_return_t IsochService::PrepareTransmitStream(uint32_t streamIndex, uint8_t 
 
     const kern_return_t kr = slot->Configure(channel, sid, speed);
     if (kr != kIOReturnSuccess) {
-        ASFW_LOG(Isoch, "IsochService: secondary IT Configure failed (stream %u): 0x%08x",
-                 streamIndex, kr);
+        ASFW_LOG_ERROR(Isoch, "IsochService: secondary IT Configure failed (stream %u): 0x%08x",
+                       streamIndex, kr);
         return kr;
     }
     // Wire this stream's own shared payload slab (allocated via
@@ -327,9 +327,9 @@ kern_return_t IsochService::PrepareTransmitStream(uint32_t streamIndex, uint8_t 
             txPayloadSlab_[streamIndex].get(), txMetadataRing_[streamIndex].get(),
             txControlBlock_[streamIndex].get(), interruptInterval_);
         if (memKr != kIOReturnSuccess) {
-            ASFW_LOG(Isoch,
-                     "IsochService: secondary IT shared-memory setup failed (stream %u): 0x%08x",
-                     streamIndex, memKr);
+            ASFW_LOG_ERROR(Isoch,
+                           "IsochService: secondary IT shared-memory setup failed (stream %u): 0x%08x",
+                           streamIndex, memKr);
             return memKr;
         }
     } else {
@@ -361,7 +361,7 @@ kern_return_t IsochService::StartPreparedTransmit() {
     // never hit this, but the deferral was an ASFW-specific deviation from the
     // reference and is removed.
     txStartPending_ = false;
-    ASFW_LOG(Isoch, "IsochService: Starting prepared IT (Direct-Only)");
+    ASFW_LOG_DEBUG(Isoch, "IsochService: Starting prepared IT (Direct-Only)");
     const kern_return_t kr = isochTransmitContext_->Start();
     if (kr != kIOReturnSuccess) {
         return kr;
@@ -370,7 +370,7 @@ kern_return_t IsochService::StartPreparedTransmit() {
         if (ctx) {
             const kern_return_t skr = ctx->Start();
             if (skr != kIOReturnSuccess) {
-                ASFW_LOG(Isoch, "IsochService: secondary IT start failed: 0x%08x", skr);
+                ASFW_LOG_ERROR(Isoch, "IsochService: secondary IT start failed: 0x%08x", skr);
                 UpdateStreamingActiveState();
                 return skr;
             }
@@ -529,7 +529,7 @@ void IsochService::StartDeferredTransmitIfReady() noexcept {
     ASFW_LOG(Isoch, "IsochService: IR replay established; starting deferred IT");
     const kern_return_t status = isochTransmitContext_->Start();
     if (status != kIOReturnSuccess) {
-        ASFW_LOG(Isoch, "IsochService: deferred IT start failed: 0x%08x", status);
+        ASFW_LOG_ERROR(Isoch, "IsochService: deferred IT start failed: 0x%08x", status);
         OnReceiveTimingLossDetected();
     }
 }
@@ -604,8 +604,8 @@ kern_return_t IsochService::AllocateTxIsochResources(uint32_t streamIndex, uint3
 
     interruptInterval_ = interruptInterval;
 
-    ASFW_LOG(Isoch, "IsochService: Allocated Tx isoch resources stream %u. numSlots=%u slotSize=%u",
-             streamIndex, numSlots, maxPacketBytes);
+    ASFW_LOG_DEBUG(Isoch, "IsochService: Allocated Tx isoch resources stream %u. numSlots=%u slotSize=%u",
+                   streamIndex, numSlots, maxPacketBytes);
     return kIOReturnSuccess;
 }
 

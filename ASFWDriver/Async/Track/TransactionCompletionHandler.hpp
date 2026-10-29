@@ -253,14 +253,14 @@ public:
         // Convert rcode to kern_return_t
         kern_return_t kr = (rcode == 0) ? kIOReturnSuccess : kIOReturnError;
 
-        ASFW_LOG(Async,
-                 "OnARResponse: completing tLabel=%u gen=%u node=0x%04X rcode=0x%X kr=0x%08x len=%zu",
-                 key.label.value,
-                 key.generation.value,
-                 key.node.value,
-                 rcode,
-                 kr,
-                 data.size());
+        ASFW_LOG_TRACE(Async,
+                       "OnARResponse: completing tLabel=%u gen=%u node=0x%04X rcode=0x%X kr=0x%08x len=%zu",
+                       key.label.value,
+                       key.generation.value,
+                       key.node.value,
+                       rcode,
+                       kr,
+                       data.size());
 
         // Complete transaction
         ASFW_LOG_V2(Async, "  → Completed (rcode=0x%X, kr=0x%08X)", rcode, kr);
@@ -366,7 +366,7 @@ private:
                      ToString(comp.eventCode), ackCode);
 
             if (ackCode == 0x1) {
-                ASFW_LOG(Async, "  → AwaitingAR (ackPending despite hw timeout)");
+                ASFW_LOG_DEBUG(Async, "  → AwaitingAR (ackPending despite hw timeout)");
                 txn.TransitionTo(TransactionState::ATCompleted, "OnATCompletion: hw_timeout_pending");
                 txn.TransitionTo(TransactionState::AwaitingAR, "OnATCompletion: ackPending");
             } else {
@@ -560,9 +560,9 @@ private:
             return true;
         }
 
-        ASFW_LOG_V1(Async,
-                    "❌ FAILED: tLabel=%u ATPosted - AT completion never arrived after %u attempts. Possible AT context stall or hardware issue.",
-                    txn.label().value, kMaxATRetries);
+        ASFW_LOG_WARNING(Async,
+                         "❌ FAILED: tLabel=%u ATPosted - AT completion never arrived after %u attempts. Possible AT context stall or hardware issue.",
+                         txn.label().value, kMaxATRetries);
         return false;
     }
 
@@ -590,9 +590,9 @@ private:
             return true;
         }
 
-        ASFW_LOG_V1(Async,
-                    "❌ FAILED: tLabel=%u AwaitingAR with ackCode=0x%X - max retries (%u) exhausted. No AR response observed; device silence or host receive/interrupt failure.",
-                    txn.label().value, ackCode, kMaxPendingRetries);
+        ASFW_LOG_WARNING(Async,
+                         "❌ FAILED: tLabel=%u AwaitingAR with ackCode=0x%X - max retries (%u) exhausted. No AR response observed; device silence or host receive/interrupt failure.",
+                         txn.label().value, ackCode, kMaxPendingRetries);
         return false;
     }
 

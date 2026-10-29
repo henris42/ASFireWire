@@ -364,8 +364,8 @@ IOReturn DiceFamilyDriver::ClaimAndClock(const AudioDuplexChannels& channels) {
     // dice-transaction.c:303-322).
     if (preClaim->hasVersion &&
         (preClaim->version >> 24U) != kDiceSupportedMajorVersion) {
-        ASFW_LOG(DICE, "PrepareDuplex48k: unsupported DICE version 0x%08x; refusing",
-                 preClaim->version);
+        ASFW_LOG_WARNING(DICE, "PrepareDuplex48k: unsupported DICE version 0x%08x; refusing",
+                         preClaim->version);
         return Rollback(kIOReturnUnsupported);
     }
     preClaimClockSelect_ = preClaim->clockSelect;
@@ -503,9 +503,9 @@ IOReturn DiceFamilyDriver::ActiveClockCheck(const AudioDuplexChannels& channels,
 
     const auto state = io_.ReadGlobalStateFull(sections_);
     if (!state) {
-        ASFW_LOG(DICE,
-                 "PrepareDuplex48k: active clock check read failed (0x%08x), falling back to mailbox poll",
-                 state.error());
+        ASFW_LOG_WARNING(DICE,
+                         "PrepareDuplex48k: active clock check read failed (0x%08x), falling back to mailbox poll",
+                         state.error());
         return WaitClockAccepted(channels);
     }
 
@@ -586,9 +586,9 @@ IOReturn DiceFamilyDriver::ReadGlobalAfterClockAccepted(const AudioDuplexChannel
     const bool sampleRateAtTarget = state->sampleRate == session_.desiredClock.sampleRateHz;
 
     if (state->clockSelect != diceClock_.clockSelect) {
-        ASFW_LOG(DICE,
-                 "PrepareDuplex48k: clock confirm failed, clockSelect=0x%08x notify=0x%08x status=0x%08x sampleRate=%u",
-                 state->clockSelect, combinedNotify, state->status, state->sampleRate);
+        ASFW_LOG_ERROR(DICE,
+                       "PrepareDuplex48k: clock confirm failed, clockSelect=0x%08x notify=0x%08x status=0x%08x sampleRate=%u",
+                       state->clockSelect, combinedNotify, state->status, state->sampleRate);
         return Rollback(failureStatus);
     }
     if (!clockAccepted && !(sourceLockedAtTarget && sampleRateAtTarget)) {
@@ -685,11 +685,11 @@ IOReturn DiceFamilyDriver::AwaitStreamingClockLock(const AudioDuplexChannels& ch
         }
 
         if (attempt * kPollIntervalMs >= kStreamingClockLockTimeoutMs) {
-            ASFW_LOG(DICE,
-                     "PrepareDuplex48k: target rate%s not ready within %u ms (status=0x%08x rate=%u target=%u); aborting bring-up",
-                     bringupPolicy_.requireSourceLockBeforeStreamEnable ? " and source lock" : "",
-                     kStreamingClockLockTimeoutMs, state->status, state->sampleRate,
-                     session_.desiredClock.sampleRateHz);
+            ASFW_LOG_ERROR(DICE,
+                           "PrepareDuplex48k: target rate%s not ready within %u ms (status=0x%08x rate=%u target=%u); aborting bring-up",
+                           bringupPolicy_.requireSourceLockBeforeStreamEnable ? " and source lock" : "",
+                           kStreamingClockLockTimeoutMs, state->status, state->sampleRate,
+                           session_.desiredClock.sampleRateHz);
             return Rollback(kIOReturnTimeout);
         }
 
@@ -921,7 +921,7 @@ IOReturn DiceFamilyDriver::Rollback(IOReturn error) {
 
     const IOReturn stopStatus = StopSequence();
     if (stopStatus != kIOReturnSuccess) {
-        ASFW_LOG(DICE, "DoRollback: cleanup reported 0x%x (%{public}s) after start failure 0x%x", stopStatus, ASFW::Logging::IOReturnName(stopStatus), error);
+        ASFW_LOG_WARNING(DICE, "DoRollback: cleanup reported 0x%x (%{public}s) after start failure 0x%x", stopStatus, ASFW::Logging::IOReturnName(stopStatus), error);
     }
     flowMode_ = FlowMode::kNone;
     return error;

@@ -102,7 +102,7 @@ kern_return_t DeviceDiscoveryHandler::GetDiscoveredDevices(IOUserClientMethodArg
     // Get all devices from DeviceManager
     auto allDevices = deviceManager->GetAllDevices();
 
-    ASFW_LOG(UserClient, "GetDiscoveredDevices: found %zu devices", allDevices.size());
+    ASFW_LOG_TRACE(UserClient, "GetDiscoveredDevices: found %zu devices", allDevices.size());
 
     // Calculate total size needed
     size_t totalSize = sizeof(DeviceDiscoveryWire);
@@ -111,7 +111,7 @@ kern_return_t DeviceDiscoveryHandler::GetDiscoveredDevices(IOUserClientMethodArg
         totalSize += device->GetUnits().size() * sizeof(FWUnitWire);
     }
 
-    ASFW_LOG(UserClient, "GetDiscoveredDevices: total wire format size=%zu bytes", totalSize);
+    ASFW_LOG_TRACE(UserClient, "GetDiscoveredDevices: total wire format size=%zu bytes", totalSize);
 
     // Create OSData buffer
     OSData* data = OSData::withCapacity(static_cast<uint32_t>(totalSize));
@@ -182,8 +182,8 @@ kern_return_t DeviceDiscoveryHandler::GetDiscoveredDevices(IOUserClientMethodArg
     args->structureOutput = data;
     args->structureOutputDescriptor = nullptr;
 
-    ASFW_LOG(UserClient, "GetDiscoveredDevices: returning %zu devices in %zu bytes",
-             allDevices.size(), data->getLength());
+    ASFW_LOG_TRACE(UserClient, "GetDiscoveredDevices: returning %zu devices in %zu bytes",
+                   allDevices.size(), data->getLength());
     return kIOReturnSuccess;
 }
 

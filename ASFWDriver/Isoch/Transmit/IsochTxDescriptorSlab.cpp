@@ -33,9 +33,9 @@ kern_return_t IsochTxDescriptorSlab::AllocateAndInitialize(Memory::IIsochDMAMemo
     // Our GetDescriptorIOVA() assumes base is 4K-aligned so page offsets line up
     const uint64_t pageOffset = descRegion_.deviceBase & (Layout::kOHCIPageSize - 1);
     if (pageOffset != 0) {
-        ASFW_LOG(Isoch, "❌ IT: SetupRings - descriptor base NOT 4K aligned! "
-                 "IOVA=0x%llx pageOffset=0x%llx - page gap calculation WILL BE WRONG, failing",
-                 descRegion_.deviceBase, pageOffset);
+        ASFW_LOG_ERROR(Isoch, "❌ IT: SetupRings - descriptor base NOT 4K aligned! "
+                       "IOVA=0x%llx pageOffset=0x%llx - page gap calculation WILL BE WRONG, failing",
+                       descRegion_.deviceBase, pageOffset);
         return kIOReturnNoResources;
     }
 
@@ -136,8 +136,8 @@ void IsochTxDescriptorSlab::ValidateDescriptorLayout() const noexcept {
         const uint32_t iova = GetDescriptorIOVA(i);
         const uint32_t pageOffset = iova & (Layout::kOHCIPageSize - 1);
         if (pageOffset >= (Layout::kOHCIPageSize - Layout::kOHCIPrefetchSize)) {
-            ASFW_LOG(Isoch, "❌ IT: Layout ERROR: desc %u IOVA=0x%08x pageOffset=0x%x in prefetch zone!",
-                     i, iova, pageOffset);
+            ASFW_LOG_ERROR(Isoch, "❌ IT: Layout ERROR: desc %u IOVA=0x%08x pageOffset=0x%x in prefetch zone!",
+                           i, iova, pageOffset);
         }
     }
 
@@ -150,12 +150,12 @@ void IsochTxDescriptorSlab::ValidateDescriptorLayout() const noexcept {
             GetDescriptorIOVA(base + Layout::kBlocksPerPacket - 1) /
             Layout::kOHCIPageSize;
         if (firstPage != lastPage) {
-            ASFW_LOG(Isoch,
-                     "❌ IT: Packet %u spans pages! descBase=%u pages=[%u,%u]",
-                     pkt,
-                     base,
-                     firstPage,
-                     lastPage);
+            ASFW_LOG_ERROR(Isoch,
+                           "❌ IT: Packet %u spans pages! descBase=%u pages=[%u,%u]",
+                           pkt,
+                           base,
+                           firstPage,
+                           lastPage);
         }
     }
 #endif

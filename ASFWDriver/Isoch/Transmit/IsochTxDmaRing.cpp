@@ -111,18 +111,18 @@ bool IsochTxDmaRing::NoteCompletion(uint16_t hwTimestamp, uint32_t statusWord) n
     }
     // About every five seconds of transmission.
     if (cycleWindowCompleted_ >= 40000) {
-        ASFW_LOG(Isoch,
-                 "[TxCycles] ctx=%u %llu packets over %llu cycles, %llu lost (%llu%%), %llu abnormal; totals completed=%llu lost=%llu abnormal=%llu last=0x%04x",
-                 contextIndex_,
-                 static_cast<unsigned long long>(cycleWindowCompleted_),
-                 static_cast<unsigned long long>(cycleWindowElapsed_),
-                 static_cast<unsigned long long>(cycleWindowLost_),
-                 static_cast<unsigned long long>(cycleWindowElapsed_ ? cycleWindowLost_ * 100 / cycleWindowElapsed_ : 0),
-                 static_cast<unsigned long long>(cycleWindowAbnormal_),
-                 static_cast<unsigned long long>(counters_.completedPackets.load(std::memory_order_relaxed)),
-                 static_cast<unsigned long long>(counters_.lostCycles.load(std::memory_order_relaxed)),
-                 static_cast<unsigned long long>(counters_.abnormalCompletions.load(std::memory_order_relaxed)),
-                 counters_.lastAbnormalStatus.load(std::memory_order_relaxed));
+        ASFW_LOG_DEBUG(Isoch,
+                       "[TxCycles] ctx=%u %llu packets over %llu cycles, %llu lost (%llu%%), %llu abnormal; totals completed=%llu lost=%llu abnormal=%llu last=0x%04x",
+                       contextIndex_,
+                       static_cast<unsigned long long>(cycleWindowCompleted_),
+                       static_cast<unsigned long long>(cycleWindowElapsed_),
+                       static_cast<unsigned long long>(cycleWindowLost_),
+                       static_cast<unsigned long long>(cycleWindowElapsed_ ? cycleWindowLost_ * 100 / cycleWindowElapsed_ : 0),
+                       static_cast<unsigned long long>(cycleWindowAbnormal_),
+                       static_cast<unsigned long long>(counters_.completedPackets.load(std::memory_order_relaxed)),
+                       static_cast<unsigned long long>(counters_.lostCycles.load(std::memory_order_relaxed)),
+                       static_cast<unsigned long long>(counters_.abnormalCompletions.load(std::memory_order_relaxed)),
+                       counters_.lastAbnormalStatus.load(std::memory_order_relaxed));
         cycleWindowCompleted_ = 0;
         cycleWindowElapsed_ = 0;
         cycleWindowLost_ = 0;
@@ -240,11 +240,11 @@ void IsochTxDmaRing::NoteFirstDataHeader(uint32_t payloadLength, uint32_t q0, ui
         const auto* b0 = slab_.GetDescriptorPtr(base);
         const auto* b2 = slab_.GetDescriptorPtr(base + 2);
         const auto* b3 = slab_.GetDescriptorPtr(base + 3);
-        ASFW_LOG(Isoch,
-                 "IT: %{public}s descriptors @%u: OMI ctl=0x%08x br=0x%08x | OM ctl=0x%08x req=%u addr=0x%08x br=0x%08x | OL ctl=0x%08x req=%u addr=0x%08x br=0x%08x st=0x%08x",
-                 label, base, b0->control, b0->branchWord,
-                 b2->control, b2->control & 0xffffU, b2->dataAddress, b2->branchWord,
-                 b3->control, b3->control & 0xffffU, b3->dataAddress, b3->branchWord, b3->statusWord);
+        ASFW_LOG_TRACE(Isoch,
+                       "IT: %{public}s descriptors @%u: OMI ctl=0x%08x br=0x%08x | OM ctl=0x%08x req=%u addr=0x%08x br=0x%08x | OL ctl=0x%08x req=%u addr=0x%08x br=0x%08x st=0x%08x",
+                       label, base, b0->control, b0->branchWord,
+                       b2->control, b2->control & 0xffffU, b2->dataAddress, b2->branchWord,
+                       b3->control, b3->control & 0xffffU, b3->dataAddress, b3->branchWord, b3->statusWord);
     };
     dumpPacket("first data packet", descBase);
     dumpPacket("packet before it",
@@ -252,11 +252,11 @@ void IsochTxDmaRing::NoteFirstDataHeader(uint32_t payloadLength, uint32_t q0, ui
     // OHCI 1.1 §9.6 IT immediate header, as the little-endian quadlet the
     // controller reads: spd [18:16], tag [15:14], chan [13:8], tcode [7:4],
     // sy [3:0]; the second quadlet holds the data length in [31:16].
-    ASFW_LOG(Isoch,
-             "IT: first data packet header: Q0=0x%08x spd=S%u tag=%u ch=%u tcode=0x%x sy=%u "
-             "Q1=0x%08x len=%u payload=%u (Linux amdtp: tag 1, tcode 0xa, sy 0, len = payload)",
-             q0, 100U << ((q0 >> 16) & 0x7U), (q0 >> 14) & 0x3U, (q0 >> 8) & 0x3fU, (q0 >> 4) & 0xfU,
-             q0 & 0xfU, q1, (q1 >> 16) & 0xffffU, payloadLength);
+    ASFW_LOG_TRACE(Isoch,
+                   "IT: first data packet header: Q0=0x%08x spd=S%u tag=%u ch=%u tcode=0x%x sy=%u "
+                   "Q1=0x%08x len=%u payload=%u (Linux amdtp: tag 1, tcode 0xa, sy 0, len = payload)",
+                   q0, 100U << ((q0 >> 16) & 0x7U), (q0 >> 14) & 0x3U, (q0 >> 8) & 0x3fU, (q0 >> 4) & 0xfU,
+                   q0 & 0xfU, q1, (q1 >> 16) & 0xffffU, payloadLength);
 }
 
 void IsochTxDmaRing::SeedCycleTracking(Driver::HardwareInterface& hw) noexcept {
@@ -265,8 +265,8 @@ void IsochTxDmaRing::SeedCycleTracking(Driver::HardwareInterface& hw) noexcept {
     nextTransmitCycle_ = (currentCycle + 4) % 8000;
     cycleTrackingValid_ = true;
     lastHwTimestamp_ = 0;
-    ASFW_LOG(Isoch, "IT: Cycle tracking seeded: currentCycle=%u nextTxCycle=%u",
-             currentCycle, nextTransmitCycle_);
+    ASFW_LOG_DEBUG(Isoch, "IT: Cycle tracking seeded: currentCycle=%u nextTxCycle=%u",
+                   currentCycle, nextTransmitCycle_);
 }
 
 // Completion is read from the descriptors the controller wrote, not derived
@@ -373,20 +373,20 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
     const uint64_t preFillCount) noexcept {
     PrimeStats stats{};
     if (!slab_.IsValid()) {
-        ASFW_LOG(Isoch, "IT: Prime failed - descriptor slab is invalid");
+        ASFW_LOG_ERROR(Isoch, "IT: Prime failed - descriptor slab is invalid");
         return stats;
     }
     if (!payloadDmaMap.IsValid() ||
         numSlots == 0 || slotStrideBytes == 0 || metadataRing == nullptr) {
-        ASFW_LOG(Isoch,
-                 "IT: Prime failed - invalid shared payload contract segments=%zu slots=%u stride=%u meta=%p",
-                 payloadDmaMap.SegmentCount(), numSlots, slotStrideBytes, metadataRing);
+        ASFW_LOG_ERROR(Isoch,
+                       "IT: Prime failed - invalid shared payload contract segments=%zu slots=%u stride=%u meta=%p",
+                       payloadDmaMap.SegmentCount(), numSlots, slotStrideBytes, metadataRing);
         return stats;
     }
 
     const uint32_t numPackets = Layout::kNumPackets;
     if (preFillCount < numPackets || preFillCount > numSlots) {
-        ASFW_LOG(
+        ASFW_LOG_ERROR(
             Isoch,
             "IT: Prime failed - committed prefill=%llu must cover %u descriptors within %u slots",
             preFillCount,
@@ -406,7 +406,7 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
         const uint64_t expectedGen =
             ExpectedTxCommitGeneration(pktIdx, numSlots);
         if (meta.commitGeneration.load(std::memory_order_acquire) != expectedGen) {
-            ASFW_LOG(
+            ASFW_LOG_ERROR(
                 Isoch,
                 "IT: Prime failed - slot %u is not committed for packet %u",
                 producerSlot,
@@ -420,7 +420,7 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
             return stats;
         }
         if (meta.payloadLength != 0 && (meta.payloadLength < 2 || meta.payloadLength > slotStrideBytes)) {
-            ASFW_LOG(
+            ASFW_LOG_ERROR(
                 Isoch,
                 "IT: Prime failed - invalid payload length packet=%u slot=%u len=%u stride=%u",
                 pktIdx,
@@ -435,7 +435,7 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
             static_cast<uint64_t>(producerSlot) * slotStrideBytes;
         if (!payloadDmaMap.ResolveTwoFragments(
                 payloadOffset, meta.payloadLength, payloadFragments)) {
-            ASFW_LOG(
+            ASFW_LOG_ERROR(
                 Isoch,
                 "IT: Prime payload mapping failed packet=%u slot=%u offset=%llu len=%u segments=%zu",
                 pktIdx,
@@ -531,8 +531,8 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
     softwareFillAbsIdx_ = numPackets;
 
     stats.packetsAssembled = numPackets;
-    ASFW_LOG(Isoch, "IT: Dynamic descriptor ring primed. numPackets=%u softwareFillIdx=%llu",
-             numPackets, softwareFillAbsIdx_);
+    ASFW_LOG_DEBUG(Isoch, "IT: Dynamic descriptor ring primed. numPackets=%u softwareFillIdx=%llu",
+                   numPackets, softwareFillAbsIdx_);
     return stats;
 }
 
@@ -691,9 +691,9 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         counters_.mappedRegionExhausted.fetch_add(1, std::memory_order_relaxed);
         out.failureReason = RefillFailureReason::MappedRegionExhausted;
         out.failurePacketAbs = softwareFillAbsIdx_;
-        ASFW_LOG(Isoch,
-                 "IT FATAL: mapped region exhausted completion=%llu mappedEnd=%llu hwPacket=%u",
-                 completedAbsIdx, softwareFillAbsIdx_, hwPacketIndex);
+        ASFW_LOG_ERROR(Isoch,
+                       "IT FATAL: mapped region exhausted completion=%llu mappedEnd=%llu hwPacket=%u",
+                       completedAbsIdx, softwareFillAbsIdx_, hwPacketIndex);
         return out;
     }
     const uint64_t newCompletedAbsIdx = completedAbsIdx + observedCompleted;
@@ -818,7 +818,7 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
                 std::memory_order_release);
             controlBlock->streamGeneration.fetch_add(
                 1, std::memory_order_release);
-            ASFW_LOG(
+            ASFW_LOG_ERROR(
                 Isoch,
                 "IT FATAL: slot %u not committed packet=%llu commitGen=%llu expectedGen=%llu",
                 pktSlot,
@@ -831,7 +831,7 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
             // commitGen => commit/writeback ordering bug; meta.packetIndex one
             // lap behind => the producer's committed cursor never reached this
             // packet (coverage/margin). The producer cursors localize it.
-            ASFW_LOG(
+            ASFW_LOG_ERROR(
                 Isoch,
                 "IT FATAL dump: fatalAbs=%llu slot=%u expectedGen=%llu commitGen=%llu "
                 "slotLastPacketAbs=%llu committedEnd=%llu completionCursor=%llu "
@@ -883,7 +883,7 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
             out.failurePacketAbs = fillAbsIdx;
             out.failureSlot = pktSlot;
             out.failurePayloadLength = payloadLength;
-            ASFW_LOG(
+            ASFW_LOG_ERROR(
                 Isoch,
                 "IT FATAL: invalid payload size packet=%llu slot=%u len=%u max=%u stride=%u",
                 fillAbsIdx,
@@ -898,7 +898,7 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         if (!payloadDmaMap.ResolveTwoFragments(
                 payloadOffset, payloadLength, payloadFragments)) {
             counters_.fatalPayloadMapping.fetch_add(1, std::memory_order_relaxed);
-            ASFW_LOG(
+            ASFW_LOG_ERROR(
                 Isoch,
                 "IT: Refill payload mapping failed packet=%u slot=%u offset=%llu len=%u segments=%zu",
                 hwSlot,
@@ -1061,7 +1061,7 @@ void IsochTxDmaRing::DumpAtCmdPtr(Driver::HardwareInterface& hw, uint8_t context
 
     uint32_t logicalIdx = 0;
     if (!slab_.DecodeCmdAddrToLogicalIndex(addr, logicalIdx)) {
-        ASFW_LOG(Isoch, "IT: CmdPtr decode FAILED - addr=0x%08x outside ring or in padding", addr);
+        ASFW_LOG_ERROR(Isoch, "IT: CmdPtr decode FAILED - addr=0x%08x outside ring or in padding", addr);
         return;
     }
 

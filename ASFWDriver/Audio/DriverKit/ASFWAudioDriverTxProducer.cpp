@@ -111,18 +111,18 @@ void LogMotuSphEdges(ASFWAudioDriver_IVars& ivars,
             // 2026-10-18: -1 150 000 ppb on every lock) must be traceable to
             // the step the device's SPH gave against the nominal, and to the
             // bridge sample (device frames vs cycle-timer ticks) it came from.
-            ASFW_LOG(DirectAudio,
-                     "[MotuSphLock] gen=%llu afterUs=%llu decisions=%llu err=%lld "
-                     "ratePpb=%lld lead=%u nomStep=%lld step=%lld meas=%lld rxFr=%llu rxTk=%llu",
-                     servo.streamGeneration, ASFW::Timing::hostTicksToNanos(elapsed) / 1000,
-                     servo.decisions, static_cast<long long>(servo.phaseErrorTicks),
-                     static_cast<long long>(MotuSphRatePpb(servo.stepQ32, servo.nominalStepQ32)),
-                     runtime.motuTxTimingStamper.PresentationLeadTicks(),
-                     static_cast<long long>(servo.nominalStepQ32),
-                     static_cast<long long>(servo.stepQ32),
-                     static_cast<long long>(servo.measuredStepQ32),
-                     static_cast<unsigned long long>(rxClock.rxFrames),
-                     static_cast<unsigned long long>(rxClock.rxTicks));
+            ASFW_LOG_DEBUG(DirectAudio,
+                           "[MotuSphLock] gen=%llu afterUs=%llu decisions=%llu err=%lld "
+                           "ratePpb=%lld lead=%u nomStep=%lld step=%lld meas=%lld rxFr=%llu rxTk=%llu",
+                           servo.streamGeneration, ASFW::Timing::hostTicksToNanos(elapsed) / 1000,
+                           servo.decisions, static_cast<long long>(servo.phaseErrorTicks),
+                           static_cast<long long>(MotuSphRatePpb(servo.stepQ32, servo.nominalStepQ32)),
+                           runtime.motuTxTimingStamper.PresentationLeadTicks(),
+                           static_cast<long long>(servo.nominalStepQ32),
+                           static_cast<long long>(servo.stepQ32),
+                           static_cast<long long>(servo.measuredStepQ32),
+                           static_cast<unsigned long long>(rxClock.rxFrames),
+                           static_cast<unsigned long long>(rxClock.rxTicks));
         } else {
             ASFW_LOG(DirectAudio, "[MotuSphMute] gen=%llu muted=0 cause=relocked err=%lld",
                      servo.streamGeneration, static_cast<long long>(servo.phaseErrorTicks));
@@ -205,30 +205,30 @@ void LogMotuSphSummary(const ASFWAudioDriver_IVars& ivars) noexcept {
     uint64_t bridgeUpdates = 0;
     const bool haveBridge = ivars.runtime.directAudioGraph.control != nullptr &&
         ivars.runtime.directAudioGraph.control->motuRxSphClock.ReadLatest(bridge, bridgeUpdates);
-    ASFW_LOG(DirectAudio,
-             "[MotuSphServo] gen=%llu dec=%llu locked=%u muted=%u seeded=%u err=%lld "
-             "ratePpb=%lld rxPpb=%lld step=%lld corr=%lld bridgeUpd=%llu bridgeGen=%llu bridgeFr=%llu",
-             servo.streamGeneration, servo.decisions, servo.locked ? 1u : 0u,
-             servo.outputMuted ? 1u : 0u, servo.seeded ? 1u : 0u,
-             static_cast<long long>(servo.phaseErrorTicks),
-             static_cast<long long>(MotuSphRatePpb(servo.stepQ32, servo.nominalStepQ32)),
-             static_cast<long long>(MotuSphRatePpb(servo.measuredStepQ32, servo.nominalStepQ32)),
-             static_cast<long long>(servo.stepQ32),
-             static_cast<long long>(servo.txCorrectionQ32),
-             haveBridge ? bridgeUpdates : 0ULL, haveBridge ? bridge.streamGeneration : 0ULL,
-             haveBridge ? bridge.rxFrames : 0ULL);
-    ASFW_LOG(DirectAudio,
-             "[MotuSphState] gen=%llu hard=%llu repair=%llu mute=%llu unmute=%llu "
-             "mutedFr=%llu drops=%u same=%u back=%u/%u/%u seed=%u stall=%u trace=%llu/%llu",
-             servo.streamGeneration, servo.hardResyncRequests, servo.phaseRepairs,
-             servo.muteTransitions, servo.unmuteTransitions,
-             ivars.runtime.motuPayloadWriter.Counters().framesMuted.load(
+    ASFW_LOG_DEBUG(DirectAudio,
+                   "[MotuSphServo] gen=%llu dec=%llu locked=%u muted=%u seeded=%u err=%lld "
+                   "ratePpb=%lld rxPpb=%lld step=%lld corr=%lld bridgeUpd=%llu bridgeGen=%llu bridgeFr=%llu",
+                   servo.streamGeneration, servo.decisions, servo.locked ? 1u : 0u,
+                   servo.outputMuted ? 1u : 0u, servo.seeded ? 1u : 0u,
+                   static_cast<long long>(servo.phaseErrorTicks),
+                   static_cast<long long>(MotuSphRatePpb(servo.stepQ32, servo.nominalStepQ32)),
+                   static_cast<long long>(MotuSphRatePpb(servo.measuredStepQ32, servo.nominalStepQ32)),
+                   static_cast<long long>(servo.stepQ32),
+                   static_cast<long long>(servo.txCorrectionQ32),
+                   haveBridge ? bridgeUpdates : 0ULL, haveBridge ? bridge.streamGeneration : 0ULL,
+                   haveBridge ? bridge.rxFrames : 0ULL);
+    ASFW_LOG_DEBUG(DirectAudio,
+                   "[MotuSphState] gen=%llu hard=%llu repair=%llu mute=%llu unmute=%llu "
+                   "mutedFr=%llu drops=%u same=%u back=%u/%u/%u seed=%u stall=%u trace=%llu/%llu",
+                   servo.streamGeneration, servo.hardResyncRequests, servo.phaseRepairs,
+                   servo.muteTransitions, servo.unmuteTransitions,
+                   ivars.runtime.motuPayloadWriter.Counters().framesMuted.load(
                  std::memory_order_relaxed),
-             servo.observationDrops, servo.dropBridgeNotAdvanced,
-             servo.dropBridgeRegressed, servo.dropRxFramesRegressed,
-             servo.dropRxTicksRegressed, servo.seedReReferences, servo.bridgeStalls,
-             ivars.runtime.motuTxPhaseTrace.Published(),
-             ivars.runtime.motuTxPhaseTrace.Rejected());
+                   servo.observationDrops, servo.dropBridgeNotAdvanced,
+                   servo.dropBridgeRegressed, servo.dropRxFramesRegressed,
+                   servo.dropRxTicksRegressed, servo.seedReReferences, servo.bridgeStalls,
+                   ivars.runtime.motuTxPhaseTrace.Published(),
+                   ivars.runtime.motuTxPhaseTrace.Rejected());
 }
 
 } // namespace
@@ -301,7 +301,7 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
             directControl->counters.txImmediateStops.fetch_add(
                 1, std::memory_order_relaxed);
 
-            ASFW_LOG(
+            ASFW_LOG_ERROR(
                 DirectAudio,
                 "[TxProducerFatal] stage=%{public}s reason=%{public}s "
                 "producerGen=%llu runtimeReason=%u runtimeGen=%llu "
@@ -582,8 +582,8 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                     // reader fell behind, which is NOT the timing-domain move
                     // this branch assumes, and re-anchoring would hide it. Name
                     // the reason so the two cases can be told apart.
-                    ASFW_LOG_ERROR(
-                        DirectAudio,
+                    ASFW_LOG_RL(
+                        DirectAudio, "tx-replay-rearm", 1000, Warning,
                         "[TxReplayRearm] reason=%{public}s cur=%llu prod=%llu ep=%u/%u "
                         "slot=%llu/%u est=%u",
                         ASFW::Audio::Runtime::RxSequenceReplayReadFailureName(
@@ -732,14 +732,14 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                     // the self-heal closing a deficit that would otherwise be
                     // permanent silence; anomaly-only, so a clean run prints one.
                     if (aligned) {
-                        ASFW_LOG(DirectAudio,
-                                 "[TxAlign] frame cursor -> %llu (projected=%llu "
-                                 "rxFirstFrame=%llu deltaTicks=%lld rate=%u)",
-                                 alignedFrame,
-                                 projectedFrame,
-                                 replay.firstAudioFrame,
-                                 static_cast<long long>(presentationDeltaTicks),
-                                 txConfig.sampleRate);
+                        ASFW_LOG_DEBUG(DirectAudio,
+                                       "[TxAlign] frame cursor -> %llu (projected=%llu "
+                                       "rxFirstFrame=%llu deltaTicks=%lld rate=%u)",
+                                       alignedFrame,
+                                       projectedFrame,
+                                       replay.firstAudioFrame,
+                                       static_cast<long long>(presentationDeltaTicks),
+                                       txConfig.sampleRate);
                     }
                 }
                 }
@@ -843,11 +843,11 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
             const int64_t second = static_cast<int64_t>(ASFW::Timing::kTicksPerSecond);
             if (lead > second / 2) lead -= second;
             if (lead < -second / 2) lead += second;
-            ASFW_LOG(DirectAudio,
-                     "[MotuTxStamp] pkt=%llu txCycle=%u sph0=%u:%u lead=%lld ticks (%lld.%02lld cycles)",
-                     static_cast<unsigned long long>(nextPacketToPrepare), timing.transmitCycle,
-                     (sph >> 12) & 0x1fffU, sph & 0xfffU, static_cast<long long>(lead),
-                     static_cast<long long>(lead / 3072), static_cast<long long>((lead % 3072 + 3072) % 3072 * 100 / 3072));
+            ASFW_LOG_TRACE(DirectAudio,
+                           "[MotuTxStamp] pkt=%llu txCycle=%u sph0=%u:%u lead=%lld ticks (%lld.%02lld cycles)",
+                           static_cast<unsigned long long>(nextPacketToPrepare), timing.transmitCycle,
+                           (sph >> 12) & 0x1fffU, sph & 0xfffU, static_cast<long long>(lead),
+                           static_cast<long long>(lead / 3072), static_cast<long long>((lead % 3072 + 3072) % 3072 * 100 / 3072));
         }
         if (ivars.runtime.mAudioInternalTxActive.load(std::memory_order_acquire) &&
             !ivars.runtime.mAudioInternalTxTiming.CommitPacket(
@@ -961,14 +961,14 @@ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
         ++prepared;
     }
 
-    ASFW_LOG(DirectAudio,
-             "ADK DBG TX prefill seeded %u/%u committed %{public}s before isoch start (steadyLead=%u)",
-             prepared,
-             numSlots,
-             timing.skipCycle ? "skip cycles (nothing on the wire)"
+    ASFW_LOG_DEBUG(DirectAudio,
+                   "ADK DBG TX prefill seeded %u/%u committed %{public}s before isoch start (steadyLead=%u)",
+                   prepared,
+                   numSlots,
+                   timing.skipCycle ? "skip cycles (nothing on the wire)"
                               : (timing.disposition == ASFW::Protocols::Audio::AMDTP::AmdtpPacketDisposition::NoData
                                      ? "NO-DATA packets" : "cadence packets"),
-             ASFW::IsochTransport::AudioTimingGeometry::
+                   ASFW::IsochTransport::AudioTimingGeometry::
                  kTxPreparationLeadPackets);
 }
 
@@ -1006,7 +1006,7 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
     // A device's own slot order (the Phase 88 is planar) arrives in txConfig
     // from its discovered graph; Configure prefers it over the profile's map.
     if (!ivars.runtime.txStreamEngine.Configure(profile, txConfig)) {
-        ASFW_LOG(Audio, "ASFWAudioDevice: txStreamEngine Configure failed");
+        ASFW_LOG_ERROR(Audio, "ASFWAudioDevice: txStreamEngine Configure failed");
         return {kIOReturnError, "ConfigureTxStreamEngine"};
     }
     ivars.runtime.txStreamEngine.SetTimingLossCallback({});
@@ -1021,9 +1021,9 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
             ? ::ASFW::Encoding::Motu::AbsolutePhaseSetpointTicksAtRate(
                   txPolicy.motuAbsolutePhaseSetpointTicks48k, txConfig.sampleRate)
             : std::nullopt;
-        ASFW_LOG(DirectAudio, "[MotuSphConfig] lead=%u ticks (%u.%02u cycles) absolutePhase=%{public}s rate=%u",
-                 leadTicks, leadTicks / 3072U, (leadTicks % 3072U) * 100U / 3072U,
-                 setpoint.has_value() ? "held" : "relative", txConfig.sampleRate);
+        ASFW_LOG_DEBUG(DirectAudio, "[MotuSphConfig] lead=%u ticks (%u.%02u cycles) absolutePhase=%{public}s rate=%u",
+                       leadTicks, leadTicks / 3072U, (leadTicks % 3072U) * 100U / 3072U,
+                       setpoint.has_value() ? "held" : "relative", txConfig.sampleRate);
         if (!ivars.runtime.motuTxTimingStamper.Configure(
                 txConfig.dbs, txConfig.sampleRate, leadTicks, setpoint)) {
             ASFW_LOG(Audio, "ASFWAudioDevice: MOTU SPH regulator has no configuration for rate=%u",
@@ -1613,7 +1613,7 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                 ? directControl->rxCaptureBufferTelemetry.completedMinimumAvailableFrames.load(
                       std::memory_order_relaxed)
                 : UINT64_MAX;
-            ASFW_LOG(
+            ASFW_LOG_DEBUG(
                 DirectAudio,
                 "[TxPrep] forcedNoData=%llu missedFinality=%llu sOutMinPk=%lld "
                 "sInMinFr=%lld sInStarve=%llu sInStart=%llu margin=%u min=%u latUs=%llu/%llu/%llu "
@@ -1653,22 +1653,22 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
             const uint32_t peakQ24 = motuWriter
                 ? ivars->runtime.motuPayloadWriter.TakePeakWrittenQ24()
                 : ivars->runtime.txStreamEngine.TakePeakWrittenQ24(&peakWord);
-            ASFW_LOG(DirectAudio,
-                     "[TxContent] writer=%{public}s peakQ24=%u word=0x%08x visited=%llu written=%llu noPkt=%llu outside=%llu "
-                     "missed=%llu muted=%llu writeEnd=%llu filledEnd=%llu",
-                     motuWriter ? "motu" : "amdtp", peakQ24, peakWord,
-                     motuWriter ? motuFill.framesVisited.load(std::memory_order_relaxed) : 0ULL,
-                     motuWriter ? motuFill.framesWritten.load(std::memory_order_relaxed)
+            ASFW_LOG_DEBUG(DirectAudio,
+                           "[TxContent] writer=%{public}s peakQ24=%u word=0x%08x visited=%llu written=%llu noPkt=%llu outside=%llu "
+                           "missed=%llu muted=%llu writeEnd=%llu filledEnd=%llu",
+                           motuWriter ? "motu" : "amdtp", peakQ24, peakWord,
+                           motuWriter ? motuFill.framesVisited.load(std::memory_order_relaxed) : 0ULL,
+                           motuWriter ? motuFill.framesWritten.load(std::memory_order_relaxed)
                                 : fill.framesWritten.load(std::memory_order_relaxed),
-                     motuWriter ? motuFill.framesWithoutPacket.load(std::memory_order_relaxed)
+                           motuWriter ? motuFill.framesWithoutPacket.load(std::memory_order_relaxed)
                                 : fill.framesWithoutPacket.load(std::memory_order_relaxed),
-                     motuWriter ? motuFill.framesOutsidePacket.load(std::memory_order_relaxed)
+                           motuWriter ? motuFill.framesOutsidePacket.load(std::memory_order_relaxed)
                                 : fill.framesOutsidePacket.load(std::memory_order_relaxed),
-                     motuWriter ? motuFill.framesMissedFinality.load(std::memory_order_relaxed)
+                           motuWriter ? motuFill.framesMissedFinality.load(std::memory_order_relaxed)
                                 : fill.framesMissedFinality.load(std::memory_order_relaxed),
-                     motuWriter ? motuFill.framesMuted.load(std::memory_order_relaxed) : 0ULL,
-                     directControl->playbackRingWriteFrame.load(std::memory_order_relaxed),
-                     directControl->playbackRingReadFrame.load(std::memory_order_relaxed));
+                           motuWriter ? motuFill.framesMuted.load(std::memory_order_relaxed) : 0ULL,
+                           directControl->playbackRingWriteFrame.load(std::memory_order_relaxed),
+                           directControl->playbackRingReadFrame.load(std::memory_order_relaxed));
             // The gate the fill waits on (FillTransmitPayloads copies frames in
             // [filled, min(writtenEnd, exposedEnd)) only): CoreAudio's write
             // end, the ring's oldest held frame, the timeline's exposed frame
@@ -1676,19 +1676,19 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
             // frame cursor and its alignment epoch, plus what the engine made.
             {
                 const auto& engine = ivars->runtime.txStreamEngine;
-                ASFW_LOG(DirectAudio,
-                         "[TxFill] writtenEnd=%llu oldestValid=%llu exposedEnd=%llu filled=%llu cursor=%llu "
-                         "epoch=%llu aligned=%u dataPrepared=%llu noDataPrepared=%llu timingReverts=%llu "
-                         "replayActive=%u replayEstablished=%u",
-                         directControl->playbackRingWriteFrame.load(std::memory_order_relaxed),
-                         directControl->playbackRingOldestValidFrame.load(std::memory_order_relaxed),
-                         engine.Timeline().ExposedFrameEnd(), ivars->runtime.txFilledFrameEnd,
-                         engine.NextAudioFrame(), engine.CursorEpoch(), engine.IsFrameCursorAligned() ? 1U : 0U,
-                         engine.Counters().dataPacketsPrepared.load(std::memory_order_relaxed),
-                         engine.Counters().noDataPacketsPrepared.load(std::memory_order_relaxed),
-                         engine.Counters().timingUnavailableReverts.load(std::memory_order_relaxed),
-                         ivars->runtime.txReplayReader.IsActive() ? 1U : 0U,
-                         directControl->rxSequenceReplay.IsEstablished() ? 1U : 0U);
+                ASFW_LOG_DEBUG(DirectAudio,
+                               "[TxFill] writtenEnd=%llu oldestValid=%llu exposedEnd=%llu filled=%llu cursor=%llu "
+                               "epoch=%llu aligned=%u dataPrepared=%llu noDataPrepared=%llu timingReverts=%llu "
+                               "replayActive=%u replayEstablished=%u",
+                               directControl->playbackRingWriteFrame.load(std::memory_order_relaxed),
+                               directControl->playbackRingOldestValidFrame.load(std::memory_order_relaxed),
+                               engine.Timeline().ExposedFrameEnd(), ivars->runtime.txFilledFrameEnd,
+                               engine.NextAudioFrame(), engine.CursorEpoch(), engine.IsFrameCursorAligned() ? 1U : 0U,
+                               engine.Counters().dataPacketsPrepared.load(std::memory_order_relaxed),
+                               engine.Counters().noDataPacketsPrepared.load(std::memory_order_relaxed),
+                               engine.Counters().timingUnavailableReverts.load(std::memory_order_relaxed),
+                               ivars->runtime.txReplayReader.IsActive() ? 1U : 0U,
+                               directControl->rxSequenceReplay.IsEstablished() ? 1U : 0U);
             }
             // Whether CoreAudio runs IO on the started device at all, beside
             // the zero timestamps handed to it: callbacks stuck at 0 while zts
@@ -1697,13 +1697,13 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
             {
                 const uint64_t ztsHost =
                     ivars->runtime.lastHalZeroTimestampHostTicks.load(std::memory_order_relaxed);
-                ASFW_LOG(DirectAudio,
-                         "[HalIo] callbacks=%llu outsideRun=%llu zts=%llu ztsFrame=%llu ztsAgeMs=%llu",
-                         ivars->runtime.ioDebugCallbacks.load(std::memory_order_relaxed),
-                         ivars->runtime.ioCallbacksOutsideRun.load(std::memory_order_relaxed),
-                         directControl->hostClockAnchor.mirrorPublications.load(std::memory_order_relaxed),
-                         ivars->runtime.lastHalZeroTimestampSampleFrame.load(std::memory_order_relaxed),
-                         ztsHost != 0 && now > ztsHost
+                ASFW_LOG_DEBUG(DirectAudio,
+                               "[HalIo] callbacks=%llu outsideRun=%llu zts=%llu ztsFrame=%llu ztsAgeMs=%llu",
+                               ivars->runtime.ioDebugCallbacks.load(std::memory_order_relaxed),
+                               ivars->runtime.ioCallbacksOutsideRun.load(std::memory_order_relaxed),
+                               directControl->hostClockAnchor.mirrorPublications.load(std::memory_order_relaxed),
+                               ivars->runtime.lastHalZeroTimestampSampleFrame.load(std::memory_order_relaxed),
+                               ztsHost != 0 && now > ztsHost
                              ? ASFW::Timing::hostTicksToNanos(now - ztsHost) / 1000000
                              : 0ULL);
             }
@@ -1721,8 +1721,8 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                 ivars->runtime.txCadenceLastNoData = noDataNow;
                 ivars->runtime.txCadenceLastEmpty = emptyNow;
                 const uint64_t total = data + noData + empty;
-                ASFW_LOG(DirectAudio, "[TxCadence] data=%llu noData=%llu empty=%llu dataPerMille=%llu (expect 750 at 48 kHz)",
-                         data, noData, empty, total ? (data * 1000) / total : 0);
+                ASFW_LOG_DEBUG(DirectAudio, "[TxCadence] data=%llu noData=%llu empty=%llu dataPerMille=%llu (expect 750 at 48 kHz)",
+                               data, noData, empty, total ? (data * 1000) / total : 0);
             }
             if (ivars->runtime.motuSphActive.load(std::memory_order_relaxed)) {
                 ASFW::Audio::DriverKit::LogMotuSphSummary(*ivars);
@@ -1762,11 +1762,11 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
         ASFW::Audio::DriverKit::TxPlacementSample placement{};
         if (ASFW::Audio::DriverKit::MeasureTxPlacement(*ivars, placement)) {
             ivars->runtime.txPlacementLogged = true;
-            ASFW_LOG(DirectAudio,
-                     "[TxPlace] pkt=%llu frame=%llu halSample=%lld offset=%lld rate=%u",
-                     placement.packetIndex, placement.firstAudioFrame,
-                     placement.halSampleTime, placement.offsetFrames,
-                     ivars->runtime.txStreamEngine.StreamConfig().sampleRate);
+            ASFW_LOG_DEBUG(DirectAudio,
+                           "[TxPlace] pkt=%llu frame=%llu halSample=%lld offset=%lld rate=%u",
+                           placement.packetIndex, placement.firstAudioFrame,
+                           placement.halSampleTime, placement.offsetFrames,
+                           ivars->runtime.txStreamEngine.StreamConfig().sampleRate);
         }
     }
 

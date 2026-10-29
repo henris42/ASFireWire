@@ -600,9 +600,9 @@ private:
             range.hasBacking = false;
             return kIOReturnSuccess;
 #else
-            ASFW_LOG(UserClient,
-                     "AddressSpaceManager: DMA allocation failed for len=%u",
-                     range.meta.length);
+            ASFW_LOG_ERROR(UserClient,
+                           "AddressSpaceManager: DMA allocation failed for len=%u",
+                           range.meta.length);
             return kIOReturnNoMemory;
 #endif
         }

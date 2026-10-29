@@ -185,7 +185,7 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                  ivars.inputStream ? ivars.inputStream->GetObjectID() : 0,
                  ivars.outputStream ? ivars.outputStream->GetObjectID() : 0);
     } else {
-        ASFW_LOG(Audio, "ASFWAudioDriver: SetIOOperationHandler failed: 0x%x", error);
+        ASFW_LOG_ERROR(Audio, "ASFWAudioDriver: SetIOOperationHandler failed: 0x%x", error);
     }
     return error;
 }

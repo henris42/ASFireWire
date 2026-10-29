@@ -42,7 +42,7 @@ void ForceLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime, const ch
         snapshot.playbackRingWriteFrame,
         snapshot.playbackRingOldestValidFrame,
         snapshot.playbackRingAvailableFrames);
-    ASFW_LOG(
+    ASFW_LOG_ERROR(
         DirectAudio,
         "ADK FORCED FATAL reason=%u generation=%llu",
         static_cast<uint32_t>(snapshot.fatalReason),
@@ -83,24 +83,24 @@ uint32_t FrameCapacityFromSegment(const IOAddressSegment& segment,
 bool BindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars,
                              DirectAudioMemoryGeometry physicalGeometry) noexcept {
     if (!ivars.audioDevice) {
-        ASFW_LOG(DirectAudio,
-                 "ADK FATAL BIND skeleton failed null_audioDevice guid=0x%016llx",
-                 ivars.device.guid);
+        ASFW_LOG_ERROR(DirectAudio,
+                       "ADK FATAL BIND skeleton failed null_audioDevice guid=0x%016llx",
+                       ivars.device.guid);
         return false;
     }
     if (!ivars.inputMap || !ivars.outputMap || !ivars.controlMap) {
-        ASFW_LOG(DirectAudio,
-                 "ADK DBG BIND skeleton failed missing_maps inMap=%p outMap=%p controlMap=%p",
-                 static_cast<void*>(ivars.inputMap.get()),
-                 static_cast<void*>(ivars.outputMap.get()),
-                 static_cast<void*>(ivars.controlMap.get()));
+        ASFW_LOG_ERROR(DirectAudio,
+                       "ADK DBG BIND skeleton failed missing_maps inMap=%p outMap=%p controlMap=%p",
+                       static_cast<void*>(ivars.inputMap.get()),
+                       static_cast<void*>(ivars.outputMap.get()),
+                       static_cast<void*>(ivars.controlMap.get()));
         return false;
     }
 
     auto* control = reinterpret_cast<ASFW::Audio::Runtime::AudioTransportControlBlock*>(
         static_cast<uintptr_t>(ivars.controlMap->GetAddress()));
     if (!control) {
-        ASFW_LOG(DirectAudio, "ADK DBG BIND skeleton failed null_control");
+        ASFW_LOG_ERROR(DirectAudio, "ADK DBG BIND skeleton failed null_control");
         return false;
     }
     control->ResetForStart();
@@ -123,9 +123,9 @@ bool BindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars,
         FrameCapacityFromSegment(outputSegment, physicalGeometry.outputChannels);
     if (activeFrames == 0 || activeFrames > inputMappedFrames ||
         activeFrames > outputMappedFrames) {
-        ASFW_LOG(DirectAudio,
-                 "ADK FATAL BIND skeleton ring exceeds mapping active=%u inMapped=%u outMapped=%u",
-                 activeFrames, inputMappedFrames, outputMappedFrames);
+        ASFW_LOG_ERROR(DirectAudio,
+                       "ADK FATAL BIND skeleton ring exceeds mapping active=%u inMapped=%u outMapped=%u",
+                       activeFrames, inputMappedFrames, outputMappedFrames);
         return false;
     }
     const uint32_t inputFrameCapacity = activeFrames;
@@ -168,18 +168,18 @@ bool BindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars,
     ivars.runtime.lastHalZeroTimestampSampleFrame.store(0, std::memory_order_release);
     ivars.runtime.lastHalZeroTimestampHostTicks.store(0, std::memory_order_release);
     ivars.runtime.directAudioSkeletonBound.store(true, std::memory_order_release);
-    ASFW_LOG(DirectAudio,
-             "ADK DBG BIND skeleton %{public}s outBase=%p outFrames=%u outCh=%u inBase=%p inFrames=%u inCh=%u control=%p audioDevice=%p rate=%u",
-             "bound",
-             static_cast<const void*>(ivars.runtime.directAudioGraph.memory.outputBase),
-             ivars.runtime.directAudioGraph.memory.outputFrameCapacity,
-             ivars.runtime.directAudioGraph.memory.outputChannels,
-             static_cast<void*>(ivars.runtime.directAudioGraph.memory.inputBase),
-             ivars.runtime.directAudioGraph.memory.inputFrameCapacity,
-             ivars.runtime.directAudioGraph.memory.inputChannels,
-             static_cast<void*>(ivars.runtime.directAudioGraph.control),
-             static_cast<void*>(ivars.runtime.directAudioGraph.audioDevice),
-             ivars.runtime.directAudioGraph.sampleRateHz);
+    ASFW_LOG_DEBUG(DirectAudio,
+                   "ADK DBG BIND skeleton %{public}s outBase=%p outFrames=%u outCh=%u inBase=%p inFrames=%u inCh=%u control=%p audioDevice=%p rate=%u",
+                   "bound",
+                   static_cast<const void*>(ivars.runtime.directAudioGraph.memory.outputBase),
+                   ivars.runtime.directAudioGraph.memory.outputFrameCapacity,
+                   ivars.runtime.directAudioGraph.memory.outputChannels,
+                   static_cast<void*>(ivars.runtime.directAudioGraph.memory.inputBase),
+                   ivars.runtime.directAudioGraph.memory.inputFrameCapacity,
+                   ivars.runtime.directAudioGraph.memory.inputChannels,
+                   static_cast<void*>(ivars.runtime.directAudioGraph.control),
+                   static_cast<void*>(ivars.runtime.directAudioGraph.audioDevice),
+                   ivars.runtime.directAudioGraph.sampleRateHz);
     return true;
 }
 
@@ -201,9 +201,9 @@ bool UpdateDirectAudioGeometry(ASFWAudioDriver_IVars& ivars) noexcept {
     if (activeFrames == 0 ||
         activeFrames > FrameCapacityFromSegment(inputSegment, ivars.device.inputChannelCount) ||
         activeFrames > FrameCapacityFromSegment(outputSegment, ivars.device.outputChannelCount)) {
-        ASFW_LOG(DirectAudio,
-                 "ADK FATAL BIND geometry update ring=%u exceeds mapping rate=%u",
-                 activeFrames, ivars.device.timing.sampleRateHz);
+        ASFW_LOG_ERROR(DirectAudio,
+                       "ADK FATAL BIND geometry update ring=%u exceeds mapping rate=%u",
+                       activeFrames, ivars.device.timing.sampleRateHz);
         return false;
     }
     // IO is stopped inside the configuration-change window, so no RT reader

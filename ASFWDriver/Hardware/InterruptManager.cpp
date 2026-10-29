@@ -55,7 +55,7 @@ void InterruptManager::Enable() {
     if (source_) {
         source_->SetEnableWithCompletion(true, nullptr);
     } else {
-        ASFW_LOG(Controller, "⚠️  InterruptManager::Enable: NO SOURCE!");
+        ASFW_LOG_ERROR(Controller, "⚠️  InterruptManager::Enable: NO SOURCE!");
     }
 }
 

@@ -402,10 +402,10 @@ void AudioCoordinator::OnDeviceRemoved(Discovery::Guid64 guid) {
     runtime_.Remove(guid);
     publisher_.TerminateNub(guid, "remote-device-lost", hostStatus);
     sessions_.Erase(guid);
-    ASFW_LOG(Audio,
-             "[Lifecycle] AudioCoordinator remote-device-lost owner GUID=0x%016llx "
-             "active=%u host=0x%08x (%{public}s)",
-             guid, wasActive ? 1U : 0U, hostStatus, ASFW::Logging::IOReturnName(hostStatus));
+    ASFW_LOG_WARNING(Audio,
+                     "[Lifecycle] AudioCoordinator remote-device-lost owner GUID=0x%016llx "
+                     "active=%u host=0x%08x (%{public}s)",
+                     guid, wasActive ? 1U : 0U, hostStatus, ASFW::Logging::IOReturnName(hostStatus));
 }
 
 void AudioCoordinator::OnAVCAudioConfigurationReady(uint64_t guid,
@@ -461,7 +461,7 @@ IOReturn AudioCoordinator::ClaimTransport(uint64_t guid) noexcept {
                          guid, count);
         return kIOReturnBusy;
     }
-    ASFW_LOG(Audio, "AudioCoordinator: GUID=0x%016llx claims isoch lane %u of %u", guid, lane, count);
+    ASFW_LOG_DEBUG(Audio, "AudioCoordinator: GUID=0x%016llx claims isoch lane %u of %u", guid, lane, count);
     return kIOReturnSuccess;
 }
 
@@ -516,9 +516,9 @@ IOReturn AudioCoordinator::StartStreaming(uint64_t guid, AudioClockConfig clock)
         return kr;
     }
 
-    ASFW_LOG(Audio,
-             "AudioCoordinator: StartStreaming ok GUID=0x%016llx",
-             guid);
+    ASFW_LOG_DEBUG(Audio,
+                   "AudioCoordinator: StartStreaming ok GUID=0x%016llx",
+                   guid);
     return kIOReturnSuccess;
 }
 
@@ -576,9 +576,9 @@ IOReturn AudioCoordinator::StopStreaming(uint64_t guid) noexcept {
         IOLockUnlock(lock_);
     }
 
-    ASFW_LOG(Audio,
-             "AudioCoordinator: StopStreaming ok GUID=0x%016llx",
-             guid);
+    ASFW_LOG_DEBUG(Audio,
+                   "AudioCoordinator: StopStreaming ok GUID=0x%016llx",
+                   guid);
     return kIOReturnSuccess;
 }
 

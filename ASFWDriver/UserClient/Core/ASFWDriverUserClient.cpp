@@ -247,7 +247,7 @@ kern_return_t HandleGetDriverVersion(IOUserClientMethodArguments* arguments) {
 
     OSData* data = OSData::withBytes(&versionInfo, sizeof(versionInfo));
     if (!data) {
-        ASFW_LOG_V0(UserClient, "  OSData::withBytes failed!");
+        ASFW_LOG_ERROR(UserClient, "  OSData::withBytes failed!");
         return kIOReturnNoMemory;
     }
 
@@ -493,7 +493,7 @@ kern_return_t IMPL(ASFWDriverUserClient, Start) {
 
     auto* runtimeState = ASFW::UserClient::GetRuntimeState(this);
     if (!runtimeState || !runtimeState->BindDriver(ivars->driver, this)) {
-        ASFW_LOG(UserClient, "Start() failed to initialize runtime state");
+        ASFW_LOG_ERROR(UserClient, "Start() failed to initialize runtime state");
         return kIOReturnNoMemory;
     }
 

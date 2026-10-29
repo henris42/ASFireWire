@@ -154,7 +154,7 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     auto& state = ivars.graphState;
     state = {};
     if (!provider) {
-        ASFW_LOG(Audio, "ASFWAudioDriver: BuildAudioGraph failed - null provider");
+        ASFW_LOG_ERROR(Audio, "ASFWAudioDriver: BuildAudioGraph failed - null provider");
         return kIOReturnBadArgument;
     }
 
@@ -168,7 +168,7 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
 
     ivars.device.audioNub = reinterpret_cast<ASFWAudioNub*>(provider);
     if (!ivars.device.audioNub) {
-        ASFW_LOG(Audio, "ASFWAudioDriver: BuildAudioGraph failed - null audio nub");
+        ASFW_LOG_ERROR(Audio, "ASFWAudioDriver: BuildAudioGraph failed - null audio nub");
         return kIOReturnNotReady;
     }
 
@@ -270,7 +270,7 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         return error;
     }
     if (!profile) {
-        ASFW_LOG(Audio, "ASFWAudioDriver: BuildAudioGraph failed - no device profile");
+        ASFW_LOG_ERROR(Audio, "ASFWAudioDriver: BuildAudioGraph failed - no device profile");
         return kIOReturnNotFound;
     }
 
@@ -292,10 +292,10 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         const auto resolved = resolveTiming(
             static_cast<uint32_t>(ivars.device.currentSampleRate));
         if (!resolved) {
-            ASFW_LOG(Audio,
-                     "[Timing] resolve failed rate=%.0f error=%{public}s",
-                     ivars.device.currentSampleRate,
-                     ASFW::Audio::Runtime::TimingGeometryErrorName(resolved.error()));
+            ASFW_LOG_ERROR(Audio,
+                           "[Timing] resolve failed rate=%.0f error=%{public}s",
+                           ivars.device.currentSampleRate,
+                           ASFW::Audio::Runtime::TimingGeometryErrorName(resolved.error()));
             return kIOReturnUnsupported;
         }
         ivars.device.timing = *resolved;
@@ -326,17 +326,17 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
             status,
             {
                 error = status;
-                ASFW_LOG(Audio,
-                         "ADK FATAL GRAPH op=%{public}s kr=0x%x",
-                         operation ? operation : "unknown",
-                         status);
+                ASFW_LOG_ERROR(Audio,
+                               "ADK FATAL GRAPH op=%{public}s kr=0x%x",
+                               operation ? operation : "unknown",
+                               status);
             },
             Failure,
             "AudioDriverKit graph operation failed");
-        ASFW_LOG(Audio,
-                 "ADK GRAPH op=%{public}s kr=0x%x",
-                 operation ? operation : "unknown",
-                 status);
+        ASFW_LOG_DEBUG(Audio,
+                       "ADK GRAPH op=%{public}s kr=0x%x",
+                       operation ? operation : "unknown",
+                       status);
         return true;
 
     Failure:
@@ -415,7 +415,7 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     if (!ivars.audioDevice->init(&driver, false,
                                  deviceUID.get(), modelUID.get(),
                                  manufacturerUID.get(), target_period)) {
-        ASFW_LOG(Audio, "ASFWAudioDriver: ASFWAudioDevice::init failed");
+        ASFW_LOG_ERROR(Audio, "ASFWAudioDriver: ASFWAudioDevice::init failed");
         return kIOReturnNoMemory;
     }
     ivars.audioDevice->SetDriverIvars(&ivars);
@@ -520,13 +520,13 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     uint32_t directSampleRateHz = 0;
     uint64_t directGeneration = 0;
 
-    ASFW_LOG(DirectAudio,
-             "ADK DBG MEM request provider=%p guid=0x%016llx expectedInCh=%u expectedOutCh=%u rate=%.0f",
-             static_cast<void*>(provider),
-             ivars.device.guid,
-             ivars.device.inputChannelCount,
-             ivars.device.outputChannelCount,
-             ivars.device.currentSampleRate);
+    ASFW_LOG_DEBUG(DirectAudio,
+                   "ADK DBG MEM request provider=%p guid=0x%016llx expectedInCh=%u expectedOutCh=%u rate=%.0f",
+                   static_cast<void*>(provider),
+                   ivars.device.guid,
+                   ivars.device.inputChannelCount,
+                   ivars.device.outputChannelCount,
+                   ivars.device.currentSampleRate);
 
     error = ivars.device.audioNub->CopyDirectAudioMemory(&rawOutputMemory,
                                                          &rawInputMemory,
@@ -538,12 +538,12 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
                                                          &directSampleRateHz,
                                                          &directGeneration);
     if (error != kIOReturnSuccess || !rawOutputMemory || !rawInputMemory || !rawControlMemory) {
-        ASFW_LOG(DirectAudio,
-                 "ADK DBG MEM request failed kr=0x%x outMem=%p inMem=%p controlMem=%p",
-                 error,
-                 static_cast<void*>(rawOutputMemory),
-                 static_cast<void*>(rawInputMemory),
-                 static_cast<void*>(rawControlMemory));
+        ASFW_LOG_ERROR(DirectAudio,
+                       "ADK DBG MEM request failed kr=0x%x outMem=%p inMem=%p controlMem=%p",
+                       error,
+                       static_cast<void*>(rawOutputMemory),
+                       static_cast<void*>(rawInputMemory),
+                       static_cast<void*>(rawControlMemory));
         if (rawOutputMemory) { rawOutputMemory->release(); }
         if (rawInputMemory) { rawInputMemory->release(); }
         if (rawControlMemory) { rawControlMemory->release(); }
@@ -558,15 +558,15 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         (hasInputStream && directInputChannels != ivars.device.inputChannelCount) ||
         directOutputChannels == 0 || directInputChannels == 0 ||
         directSampleRateHz != static_cast<uint32_t>(ivars.device.currentSampleRate)) {
-        ASFW_LOG(DirectAudio,
-                 "ADK FATAL MEM metadata mismatch gen=%llu directOutCh=%u localOutCh=%u directInCh=%u localInCh=%u directRate=%u localRate=%u",
-                 directGeneration,
-                 directOutputChannels,
-                 ivars.device.outputChannelCount,
-                 directInputChannels,
-                 ivars.device.inputChannelCount,
-                 directSampleRateHz,
-                 static_cast<uint32_t>(ivars.device.currentSampleRate));
+        ASFW_LOG_ERROR(DirectAudio,
+                       "ADK FATAL MEM metadata mismatch gen=%llu directOutCh=%u localOutCh=%u directInCh=%u localInCh=%u directRate=%u localRate=%u",
+                       directGeneration,
+                       directOutputChannels,
+                       ivars.device.outputChannelCount,
+                       directInputChannels,
+                       ivars.device.inputChannelCount,
+                       directSampleRateHz,
+                       static_cast<uint32_t>(ivars.device.currentSampleRate));
         return kIOReturnBadArgument;
     }
     // The runtime publishes the ACTIVE ring for the current rate; it must be
@@ -574,7 +574,7 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     // different frames. The stream itself keeps the whole allocated buffer.
     if (directOutputFrames != timing.frameRingFrames ||
         directInputFrames != timing.frameRingFrames) {
-        ASFW_LOG(
+        ASFW_LOG_ERROR(
             Audio,
             "ADK FATAL MEM ring/geometry mismatch outFrames=%u inFrames=%u expectedRing=%u allocated=%u ztsPeriod=%u",
             directOutputFrames,
@@ -584,7 +584,7 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
             target_period);
         return kIOReturnBadArgument;
     }
-    ASFW_LOG(
+    ASFW_LOG_DEBUG(
         Audio,
         "ADK GRAPH state=stream-ring/ZTS outFrames=%u inFrames=%u allocated=%u ztsPeriod=%u",
         directOutputFrames,
@@ -594,34 +594,34 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
 
     error = ASFW::Common::CreateSharedMapping(ivars.outputBuffer, ivars.outputMap);
     if (error != kIOReturnSuccess) {
-        ASFW_LOG(DirectAudio, "ADK DBG MEM map output failed kr=0x%x", error);
+        ASFW_LOG_ERROR(DirectAudio, "ADK DBG MEM map output failed kr=0x%x", error);
         return error;
     }
     error = ASFW::Common::CreateSharedMapping(ivars.inputBuffer, ivars.inputMap);
     if (error != kIOReturnSuccess) {
-        ASFW_LOG(DirectAudio, "ADK DBG MEM map input failed kr=0x%x", error);
+        ASFW_LOG_ERROR(DirectAudio, "ADK DBG MEM map input failed kr=0x%x", error);
         return error;
     }
     error = ASFW::Common::CreateSharedMapping(ivars.controlBuffer, ivars.controlMap);
     if (error != kIOReturnSuccess) {
-        ASFW_LOG(DirectAudio, "ADK DBG MEM map control failed kr=0x%x", error);
+        ASFW_LOG_ERROR(DirectAudio, "ADK DBG MEM map control failed kr=0x%x", error);
         return error;
     }
 
-    ASFW_LOG(DirectAudio,
-             "ADK DBG MEM mapped gen=%llu outBase=%p outLen=%llu outFrames=%u outCh=%u inBase=%p inLen=%llu inFrames=%u inCh=%u control=%p controlLen=%llu rate=%u",
-             directGeneration,
-             reinterpret_cast<void*>(static_cast<uintptr_t>(ivars.outputMap->GetAddress())),
-             ivars.outputMap->GetLength(),
-             directOutputFrames,
-             directOutputChannels,
-             reinterpret_cast<void*>(static_cast<uintptr_t>(ivars.inputMap->GetAddress())),
-             ivars.inputMap->GetLength(),
-             directInputFrames,
-             directInputChannels,
-             reinterpret_cast<void*>(static_cast<uintptr_t>(ivars.controlMap->GetAddress())),
-             ivars.controlMap->GetLength(),
-             directSampleRateHz);
+    ASFW_LOG_DEBUG(DirectAudio,
+                   "ADK DBG MEM mapped gen=%llu outBase=%p outLen=%llu outFrames=%u outCh=%u inBase=%p inLen=%llu inFrames=%u inCh=%u control=%p controlLen=%llu rate=%u",
+                   directGeneration,
+                   reinterpret_cast<void*>(static_cast<uintptr_t>(ivars.outputMap->GetAddress())),
+                   ivars.outputMap->GetLength(),
+                   directOutputFrames,
+                   directOutputChannels,
+                   reinterpret_cast<void*>(static_cast<uintptr_t>(ivars.inputMap->GetAddress())),
+                   ivars.inputMap->GetLength(),
+                   directInputFrames,
+                   directInputChannels,
+                   reinterpret_cast<void*>(static_cast<uintptr_t>(ivars.controlMap->GetAddress())),
+                   ivars.controlMap->GetLength(),
+                   directSampleRateHz);
 
     if (hasInputStream) {
         if (ivars.device.rateFormationCandidates.empty()) {
@@ -817,10 +817,10 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
                     ch,
                     IOUserAudioObjectPropertyScope::Output,
                     outChName.get());
-            ASFW_LOG(Audio,
-                     "ADK GRAPH op=device.SetElementName(output) channel=%u kr=0x%x",
-                     ch,
-                     status);
+            ASFW_LOG_TRACE(Audio,
+                           "ADK GRAPH op=device.SetElementName(output) channel=%u kr=0x%x",
+                           ch,
+                           status);
             if (status != kIOReturnSuccess) {
                 return status;
             }
@@ -834,10 +834,10 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
                     ch,
                     IOUserAudioObjectPropertyScope::Input,
                     inChName.get());
-            ASFW_LOG(Audio,
-                     "ADK GRAPH op=device.SetElementName(input) channel=%u kr=0x%x",
-                     ch,
-                     status);
+            ASFW_LOG_TRACE(Audio,
+                           "ADK GRAPH op=device.SetElementName(input) channel=%u kr=0x%x",
+                           ch,
+                           status);
             if (status != kIOReturnSuccess) {
                 return status;
             }
@@ -865,8 +865,8 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         kern_return_t clockStatus = clock->AddControlValueDescriptions(choices, ivars.device.clockSourceCount);
         if (clockStatus == kIOReturnSuccess) clockStatus = clock->SetCurrentSelectedValues(&current, 1);
         if (clockStatus == kIOReturnSuccess) clockStatus = ivars.audioDevice->AddControl(clock.get());
-        ASFW_LOG(Audio, "ADK GRAPH op=device.AddControl(clock-source) sources=%u current=%u kr=0x%x",
-                 ivars.device.clockSourceCount, current, clockStatus);
+        ASFW_LOG_DEBUG(Audio, "ADK GRAPH op=device.AddControl(clock-source) sources=%u current=%u kr=0x%x",
+                       ivars.device.clockSourceCount, current, clockStatus);
         if (clockStatus != kIOReturnSuccess) return clockStatus;
         ivars.clockSourceControl = std::move(clock);
     }
@@ -980,16 +980,16 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     const uint32_t configuredZtsPeriod =
         ivars.audioDevice->GetZeroTimestampPeriod();
     if (configuredZtsPeriod != timing.zeroTimestampPeriodFrames) {
-        ASFW_LOG(
+        ASFW_LOG_ERROR(
             Audio,
             "ADK FATAL graph op=device.GetZeroTimestampPeriod expected=%u actual=%u",
             timing.zeroTimestampPeriodFrames,
             configuredZtsPeriod);
         return kIOReturnUnsupported;
     }
-    ASFW_LOG(Audio,
-             "ADK GRAPH state=device.GetZeroTimestampPeriod value=%u",
-             configuredZtsPeriod);
+    ASFW_LOG_DEBUG(Audio,
+                   "ADK GRAPH state=device.GetZeroTimestampPeriod value=%u",
+                   configuredZtsPeriod);
 
     error = driver.AddObject(ivars.audioDevice.get());
     if (!requireAdkSuccess("driver.AddObject(device)", error)) {

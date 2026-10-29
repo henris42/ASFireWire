@@ -202,7 +202,7 @@ bool SBP2ManagementORB::Execute() noexcept {
         });
 
     if (!writeHandle_) {
-        ASFW_LOG(Async, "SBP2ManagementORB::Execute: WriteBlock failed");
+        ASFW_LOG_ERROR(Async, "SBP2ManagementORB::Execute: WriteBlock failed");
         if (scheduler_ != nullptr && timeoutToken_ != kInvalidSchedulerToken) {
             scheduler_->Cancel(timeoutToken_);
             timeoutToken_ = kInvalidSchedulerToken;

@@ -225,11 +225,11 @@ private:
         } else {
             ++clockRefused_;
             if (clockRefused_ == 1 || (clockRefused_ % 20000) == 0) {
-                ASFW_LOG(DirectAudio,
-                         "[RxClockBridge] publish refused #%llu gen=%llu frames=%llu ticks=%lld (published %llu so far)",
-                         static_cast<unsigned long long>(clockRefused_), static_cast<unsigned long long>(generation),
-                         static_cast<unsigned long long>(cumulative.frames), static_cast<long long>(cumulative.ticks),
-                         static_cast<unsigned long long>(clockPublished_));
+                ASFW_LOG_DEBUG(DirectAudio,
+                               "[RxClockBridge] publish refused #%llu gen=%llu frames=%llu ticks=%lld (published %llu so far)",
+                               static_cast<unsigned long long>(clockRefused_), static_cast<unsigned long long>(generation),
+                               static_cast<unsigned long long>(cumulative.frames), static_cast<long long>(cumulative.ticks),
+                               static_cast<unsigned long long>(clockPublished_));
             }
         }
     }
@@ -272,24 +272,24 @@ private:
         const uint32_t rate = sampleRateHz_;
         const auto sphRate = rxClock_.Snapshot(rate);
         if (sphRate.valid) {
-            ASFW_LOG(DirectAudio,
-                     "[RxSphRate] ppb=%lld frames=%llu steps=%llu rejected=%llu/%llu "
-                     "worstRej=%lld/%u rate=%u bridgePub=%llu bridgeRefused=%llu",
-                     static_cast<long long>(sphRate.deviationPpb), sphRate.frames,
-                     sphRate.packets, sphRate.rejectedNonMonotonic,
-                     sphRate.rejectedImplausibleRate,
-                     static_cast<long long>(sphRate.worstRejectedStepTicks),
-                     sphRate.worstRejectedFrames, rate,
-                     static_cast<unsigned long long>(clockPublished_),
-                     static_cast<unsigned long long>(clockRefused_));
+            ASFW_LOG_DEBUG(DirectAudio,
+                           "[RxSphRate] ppb=%lld frames=%llu steps=%llu rejected=%llu/%llu "
+                           "worstRej=%lld/%u rate=%u bridgePub=%llu bridgeRefused=%llu",
+                           static_cast<long long>(sphRate.deviationPpb), sphRate.frames,
+                           sphRate.packets, sphRate.rejectedNonMonotonic,
+                           sphRate.rejectedImplausibleRate,
+                           static_cast<long long>(sphRate.worstRejectedStepTicks),
+                           sphRate.worstRejectedFrames, rate,
+                           static_cast<unsigned long long>(clockPublished_),
+                           static_cast<unsigned long long>(clockRefused_));
         }
         const auto absPhase = rxClock_.AbsolutePhaseSnapshot();
         if (absPhase.valid) {
-            ASFW_LOG(DirectAudio, "[RxPhaseAbs] min=%lld med=%lld max=%lld n=%u/%u",
-                     static_cast<long long>(absPhase.minTicks),
-                     static_cast<long long>(absPhase.medianTicks),
-                     static_cast<long long>(absPhase.maxTicks), absPhase.stored,
-                     absPhase.samples);
+            ASFW_LOG_DEBUG(DirectAudio, "[RxPhaseAbs] min=%lld med=%lld max=%lld n=%u/%u",
+                           static_cast<long long>(absPhase.minTicks),
+                           static_cast<long long>(absPhase.medianTicks),
+                           static_cast<long long>(absPhase.maxTicks), absPhase.stored,
+                           absPhase.samples);
             FormRelPhase(absPhase.medianTicks);
         }
         rxClock_.BeginWindow();
@@ -316,11 +316,11 @@ private:
         const int64_t rel = ::ASFW::Encoding::Motu::TickDifference(residual.residualTicks, rxAbsTicks);
         ++relPhaseFormed_;
         lastRelTicks_ = rel;
-        ASFW_LOG(DirectAudio,
-                 "[RxPhaseRel] rel=%lld residualTicks=%lld rxAbsTicks=%lld txUpdates=%llu "
-                 "buckets=%u",
-                 static_cast<long long>(rel), static_cast<long long>(residual.residualTicks),
-                 static_cast<long long>(rxAbsTicks), traceUpdates, period.count);
+        ASFW_LOG_DEBUG(DirectAudio,
+                       "[RxPhaseRel] rel=%lld residualTicks=%lld rxAbsTicks=%lld txUpdates=%llu "
+                       "buckets=%u",
+                       static_cast<long long>(rel), static_cast<long long>(residual.residualTicks),
+                       static_cast<long long>(rxAbsTicks), traceUpdates, period.count);
 
         const auto conditioned = relPhase_.Accept(rel);
         if (conditioned.valid) {
@@ -333,24 +333,24 @@ private:
                 // One line on a stream's first publication, so a run can tell
                 // "nothing was published" from "the regulator ignored it".
                 if (++relPhasePublished_ == 1) {
-                    ASFW_LOG(DirectAudio, "[RxPhaseBridge] first publish gen=%llu ticks=%lld center=%lld",
-                             generation, static_cast<long long>(sample.ticks),
-                             static_cast<long long>(sample.centerTicks));
+                    ASFW_LOG_DEBUG(DirectAudio, "[RxPhaseBridge] first publish gen=%llu ticks=%lld center=%lld",
+                                   generation, static_cast<long long>(sample.ticks),
+                                   static_cast<long long>(sample.centerTicks));
                 }
             } else if (++relPhaseRejected_ == 1) {
-                ASFW_LOG(DirectAudio, "[RxPhaseBridge] rejected gen=%llu ticks=%lld center=%lld",
-                         generation, static_cast<long long>(sample.ticks),
-                         static_cast<long long>(sample.centerTicks));
+                ASFW_LOG_DEBUG(DirectAudio, "[RxPhaseBridge] rejected gen=%llu ticks=%lld center=%lld",
+                               generation, static_cast<long long>(sample.ticks),
+                               static_cast<long long>(sample.centerTicks));
             }
         }
         if (conditioned.latticeCorrectionTicks != 0) {
-            ASFW_LOG(DirectAudio,
-                     "[RxPhaseLattice] corrected=%lld excess=%lld center=%lld corrections=%llu "
-                     "published=%llu",
-                     static_cast<long long>(conditioned.latticeCorrectionTicks),
-                     static_cast<long long>(conditioned.excessTicks),
-                     static_cast<long long>(conditioned.centerTicks),
-                     relPhase_.LatticeCorrections(), relPhase_.PublishedSamples());
+            ASFW_LOG_DEBUG(DirectAudio,
+                           "[RxPhaseLattice] corrected=%lld excess=%lld center=%lld corrections=%llu "
+                           "published=%llu",
+                           static_cast<long long>(conditioned.latticeCorrectionTicks),
+                           static_cast<long long>(conditioned.excessTicks),
+                           static_cast<long long>(conditioned.centerTicks),
+                           relPhase_.LatticeCorrections(), relPhase_.PublishedSamples());
         }
     }
 

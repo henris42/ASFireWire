@@ -289,7 +289,7 @@ std::optional<BusManager::PhyConfigCommand> BusManager::AssignCycleMaster(
     }
 
     if (inputs.badIRM) {
-        ASFW_LOG(BusManager, "⚠️  Bad IRM detected (node %u)", inputs.irmNodeID);
+        ASFW_LOG_WARNING(BusManager, "⚠️  Bad IRM detected (node %u)", inputs.irmNodeID);
     }
 
     // Apple's AssignCycleMaster fallback (IOFireWireController.cpp):

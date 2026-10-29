@@ -97,11 +97,11 @@ void BuildControlName(const BoolControlDescriptor& descriptor,
         const kern_return_t nameStatus =
             control->SetName(controlNameString.get());
         if (nameStatus != kIOReturnSuccess) {
-            ASFW_LOG(Audio,
-                     "ASFWAudioDriver: bool control SetName failed class=0x%08x element=%u kr=0x%x",
-                     slot.descriptor.classIdFourCC,
-                     slot.descriptor.element,
-                     nameStatus);
+            ASFW_LOG_ERROR(Audio,
+                           "ASFWAudioDriver: bool control SetName failed class=0x%08x element=%u kr=0x%x",
+                           slot.descriptor.classIdFourCC,
+                           slot.descriptor.element,
+                           nameStatus);
             slot.valid = false;
             return nameStatus;
         }

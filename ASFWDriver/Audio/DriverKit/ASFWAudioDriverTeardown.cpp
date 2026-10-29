@@ -95,7 +95,7 @@ void StopAudioDriverGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars)
     if (auto* nub = ivars.device.audioNub) {
         const kern_return_t stopKr = nub->StopAudioStreamingOrRemoteResult();
         if (stopKr != kIOReturnSuccess) {
-            ASFW_LOG(Audio, "ASFWAudioDriver: StopAudioStreaming failed in Stop(): 0x%x (%{public}s)", stopKr, ASFW::Logging::IOReturnName(stopKr));
+            ASFW_LOG_ERROR(Audio, "ASFWAudioDriver: StopAudioStreaming failed in Stop(): 0x%x (%{public}s)", stopKr, ASFW::Logging::IOReturnName(stopKr));
         }
         (void)nub->RegisterTxPreparationAction(nullptr);
         (void)nub->RegisterZtsAnchorAction(nullptr);

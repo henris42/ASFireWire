@@ -81,21 +81,21 @@ void FetchAgent::Clear(bool cancelTimers) noexcept {
 
 bool FetchAgent::Submit(SBP2CommandORB* orb) noexcept {
     if (!bound_) {
-        ASFW_LOG(Async, "FetchAgent::Submit: not bound, rejecting");
+        ASFW_LOG_WARNING(Async, "FetchAgent::Submit: not bound, rejecting");
         return false;
     }
     if (orb == nullptr || !orb->IsValid() || orb->IsAppended()) {
-        ASFW_LOG(Async, "FetchAgent::Submit: invalid ORB (null=%d valid=%d appended=%d)",
-                 orb == nullptr,
-                 orb != nullptr && orb->IsValid(),
-                 orb != nullptr && orb->IsAppended());
+        ASFW_LOG_WARNING(Async, "FetchAgent::Submit: invalid ORB (null=%d valid=%d appended=%d)",
+                         orb == nullptr,
+                         orb != nullptr && orb->IsValid(),
+                         orb != nullptr && orb->IsAppended());
         return false;
     }
 
     const kern_return_t prepareKr =
         orb->PrepareForExecution(LocalBusNodeID(), TargetSpeed(), MaxPayloadLog());
     if (prepareKr != kIOReturnSuccess) {
-        ASFW_LOG(Async, "FetchAgent::Submit: PrepareForExecution failed: 0x%08x", prepareKr);
+        ASFW_LOG_ERROR(Async, "FetchAgent::Submit: PrepareForExecution failed: 0x%08x", prepareKr);
         return false;
     }
 
@@ -157,7 +157,7 @@ bool FetchAgent::AppendImmediate(SBP2CommandORB* orb) noexcept {
         });
 
     if (!fetchAgentWriteHandle_) {
-        ASFW_LOG(Async, "FetchAgent::AppendImmediate: WriteBlock failed");
+        ASFW_LOG_ERROR(Async, "FetchAgent::AppendImmediate: WriteBlock failed");
         fetchAgentWriteInUse_ = false;
         activeFetchAgentORB_ = nullptr;
         FailORB(orb, -1, Wire::SBPStatus::kUnspecifiedError);
@@ -181,8 +181,8 @@ void FetchAgent::OnFetchAgentWriteComplete(uint16_t expectedGeneration, uint32_t
     fetchAgentWriteHandle_ = {};
 
     if (status != Async::AsyncStatus::kSuccess) {
-        ASFW_LOG(Async, "FetchAgent: ORB_POINTER write failed status=%{public}s",
-                 ASFW::Async::ToString(status));
+        ASFW_LOG_ERROR(Async, "FetchAgent: ORB_POINTER write failed status=%{public}s",
+                       ASFW::Async::ToString(status));
         if (activeFetchAgentORB_ != nullptr) {
             uint32_t retries = activeFetchAgentORB_->GetFetchAgentWriteRetries();
             if (retries > 0) {
@@ -274,10 +274,10 @@ bool FetchAgent::OnStatusBlock(const Wire::StatusBlock& block, uint32_t length) 
     // The deferred callback is safe against teardown: CommandExecutor's
     // completion lambda guards on its own lifetime token and active-ORB match.
     if (block.DeadBit() != 0) {
-        ASFW_LOG(Async,
-                 "FetchAgent::OnStatusBlock: agent DEAD (resp=%u sbp=0x%02x) — reset, "
-                 "completion deferred",
-                 block.Response(), block.sbpStatus);
+        ASFW_LOG_WARNING(Async,
+                         "FetchAgent::OnStatusBlock: agent DEAD (resp=%u sbp=0x%02x) — reset, "
+                         "completion deferred",
+                         block.Response(), block.sbpStatus);
         const uint8_t sbpStatus = block.sbpStatus;
         ResetNoWait([cb, sbpStatus]() {
             if (cb) {
@@ -324,7 +324,7 @@ void FetchAgent::Reset(std::function<void(int)> callback) noexcept {
         });
 
     if (!agentResetWriteHandle_) {
-        ASFW_LOG(Async, "FetchAgent::Reset: WriteQuad failed");
+        ASFW_LOG_ERROR(Async, "FetchAgent::Reset: WriteQuad failed");
         agentResetInProgress_ = false;
         if (agentResetCallback_) {
             auto cb = std::move(agentResetCallback_);
@@ -358,7 +358,7 @@ void FetchAgent::ResetNoWait(std::function<void()> onComplete) noexcept {
             }
         });
     if (!handle) {
-        ASFW_LOG(Async, "FetchAgent: AGENT_RESET (no-wait) WriteQuad submit FAILED");
+        ASFW_LOG_ERROR(Async, "FetchAgent: AGENT_RESET (no-wait) WriteQuad submit FAILED");
         if (onComplete) {
             onComplete();
         }
@@ -418,8 +418,8 @@ void FetchAgent::StartORBTimeout(SBP2CommandORB* orb) noexcept {
             // The agent is likely wedged mid-fetch (or dead) — revive it so the
             // NEXT command's ORB_POINTER is honored. Linux aborts timed-out
             // commands the same way (sbp2_scsi_abort → agent reset).
-            ASFW_LOG(Async, "FetchAgent: ORB timeout%{public}s — agent reset before failing",
-                     writeStuck ? " (ORB_POINTER write never completed)" : "");
+            ASFW_LOG_WARNING(Async, "FetchAgent: ORB timeout%{public}s — agent reset before failing",
+                             writeStuck ? " (ORB_POINTER write never completed)" : "");
             if (writeStuck) {
                 // Free the write slot so the next ORB can go out, and retire
                 // the stuck write's tag: its kAborted completion is posted

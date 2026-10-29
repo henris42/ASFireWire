@@ -67,8 +67,8 @@ kern_return_t ASFWClockSourceControl::HandleChangeSelectedValues(
     uint32_t confirmed = 0;
     const kern_return_t status = ivars->ownerDriver->ApplyDeviceClockSource(in_control_values[0], &confirmed);
     if (status != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "[ClockSource] HAL set %u failed kr=0x%x (%{public}s)", in_control_values[0], status,
-                 ASFW::Logging::IOReturnName(status));
+        ASFW_LOG_ERROR(Audio, "[ClockSource] HAL set %u failed kr=0x%x (%{public}s)", in_control_values[0], status,
+                       ASFW::Logging::IOReturnName(status));
         return status;
     }
     // The device's answer, which is what the selector must show.

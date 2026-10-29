@@ -234,8 +234,8 @@ std::optional<IOReturn> SessionScheduler::RestartRefusal(DuplexRestartReason rea
 
     const SessionSnapshot now = Snapshot();
     if (observedRun != 0 && (observedRun != now.run || now.state != SessionState::Running)) {
-        ASFW_LOG(Audio, "[Session] stale restart dropped GUID=%llx reason=%u observedRun=%llu run=%llu",
-                 guid_, static_cast<unsigned>(reason), observedRun, now.run);
+        ASFW_LOG_DEBUG(Audio, "[Session] stale restart dropped GUID=%llx reason=%u observedRun=%llu run=%llu",
+                       guid_, static_cast<unsigned>(reason), observedRun, now.run);
         return kIOReturnAborted;
     }
     if (IsRuntimeFault(reason) && IsReconciling()) {
@@ -680,12 +680,12 @@ IOReturn SessionScheduler::Submit(Edit&& edit, AudioClockConfig* targetOut, Wait
         IOLockUnlock(lock_);
 
         const uint64_t reconcileBegin = UptimeMilliseconds();
-        ASFW_LOG(Audio, "[StopTrace] owner=session guid=%016llx ticket=%llu phase=reconcile-begin attached=%u restart=%u clockDirty=%u",
-                 guid_, covering, snapshot.halAttached ? 1U : 0U,
-                 snapshot.restart ? 1U : 0U, snapshot.clockDirty ? 1U : 0U);
+        ASFW_LOG_DEBUG(Audio, "[StopTrace] owner=session guid=%016llx ticket=%llu phase=reconcile-begin attached=%u restart=%u clockDirty=%u",
+                       guid_, covering, snapshot.halAttached ? 1U : 0U,
+                       snapshot.restart ? 1U : 0U, snapshot.clockDirty ? 1U : 0U);
         const IOReturn status = Reconcile(snapshot);
-        ASFW_LOG(Audio, "[StopTrace] owner=session guid=%016llx ticket=%llu phase=reconcile-end kr=0x%x (%{public}s) elapsedMs=%llu",
-                 guid_, covering, status, ASFW::Logging::IOReturnName(status), UptimeMilliseconds() - reconcileBegin);
+        ASFW_LOG_DEBUG(Audio, "[StopTrace] owner=session guid=%016llx ticket=%llu phase=reconcile-end kr=0x%x (%{public}s) elapsedMs=%llu",
+                       guid_, covering, status, ASFW::Logging::IOReturnName(status), UptimeMilliseconds() - reconcileBegin);
 
         IOLockLock(lock_);
         // A rejected clock request must not survive as a future start target.
@@ -870,10 +870,10 @@ IOReturn SessionScheduler::StartStreams(const Wanted& wanted, const Discovery::D
     } else if (IsSupportedClockForRecord(record, actual.appliedClock, protocol.get())) {
         clock = actual.appliedClock;
     }
-    ASFW_LOG(Audio,
-             "[SessionClock] start GUID=%llx requested=%u previouslyApplied=%u selected=%u",
-             guid_, wanted.clock.sampleRateHz, actual.appliedClock.sampleRateHz,
-             clock.sampleRateHz);
+    ASFW_LOG_DEBUG(Audio,
+                   "[SessionClock] start GUID=%llx requested=%u previouslyApplied=%u selected=%u",
+                   guid_, wanted.clock.sampleRateHz, actual.appliedClock.sampleRateHz,
+                   clock.sampleRateHz);
     const DuplexRestartReason reason = wanted.restart     ? wanted.restartReason
                                        : wanted.clockDirty ? wanted.clockReason
                                                            : DuplexRestartReason::kInitialStart;

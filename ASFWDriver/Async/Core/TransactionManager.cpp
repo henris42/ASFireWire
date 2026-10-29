@@ -126,37 +126,37 @@ Transaction* TransactionManager::FindByMatchKey(const MatchKey& key) noexcept {
     }
 
     if (txn->generation() != key.generation) {
-        ASFW_LOG_V1(Async,
-                    "FindByMatchKey: generation mismatch "
-                    "(stored=0x%04x response=0x%04x tLabel=%u node=0x%04x)",
-                    txn->generation().value,
-                    key.generation.value,
-                    key.label.value,
-                    key.node.value);
+        ASFW_LOG_DEBUG(Async,
+                       "FindByMatchKey: generation mismatch "
+                       "(stored=0x%04x response=0x%04x tLabel=%u node=0x%04x)",
+                       txn->generation().value,
+                       key.generation.value,
+                       key.label.value,
+                       key.node.value);
         IOLockUnlock(lock_);
         return nullptr;  // Stale transaction (bus reset or wrapped label reuse)
     }
 
     if (!NodeIDsEquivalent(txn->nodeID(), key.node)) {
-        ASFW_LOG_V1(Async,
-                    "FindByMatchKey: node mismatch "
-                    "(stored=0x%04x response=0x%04x tLabel=%u gen=0x%04x)",
-                    txn->nodeID().value,
-                    key.node.value,
-                    key.label.value,
-                    key.generation.value);
+        ASFW_LOG_DEBUG(Async,
+                       "FindByMatchKey: node mismatch "
+                       "(stored=0x%04x response=0x%04x tLabel=%u gen=0x%04x)",
+                       txn->nodeID().value,
+                       key.node.value,
+                       key.label.value,
+                       key.generation.value);
         IOLockUnlock(lock_);
         return nullptr;  // Wrong responder
     }
 
     if (txn->nodeID() != key.node) {
-        ASFW_LOG_V1(Async,
-                    "FindByMatchKey: accepting AR response with node bus-bit mismatch "
-                    "(stored=0x%04x response=0x%04x tLabel=%u gen=%u)",
-                    txn->nodeID().value,
-                    key.node.value,
-                    key.label.value,
-                    key.generation.value);
+        ASFW_LOG_DEBUG(Async,
+                       "FindByMatchKey: accepting AR response with node bus-bit mismatch "
+                       "(stored=0x%04x response=0x%04x tLabel=%u gen=%u)",
+                       txn->nodeID().value,
+                       key.node.value,
+                       key.label.value,
+                       key.generation.value);
     }
 
     IOLockUnlock(lock_);

@@ -262,7 +262,7 @@ SelfIDCapture::Decode(uint32_t selfIDCountReg, HardwareInterface& hw) const {
 
     const uint64_t addr = map_->GetAddress();
     if (addr == 0) {
-        ASFW_LOG(Hardware, "Self-ID map address is NULL - buffer mapping failed");
+        ASFW_LOG_ERROR(Hardware, "Self-ID map address is NULL - buffer mapping failed");
         return std::unexpected(
             MakeDecodeError(DecodeErrorCode::NullMapAddress, selfIDCountReg, generation));
     }
@@ -303,8 +303,8 @@ SelfIDCapture::Decode(uint32_t selfIDCountReg, HardwareInterface& hw) const {
     const auto rawQuadlets = std::span<const uint32_t>(base, cappedQuads);
     auto normalized = NormalizeSelfIDQuadlets(rawQuadlets, selfIDCountReg, generation);
     if (!normalized) {
-        ASFW_LOG(Hardware, "Self-ID normalization failed: %{public}s at quadlet=%zu",
-                 DecodeErrorCodeString(normalized.error().code), normalized.error().quadletIndex);
+        ASFW_LOG_ERROR(Hardware, "Self-ID normalization failed: %{public}s at quadlet=%zu",
+                       DecodeErrorCodeString(normalized.error().code), normalized.error().quadletIndex);
         return std::unexpected(normalized.error());
     }
 

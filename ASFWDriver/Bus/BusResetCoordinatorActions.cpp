@@ -343,9 +343,9 @@ void BusResetCoordinator::RequestSoftwareReset(ResetRequest request) {
         }
         if (++consecutiveRecoveryResets_ > kMaxConsecutiveRecoveryResets) {
             recoveryExhausted_ = true;
-            ASFW_LOG(BusReset,
-                     "❌ %u recovery resets without a topology (last: %{public}s); giving up",
-                     kMaxConsecutiveRecoveryResets, request.reason.c_str());
+            ASFW_LOG_ERROR(BusReset,
+                           "❌ %u recovery resets without a topology (last: %{public}s); giving up",
+                           kMaxConsecutiveRecoveryResets, request.reason.c_str());
             if (fatalCallback_) {
                 fatalCallback_("bus reset recovery exhausted");
             }

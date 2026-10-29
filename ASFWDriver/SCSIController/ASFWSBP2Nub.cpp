@@ -21,7 +21,7 @@ kern_return_t IMPL(ASFWSBP2Nub, Start)
     ASFW_LOG(Controller, "[SCSIHBA] ASFWSBP2Nub::Start — registering discovered unit");
     ret = RegisterService();
     if (ret != kIOReturnSuccess) {
-        ASFW_LOG(Controller, "[SCSIHBA] ASFWSBP2Nub RegisterService failed: 0x%x", ret);
+        ASFW_LOG_ERROR(Controller, "[SCSIHBA] ASFWSBP2Nub RegisterService failed: 0x%x", ret);
     }
     return ret;
 }

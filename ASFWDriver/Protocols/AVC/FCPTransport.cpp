@@ -301,7 +301,7 @@ void FCPTransport::OnWriteComplete(WriteAttempt attempt, Async::AsyncStatus stat
         return;
     }
     if (status != Async::AsyncStatus::kSuccess) {
-        ASFW_LOG_V1(FCP, "FCPTransport: Async write failed: %{public}s", ASFW::Async::ToString(status));
+        ASFW_LOG_ERROR(FCP, "FCPTransport: Async write failed: %{public}s", ASFW::Async::ToString(status));
         if (active_->txn.idempotent && active_->txn.retriesLeft > 0) {
             IOLockUnlock(lock_);
             Replay();

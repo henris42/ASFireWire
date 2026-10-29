@@ -186,12 +186,12 @@ kern_return_t IMPL(ASFWSCSIController, Start)
     // returns, controller start wedges (!registered, busy climbing, teardown stuck).
     kern_return_t ret = IODispatchQueue::Create("AuxiliaryQueue", 0, 0, &ivars->auxQueue);
     if (ret != kIOReturnSuccess || ivars->auxQueue == nullptr) {
-        ASFW_LOG(Controller, "[SCSIHBA] AuxiliaryQueue create failed: 0x%x", ret);
+        ASFW_LOG_ERROR(Controller, "[SCSIHBA] AuxiliaryQueue create failed: 0x%x", ret);
         return ret;
     }
     ret = SetDispatchQueue("AuxiliaryQueue", ivars->auxQueue);
     if (ret != kIOReturnSuccess) {
-        ASFW_LOG(Controller, "[SCSIHBA] SetDispatchQueue(AuxiliaryQueue) failed: 0x%x", ret);
+        ASFW_LOG_ERROR(Controller, "[SCSIHBA] SetDispatchQueue(AuxiliaryQueue) failed: 0x%x", ret);
         return ret;
     }
     // Login-edge work (UserCreateTargetForID/UserDestroyTargetForID) runs on its
@@ -201,12 +201,12 @@ kern_return_t IMPL(ASFWSCSIController, Start)
     ret = IODispatchQueue::Create("ASFWSCSIController-TargetLifecycle", 0, 0,
                                   &ivars->lifecycleQueue);
     if (ret != kIOReturnSuccess || ivars->lifecycleQueue == nullptr) {
-        ASFW_LOG(Controller, "[SCSIHBA] lifecycle queue create failed: 0x%x", ret);
+        ASFW_LOG_ERROR(Controller, "[SCSIHBA] lifecycle queue create failed: 0x%x", ret);
         return ret;
     }
     ret = Start(provider, SUPERDISPATCH);
     if (ret != kIOReturnSuccess) {
-        ASFW_LOG(Controller, "[SCSIHBA] super::Start failed: 0x%x", ret);
+        ASFW_LOG_ERROR(Controller, "[SCSIHBA] super::Start failed: 0x%x", ret);
         return ret;
     }
 
@@ -333,7 +333,7 @@ kern_return_t IMPL(ASFWSCSIController, UserInitializeController)
     kern_return_t ret = UserReportHBAConstraints(constraints);
     constraints->release();
     if (ret != kIOReturnSuccess) {
-        ASFW_LOG(Controller, "[SCSIHBA] UserReportHBAConstraints failed: 0x%x", ret);
+        ASFW_LOG_ERROR(Controller, "[SCSIHBA] UserReportHBAConstraints failed: 0x%x", ret);
         return ret;
     }
     return kIOReturnSuccess;

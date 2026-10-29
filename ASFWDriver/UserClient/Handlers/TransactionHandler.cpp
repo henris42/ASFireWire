@@ -178,8 +178,8 @@ kern_return_t TransactionHandler::AsyncWrite(IOUserClientMethodArguments* args,
     const uint32_t length = static_cast<uint32_t>(args->scalarInput[3] & 0xFFFFFFFFu);
 
     if (length != actualPayloadSize) {
-        ASFW_LOG(UserClient, "AsyncWrite: Length mismatch (specified=%u actual=%u)", length,
-                 actualPayloadSize);
+        ASFW_LOG_WARNING(UserClient, "AsyncWrite: Length mismatch (specified=%u actual=%u)", length,
+                         actualPayloadSize);
         return kIOReturnBadArgument;
     }
 
@@ -319,8 +319,8 @@ kern_return_t TransactionHandler::AsyncBlockWrite(IOUserClientMethodArguments* a
     const uint32_t length = static_cast<uint32_t>(args->scalarInput[3] & 0xFFFFFFFFu);
 
     if (length != actualPayloadSize) {
-        ASFW_LOG(UserClient, "AsyncBlockWrite: Length mismatch (specified=%u actual=%u)", length,
-                 actualPayloadSize);
+        ASFW_LOG_WARNING(UserClient, "AsyncBlockWrite: Length mismatch (specified=%u actual=%u)", length,
+                         actualPayloadSize);
         return kIOReturnBadArgument;
     }
 
@@ -497,8 +497,8 @@ kern_return_t TransactionHandler::AsyncCompareSwap(IOUserClientMethodArguments* 
     const uint32_t expectedOperandSize = size * 2;
     const uint32_t actualOperandSize = static_cast<uint32_t>(operandData->getLength());
     if (actualOperandSize != expectedOperandSize) {
-        ASFW_LOG(UserClient, "AsyncCompareSwap: Operand size mismatch (expected=%u actual=%u)",
-                 expectedOperandSize, actualOperandSize);
+        ASFW_LOG_WARNING(UserClient, "AsyncCompareSwap: Operand size mismatch (expected=%u actual=%u)",
+                         expectedOperandSize, actualOperandSize);
         return kIOReturnBadArgument;
     }
 

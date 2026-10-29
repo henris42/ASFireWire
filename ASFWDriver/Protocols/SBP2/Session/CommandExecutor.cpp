@@ -243,14 +243,14 @@ bool CommandExecutor::SubmitCommand(const SCSI::CommandRequest& request,
                                      // recoverable via a bus reset, so escalate — reconnect/
                                      // re-login runs via the normal reset flow.
                                      if (lastError_ != 0 && busResetRequester_) {
-                                         ASFW_LOG(Async,
-                                                  "CommandExecutor: LUN reset failed (%d) — "
-                                                  "escalating to bus reset", lastError_);
+                                         ASFW_LOG_WARNING(Async,
+                                                          "CommandExecutor: LUN reset failed (%d) — "
+                                                          "escalating to bus reset", lastError_);
                                          busResetRequester_();
                                      }
                                      NotifyResultCallback();
                                  })) {
-            ASFW_LOG(Async, "CommandExecutor: transport failure — LUN reset before completing task");
+            ASFW_LOG_WARNING(Async, "CommandExecutor: transport failure — LUN reset before completing task");
             return;
         }
         NotifyResultCallback();

@@ -158,7 +158,7 @@ BusManager* ControllerCore::GetBusManager() const { return deps_.busManager.get(
 // Phase 2: Interface facade accessors
 Async::IFireWireBus& ControllerCore::Bus() {
     if (!busImpl_) {
-        ASFW_LOG(Controller, "❌ CRITICAL: Bus() called before facade initialized");
+        ASFW_LOG_ERROR(Controller, "❌ CRITICAL: Bus() called before facade initialized");
         __builtin_trap();
     }
     return *busImpl_;
@@ -166,7 +166,7 @@ Async::IFireWireBus& ControllerCore::Bus() {
 
 Async::IFireWireBus& ControllerCore::Bus() const {
     if (!busImpl_) {
-        ASFW_LOG(Controller, "❌ CRITICAL: Bus() called before facade initialized");
+        ASFW_LOG_ERROR(Controller, "❌ CRITICAL: Bus() called before facade initialized");
         __builtin_trap();
     }
     return *busImpl_;
@@ -179,7 +179,7 @@ Shared::IDMAMemory& ControllerCore::DMA() {
             dmaImpl_ = std::make_unique<Async::DMAMemoryImpl>(*dmaManager);
             ASFW_LOG(Controller, "✅ DMAMemoryImpl facade created");
         } else {
-            ASFW_LOG(Controller, "❌ CRITICAL: DMA() called before DMAMemoryManager initialized");
+            ASFW_LOG_ERROR(Controller, "❌ CRITICAL: DMA() called before DMAMemoryManager initialized");
             __builtin_trap();
         }
     }
@@ -188,7 +188,7 @@ Shared::IDMAMemory& ControllerCore::DMA() {
 
 Async::IAsyncControllerPort& ControllerCore::AsyncSubsystem() const {
     if (!deps_.asyncController) {
-        ASFW_LOG(Controller, "❌ CRITICAL: AsyncSubsystem() called with null dependency");
+        ASFW_LOG_ERROR(Controller, "❌ CRITICAL: AsyncSubsystem() called with null dependency");
         __builtin_trap();
     }
     return *deps_.asyncController;

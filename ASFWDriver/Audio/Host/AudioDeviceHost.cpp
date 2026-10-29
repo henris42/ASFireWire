@@ -210,12 +210,12 @@ void AudioDeviceHost::Record(uint64_t guid, const char* family, HostEvent event,
     if (e < counters_.size() && o < counters_[e].size()) {
         counters_[e][o].fetch_add(1, std::memory_order_relaxed);
     }
-    ASFW_LOG(Audio,
-             "[AudioHost] guid=%016llx family=%{public}s event=%{public}s outcome=%{public}s "
-             "kr=0x%08x (%{public}s) run=%llu%{public}s%{public}s",
-             guid, family ? family : kNoFamily, ToString(event), ToString(outcome),
-             status, ASFW::Logging::IOReturnName(status), run,
-             detail ? " " : "", detail ? detail : "");
+    ASFW_LOG_DEBUG(Audio,
+                   "[AudioHost] guid=%016llx family=%{public}s event=%{public}s outcome=%{public}s "
+                   "kr=0x%08x (%{public}s) run=%llu%{public}s%{public}s",
+                   guid, family ? family : kNoFamily, ToString(event), ToString(outcome),
+                   status, ASFW::Logging::IOReturnName(status), run,
+                   detail ? " " : "", detail ? detail : "");
 }
 
 uint64_t AudioDeviceHost::OutcomeCount(HostEvent event, HostOutcome outcome) const noexcept {
@@ -286,8 +286,8 @@ void AudioDeviceHost::ScheduleDescribeRetry(uint64_t guid, IOReturn status) noex
         IOLockUnlock(lock_);
     }
     if (attempt > kDescribeRetries) {
-        ASFW_LOG(Audio, "[AudioHost] guid=%016llx describe refused %u times (kr=0x%x); giving up until the next generation",
-                 guid, attempt - 1, status);
+        ASFW_LOG_ERROR(Audio, "[AudioHost] guid=%016llx describe refused %u times (kr=0x%x); giving up until the next generation",
+                       guid, attempt - 1, status);
         return;
     }
     ASFW_LOG(Audio, "[AudioHost] guid=%016llx describe refused (kr=0x%x); retry %u/%u in %u ms",
