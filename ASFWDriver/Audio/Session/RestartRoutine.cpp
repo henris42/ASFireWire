@@ -274,16 +274,23 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
     if (TeardownRequested()) {
         return aborted("Configure");
     }
-    auto prepared = family.Configure(channels, clock);
-    if (!prepared && prepared.error() == kIOReturnTimeout && family.RetriesConfigureOnTimeout() &&
-        stillWanted() && !TeardownRequested()) {
-        // A register access to the device timed out while other units' streams
-        // were coming up on the bus (three 828mkIIs, 2026-10-28: the third
-        // start lost one read 120-200 ms after the other two). One more try
-        // before the start fails.
-        ASFW_LOG(Audio, "[Session] Configure timed out; retrying once GUID=%llx", guid);
-        prepared = family.Configure(channels, clock);
-    }
+    // A register access to the device timed out while other units' streams
+    // were coming up on the bus (three 828mkIIs, 2026-10-28: two units stayed
+    // silent for a second right after a third started streaming, and the start
+    // failed at Configure in one run and at ArmDeviceTx in the next). One more
+    // try of the stage before the start fails, for families whose stages are
+    // idempotent register accesses.
+    const bool retryStages = family.RetriesRegisterStagesOnTimeout();
+    const auto retryOnTimeout = [&](const char* step, auto&& stage) {
+        auto outcome = stage();
+        if (!outcome && outcome.error() == kIOReturnTimeout && retryStages && stillWanted() &&
+            !TeardownRequested()) {
+            ASFW_LOG(Audio, "[Session] %{public}s timed out; retrying once GUID=%llx", step, guid);
+            outcome = stage();
+        }
+        return outcome;
+    };
+    auto prepared = retryOnTimeout("Configure", [&] { return family.Configure(channels, clock); });
     if (!prepared) {
         return rollback(prepared.error(), "Configure");
     }
@@ -574,7 +581,7 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
     if (TeardownRequested()) {
         return aborted("ArmDeviceRx");
     }
-    const auto armedRx = family.ArmDeviceRx();
+    const auto armedRx = retryOnTimeout("ArmDeviceRx", [&] { return family.ArmDeviceRx(); });
     if (!armedRx) {
         return rollback(armedRx.error(), "ArmDeviceRx");
     }
@@ -593,7 +600,7 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
     if (TeardownRequested()) {
         return aborted("ArmDeviceTx");
     }
-    const auto armedTx = family.ArmDeviceTxAndEnable();
+    const auto armedTx = retryOnTimeout("ArmDeviceTx", [&] { return family.ArmDeviceTxAndEnable(); });
     if (!armedTx) {
         return rollback(armedTx.error(), "ArmDeviceTx");
     }
@@ -650,7 +657,7 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
     if (TeardownRequested()) {
         return aborted("Confirm");
     }
-    const auto confirmed = family.Confirm();
+    const auto confirmed = retryOnTimeout("Confirm", [&] { return family.Confirm(); });
     if (!confirmed) {
         return rollback(confirmed.error(), "Confirm");
     }

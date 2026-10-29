@@ -83,6 +83,26 @@ using SchedulerTest = ShapedSchedulerTest<kCmpDevice>;
 using ApogeeTest = ShapedSchedulerTest<kApogeeDevice>;
 using DiceQuietPeriodTest = ShapedSchedulerTest<kDiceDevice>;
 
+// A register-programmed family gets one more try of a start stage that timed
+// out (two 828mkIIs stayed silent for a second while a third started
+// streaming, 2026-10-28, and the start failed at ArmDeviceTx); other families
+// keep their single attempt.
+TEST_F(SchedulerTest, TimedOutArmStageIsRetriedOnlyForRegisterFamilies) {
+    Device().retriesRegisterStages = true;
+    rig.failures["device.program_tx"] = kIOReturnTimeout;
+    ASSERT_EQ(rig.sessions.Attach(rig.guid), kIOReturnSuccess);
+    EXPECT_EQ(Count("D program tx+enable"), 2);
+    EXPECT_TRUE(rig.sessions.IsStreaming(rig.guid));
+    EXPECT_EQ(rig.Stop(), kIOReturnSuccess);
+
+    Device().retriesRegisterStages = false;
+    rig.bus.Trace().Clear();
+    rig.failures["device.program_tx"] = kIOReturnTimeout;
+    EXPECT_EQ(rig.sessions.Attach(rig.guid), kIOReturnTimeout);
+    EXPECT_EQ(Count("D program tx+enable"), 1);
+    EXPECT_FALSE(rig.sessions.IsStreaming(rig.guid));
+}
+
 TEST_F(SchedulerTest, ConfirmationWaitsForProducerTimingAfterBothHostStarts) {
     Device().readinessPolicy = {.requireTransmitTiming = true};
     auto start = std::async(std::launch::async, [&] { return rig.Start(); });

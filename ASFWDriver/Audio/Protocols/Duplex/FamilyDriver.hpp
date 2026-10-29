@@ -83,11 +83,13 @@ public:
     // Families with device settle time after their enable command may raise
     // the shared session delay; absent preserves the resolved profile value.
     [[nodiscard]] virtual std::optional<uint32_t> PostEnableDelayMs() const noexcept { return std::nullopt; }
-    // Whether a Configure that timed out on a register access gets one more
-    // attempt before the start fails. A register-programmed device on a bus
-    // where other units' streams are starting can lose one read (three
-    // 828mkIIs, 2026-10-28); CMP families keep their single attempt.
-    [[nodiscard]] virtual bool RetriesConfigureOnTimeout() const noexcept { return false; }
+    // Whether a start stage that timed out on a register access (Configure,
+    // ArmDeviceRx, ArmDeviceTxAndEnable, Confirm) gets one more attempt before
+    // the start fails. A register-programmed device can stay silent for a
+    // second while other units' streams start (three 828mkIIs, 2026-10-28);
+    // its stages are idempotent register writes and reads. CMP families keep
+    // their single attempt: a repeated connect is not idempotent.
+    [[nodiscard]] virtual bool RetriesRegisterStagesOnTimeout() const noexcept { return false; }
     // Clock and lock state, for the pre-stream clock gate.
     [[nodiscard]] virtual std::expected<DuplexHealthResult, IOReturn> ReadHealth(uint32_t timeoutMs) = 0;
     // Arm the streams the device receives (host playback).

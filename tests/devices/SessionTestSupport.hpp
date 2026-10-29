@@ -328,6 +328,7 @@ public:
     StopPolicy GetStopPolicy() const noexcept override { return stopPolicy; }
     StartReadinessPolicy GetStartReadinessPolicy() const noexcept override { return readinessPolicy; }
     std::optional<uint32_t> PostEnableDelayMs() const noexcept override { return postEnableDelay; }
+    bool RetriesRegisterStagesOnTimeout() const noexcept override { return retriesRegisterStages; }
 
     std::expected<DuplexPrepareResult, IOReturn> Configure(const AudioDuplexChannels& channels,
                                                            const AudioClockConfig& clock) override {
@@ -419,6 +420,7 @@ public:
     std::shared_ptr<const std::vector<ASFW::Audio::Runtime::RateFormation>> formations;
     std::shared_ptr<const std::vector<ASFW::Audio::Runtime::RateFormation>> RateFormations() const override { return formations; }
     std::optional<uint32_t> postEnableDelay{};
+    bool retriesRegisterStages{false};
 
 private:
     static std::string Channels(const AudioDuplexChannels& c) {
