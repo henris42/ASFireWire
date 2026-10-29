@@ -169,6 +169,10 @@ public:
     void DumpDescriptorRing(uint32_t startPacket, uint32_t numPackets) const noexcept;
 
     [[nodiscard]] const Counters& RTCounters() const noexcept { return counters_; }
+
+    /// At stop, after a stream that had abnormal completions: the descriptor
+    /// and payload slots they hit most, so a fault tied to a slot shows.
+    void LogAbnormalSummary(uint8_t contextIndex) const noexcept;
     [[nodiscard]] uint32_t LastHwTimestamp() const noexcept { return lastHwTimestamp_; }
 
     // Expose slab for audio injection.
@@ -215,7 +219,23 @@ private:
     uint64_t cycleWindowCompleted_{0};
     uint64_t cycleWindowElapsed_{0};
     uint64_t cycleWindowLost_{0};
-    void NoteCompletion(uint16_t hwTimestamp, uint32_t statusWord) noexcept;
+    uint64_t cycleWindowAbnormal_{0};
+    /// Counts one completion; true when it retired with an event other than
+    /// ack_complete.
+    [[nodiscard]] bool NoteCompletion(uint16_t hwTimestamp, uint32_t statusWord) noexcept;
+
+    // Completions with an event other than ack_complete, per stream. b167: in
+    // a few percent of streams about two packets per ring lap retired with
+    // evt_data_read, and the 828mkII played a click. Which descriptor and
+    // payload slots they hit, and how many were logged in detail.
+    static constexpr uint32_t kAbnormalPayloadSlotsTracked = 2048;
+    std::array<uint16_t, Layout::kNumPackets> abnormalPerDescriptorSlot_{};
+    std::array<uint16_t, kAbnormalPayloadSlotsTracked> abnormalPerPayloadSlot_{};
+    uint32_t abnormalPayloadSlots_{0};
+    uint64_t abnormalSeen_{0};
+    uint8_t contextIndex_{0};
+    void NoteAbnormalCompletion(uint64_t absIdx, uint32_t slot, uint32_t statusWord, uint32_t numSlots,
+                                uint32_t strideBytes, const TxPayloadDmaMap& payloadDmaMap) noexcept;
 
     Counters counters_{};
 };

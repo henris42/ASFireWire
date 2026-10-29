@@ -3,8 +3,10 @@
 #include "IsochTxDmaRing.hpp"
 
 #include "../../Common/TimingUtils.hpp"
+#include "../../Hardware/OHCIEventCodes.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <DriverKit/IOLib.h>
 
 namespace ASFW::Isoch::Tx {
@@ -60,6 +62,11 @@ void IsochTxDmaRing::ResetForStart() noexcept {
     cycleWindowCompleted_ = 0;
     cycleWindowElapsed_ = 0;
     cycleWindowLost_ = 0;
+    cycleWindowAbnormal_ = 0;
+    abnormalPerDescriptorSlot_.fill(0);
+    abnormalPerPayloadSlot_.fill(0);
+    abnormalPayloadSlots_ = 0;
+    abnormalSeen_ = 0;
     counters_.completedPackets.store(0, std::memory_order_relaxed);
     counters_.lostCycles.store(0, std::memory_order_relaxed);
     counters_.abnormalCompletions.store(0, std::memory_order_relaxed);
@@ -81,7 +88,7 @@ void IsochTxDmaRing::ResetForStart() noexcept {
 // 828mkII: the transmit side exposed frames at ~57 % of real time while the
 // receive side ran at 100 %, and the b104 wire capture showed our packets in
 // cycles 174, 177, 181 with the device's in every cycle.
-void IsochTxDmaRing::NoteCompletion(uint16_t hwTimestamp, uint32_t statusWord) noexcept {
+bool IsochTxDmaRing::NoteCompletion(uint16_t hwTimestamp, uint32_t statusWord) noexcept {
     const uint32_t cycle = hwTimestamp & 0x1FFFu;
     if (lastCompletionCycle_ != 0xFFFFFFFFu) {
         const uint32_t delta = (cycle + 8000u - lastCompletionCycle_) % 8000u;
@@ -96,18 +103,22 @@ void IsochTxDmaRing::NoteCompletion(uint16_t hwTimestamp, uint32_t statusWord) n
     counters_.completedPackets.fetch_add(1, std::memory_order_relaxed);
     // xferStatus [4:0] is the event code; 0x11 is ack_complete.
     const uint32_t event = (statusWord >> 16) & 0x1Fu;
-    if (event != 0x11u) {
+    const bool abnormal = event != 0x11u;
+    if (abnormal) {
+        ++cycleWindowAbnormal_;
         counters_.abnormalCompletions.fetch_add(1, std::memory_order_relaxed);
         counters_.lastAbnormalStatus.store(statusWord >> 16, std::memory_order_relaxed);
     }
     // About every five seconds of transmission.
     if (cycleWindowCompleted_ >= 40000) {
         ASFW_LOG(Isoch,
-                 "[TxCycles] %llu packets over %llu cycles, %llu lost (%llu%%); totals completed=%llu lost=%llu abnormal=%llu last=0x%04x",
+                 "[TxCycles] ctx=%u %llu packets over %llu cycles, %llu lost (%llu%%), %llu abnormal; totals completed=%llu lost=%llu abnormal=%llu last=0x%04x",
+                 contextIndex_,
                  static_cast<unsigned long long>(cycleWindowCompleted_),
                  static_cast<unsigned long long>(cycleWindowElapsed_),
                  static_cast<unsigned long long>(cycleWindowLost_),
                  static_cast<unsigned long long>(cycleWindowElapsed_ ? cycleWindowLost_ * 100 / cycleWindowElapsed_ : 0),
+                 static_cast<unsigned long long>(cycleWindowAbnormal_),
                  static_cast<unsigned long long>(counters_.completedPackets.load(std::memory_order_relaxed)),
                  static_cast<unsigned long long>(counters_.lostCycles.load(std::memory_order_relaxed)),
                  static_cast<unsigned long long>(counters_.abnormalCompletions.load(std::memory_order_relaxed)),
@@ -115,7 +126,101 @@ void IsochTxDmaRing::NoteCompletion(uint16_t hwTimestamp, uint32_t statusWord) n
         cycleWindowCompleted_ = 0;
         cycleWindowElapsed_ = 0;
         cycleWindowLost_ = 0;
+        cycleWindowAbnormal_ = 0;
     }
+    return abnormal;
+}
+
+// What the controller executed for a packet that retired abnormally: its two
+// payload descriptors as they stand until the refill reuses the slot, and
+// where they lie in the payload slab (segment, page, prepare window). The
+// first ones of a stream in detail, then every 256th; every one is counted per
+// slot for LogAbnormalSummary.
+void IsochTxDmaRing::NoteAbnormalCompletion(const uint64_t absIdx, const uint32_t slot,
+                                            const uint32_t statusWord, const uint32_t numSlots,
+                                            const uint32_t strideBytes,
+                                            const TxPayloadDmaMap& payloadDmaMap) noexcept {
+    constexpr uint64_t kDetailedFirst = 16;
+    constexpr uint64_t kDetailedEvery = 256;
+    constexpr uint32_t kPacketsPerDescriptorPage = Layout::kDescriptorsPerPage / Layout::kBlocksPerPacket;
+    constexpr uint64_t kWindowBytes =
+        uint64_t{Layout::kPayloadPrepareWindowPages} * Driver::HardwareInterface::kDMAPageGranule;
+    constexpr uint64_t kPage = Driver::HardwareInterface::kDMAPageGranule;
+
+    const uint32_t payloadSlot = numSlots != 0 ? static_cast<uint32_t>(absIdx % numSlots) : 0;
+    if (slot < abnormalPerDescriptorSlot_.size() && abnormalPerDescriptorSlot_[slot] != UINT16_MAX) {
+        ++abnormalPerDescriptorSlot_[slot];
+    }
+    abnormalPayloadSlots_ = std::min(numSlots, kAbnormalPayloadSlotsTracked);
+    if (payloadSlot < abnormalPayloadSlots_ && abnormalPerPayloadSlot_[payloadSlot] != UINT16_MAX) {
+        ++abnormalPerPayloadSlot_[payloadSlot];
+    }
+    const uint64_t seen = ++abnormalSeen_;
+    if (seen > kDetailedFirst && (seen % kDetailedEvery) != 0) {
+        return;
+    }
+
+    const auto* om = slab_.GetDescriptorPtr(slot * Layout::kBlocksPerPacket + Layout::kFirstPayloadBlock);
+    const auto* ol = slab_.GetDescriptorPtr(slot * Layout::kBlocksPerPacket + Layout::kCompletionBlock);
+    const uint32_t omLength = om->control & 0xFFFFu;
+    const uint32_t olLength = ol->control & 0xFFFFu;
+    const uint64_t slabOffset = uint64_t{payloadSlot} * strideBytes;
+    const auto crossesPage = [](uint32_t address, uint32_t length) noexcept {
+        return length != 0 && (address % kPage) + length > kPage;
+    };
+    const auto event = static_cast<Async::OHCIEventCode>((statusWord >> 16) & 0x1Fu);
+    ASFW_LOG(Isoch,
+             "[TxAbnormal] ctx=%u n=%llu abs=%llu slot=%u descPage=%u+%u %{public}s status=0x%04x cycle=%u "
+             "pslot=%u slabOff=%llu page=%llu+%llu window=%llu | OM 0x%08x+%u seg=%zu x4k=%u | "
+             "OL 0x%08x+%u seg=%zu x4k=%u | segs=%zu",
+             contextIndex_, static_cast<unsigned long long>(seen), static_cast<unsigned long long>(absIdx),
+             slot, slot / kPacketsPerDescriptorPage, slot % kPacketsPerDescriptorPage,
+             Async::ToString(event), statusWord >> 16, statusWord & 0x1FFFu,
+             payloadSlot, static_cast<unsigned long long>(slabOffset),
+             static_cast<unsigned long long>(slabOffset / kPage), static_cast<unsigned long long>(slabOffset % kPage),
+             static_cast<unsigned long long>(slabOffset / kWindowBytes),
+             om->dataAddress, omLength, payloadDmaMap.SegmentIndexContaining(slabOffset),
+             crossesPage(om->dataAddress, omLength) ? 1u : 0u,
+             ol->dataAddress, olLength, payloadDmaMap.SegmentIndexContaining(slabOffset + omLength),
+             crossesPage(ol->dataAddress, olLength) ? 1u : 0u,
+             payloadDmaMap.SegmentCount());
+}
+
+void IsochTxDmaRing::LogAbnormalSummary(const uint8_t contextIndex) const noexcept {
+    if (abnormalSeen_ == 0) {
+        return;
+    }
+    // The eight slots hit most, as "slot:count".
+    const auto top = [](const uint16_t* counts, uint32_t size, char* out, size_t outSize) noexcept {
+        size_t used = 0;
+        out[0] = '\0';
+        std::array<bool, kAbnormalPayloadSlotsTracked> taken{};
+        for (int pick = 0; pick < 8; ++pick) {
+            uint32_t best = size;
+            for (uint32_t i = 0; i < size; ++i) {
+                if (counts[i] != 0 && !taken[i] && (best == size || counts[i] > counts[best])) {
+                    best = i;
+                }
+            }
+            if (best == size) {
+                break;
+            }
+            taken[best] = true;
+            const int written = snprintf(out + used, outSize - used, "%s%u:%u", used ? " " : "", best, counts[best]);
+            if (written < 0 || static_cast<size_t>(written) >= outSize - used) {
+                break;
+            }
+            used += static_cast<size_t>(written);
+        }
+    };
+    char descriptorTop[160];
+    char payloadTop[160];
+    top(abnormalPerDescriptorSlot_.data(), static_cast<uint32_t>(abnormalPerDescriptorSlot_.size()),
+        descriptorTop, sizeof(descriptorTop));
+    top(abnormalPerPayloadSlot_.data(), abnormalPayloadSlots_, payloadTop, sizeof(payloadTop));
+    ASFW_LOG(Isoch, "IT: abnormal slots ctx=%u total=%llu descriptor slot:count of %u: %{public}s | payload slot:count of %u: %{public}s",
+             contextIndex, static_cast<unsigned long long>(abnormalSeen_), Layout::kNumPackets, descriptorTop,
+             abnormalPayloadSlots_, payloadTop);
 }
 
 void IsochTxDmaRing::NoteFirstDataHeader(uint32_t payloadLength, uint32_t q0, uint32_t q1,
@@ -482,6 +587,7 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
 {
     counters_.calls.fetch_add(1, std::memory_order_relaxed);
     RefillOutcome out{};
+    contextIndex_ = contextIndex;
 
     if (!metadataRing || !controlBlock || !payloadBase ||
         !payloadDmaMap.IsValid() ||
@@ -628,7 +734,10 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
             Layout::kCompletionBlock);
         const uint16_t hwTimestamp =
             static_cast<uint16_t>(desc2->statusWord & 0xFFFF);
-        NoteCompletion(hwTimestamp, desc2->statusWord);
+        if (NoteCompletion(hwTimestamp, desc2->statusWord)) {
+            NoteAbnormalCompletion(currentAbsIdx, completedPktSlot, desc2->statusWord, numSlots,
+                                   controlBlock->slotStrideBytes, payloadDmaMap);
+        }
 
         // OHCI OUTPUT_LAST reports sec[2:0]:cycle[12:0] and omits the
         // intra-cycle offset. Reconstruct the packet cycle at offset zero.

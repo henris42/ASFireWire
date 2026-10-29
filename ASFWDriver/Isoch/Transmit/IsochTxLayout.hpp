@@ -38,6 +38,10 @@ struct Layout final {
         IsochDmaGeometry::kTransmitDescriptorPackets;
     static constexpr uint32_t kRingBlocks = kNumPackets * kBlocksPerPacket;
 
+    // The payload slab is prepared for DMA this many pages per IODMACommand:
+    // PrepareForDMA returns at most 32 segments per call (IODMACommand.iig).
+    static constexpr uint32_t kPayloadPrepareWindowPages = 32;
+
     static constexpr uint32_t kDescriptorStride = 16;
     static constexpr uint32_t kDescriptorsPerPageRaw =
         static_cast<uint32_t>(kUsablePerPage / kDescriptorStride);  // 254

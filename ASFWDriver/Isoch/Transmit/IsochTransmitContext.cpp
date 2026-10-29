@@ -13,6 +13,7 @@
 #include "../../Common/TimingUtils.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 
 namespace ASFW::Isoch {
@@ -132,7 +133,8 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
     if (hardware_) {
         uint64_t slabLen = 0;
         payloadSlab->GetLength(&slabLen);
-        constexpr uint64_t kWindowBytes = 32ull * Driver::HardwareInterface::kDMAPageGranule;
+        constexpr uint64_t kWindowBytes =
+            uint64_t{Tx::Layout::kPayloadPrepareWindowPages} * Driver::HardwareInterface::kDMAPageGranule;
         std::vector<Tx::TxPayloadDmaSegment> payloadSegments;
         const auto failWindows = [this](kern_return_t status) {
             for (auto& command : payloadDmaCmds_) {
@@ -194,11 +196,37 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
             return failWindows(kIOReturnInternalError);
         }
 
+        // Runs longer than a page are the only places where one payload
+        // descriptor can read across a 4 KiB boundary; Linux splits every IT
+        // payload at page boundaries (ohci.c queue_iso_transmit). b167: which
+        // runs a stream has, to match evt_data_read completions against them.
+        size_t multiPageRuns = 0;
+        char runList[192] = "";
+        size_t runListUsed = 0;
+        for (size_t i = 0; i < payloadDmaMap_.SegmentCount(); ++i) {
+            const auto* segment = payloadDmaMap_.SegmentAt(i);
+            if (segment->length <= Driver::HardwareInterface::kDMAPageGranule) {
+                continue;
+            }
+            ++multiPageRuns;
+            if (runListUsed + 1 < sizeof(runList)) {
+                const int written = snprintf(runList + runListUsed, sizeof(runList) - runListUsed,
+                                             "%s%zu@%llu+%llu", runListUsed ? " " : "", i,
+                                             static_cast<unsigned long long>(segment->slabOffset),
+                                             static_cast<unsigned long long>(segment->length));
+                if (written > 0) {
+                    runListUsed = std::min(sizeof(runList) - 1, runListUsed + static_cast<size_t>(written));
+                }
+            }
+        }
         ASFW_LOG(Isoch,
-                 "IT: Payload DMA mapped bytes=%llu segments=%zu windows=%zu",
+                 "IT: Payload DMA mapped ctx=%u bytes=%llu segments=%zu windows=%zu multiPageRuns=%zu %{public}s",
+                 contextIndex_,
                  payloadDmaMap_.SlabLength(),
                  payloadDmaMap_.SegmentCount(),
-                 payloadDmaCmds_.size());
+                 payloadDmaCmds_.size(),
+                 multiPageRuns,
+                 runList);
         for (std::size_t i = 0; i < payloadDmaMap_.SegmentCount(); ++i) {
             const auto* segment = payloadDmaMap_.SegmentAt(i);
             ASFW_LOG_V2(Isoch,
@@ -488,11 +516,13 @@ kern_return_t IsochTransmitContext::Stop() noexcept {
                  ringCounters.criticalGapEvents.load(std::memory_order_relaxed),
                  ringCounters.maxDeltaConsumed.load(std::memory_order_relaxed),
                  ringCounters.mappedRegionExhausted.load(std::memory_order_relaxed));
-        ASFW_LOG(Isoch, "IT: cycle accounting: completed=%llu lostCycles=%llu abnormalCompletions=%llu lastAbnormal=0x%04x",
+        ASFW_LOG(Isoch, "IT: cycle accounting: ctx=%u completed=%llu lostCycles=%llu abnormalCompletions=%llu lastAbnormal=0x%04x",
+                 contextIndex_,
                  static_cast<unsigned long long>(ringCounters.completedPackets.load(std::memory_order_relaxed)),
                  static_cast<unsigned long long>(ringCounters.lostCycles.load(std::memory_order_relaxed)),
                  static_cast<unsigned long long>(ringCounters.abnormalCompletions.load(std::memory_order_relaxed)),
                  ringCounters.lastAbnormalStatus.load(std::memory_order_relaxed));
+        ring_.LogAbnormalSummary(contextIndex_);
         return kIOReturnSuccess;
     }
 

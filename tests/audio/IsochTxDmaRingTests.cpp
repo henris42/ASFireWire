@@ -975,6 +975,28 @@ TEST_F(IsochTxDmaRingFiniteTest, CompletionComesFromDescriptorStatusNotTheComman
     }
 }
 
+// b167: in a few streams about two packets per ring lap retired with
+// evt_data_read. Each such completion is counted and described, and the
+// stream's accounting goes on exactly as for the others.
+TEST_F(IsochTxDmaRingFiniteTest, AnAbnormalCompletionIsCountedWithoutDisturbingTheAccounting) {
+    Complete(0, 8);
+    for (uint32_t slot = 0; slot < 8; ++slot) {
+        auto* completion = CompletionDescriptor(slot);
+        const uint32_t xferStatus = slot == 5 ? 0x8407u : 0x8411u;  // evt_data_read, ack_complete
+        completion->statusWord = (xferStatus << 16) | (completion->statusWord & 0xFFFFu);
+    }
+    PointerAt(8);
+    const auto outcome = Refill();
+    ASSERT_TRUE(outcome.ok);
+    EXPECT_EQ(ring_.RTCounters().abnormalCompletions.load(), 1u);
+    EXPECT_EQ(ring_.RTCounters().lastAbnormalStatus.load(), 0x8407u);
+    EXPECT_EQ(ring_.RTCounters().completedPackets.load(), 8u);
+    EXPECT_EQ(controlBlock_.completionCursor.load(), 8u);
+    EXPECT_EQ(controlBlock_.completionStampCount.load(), 8u);
+    EXPECT_EQ(outcome.packetsFilled, 7u);
+    ring_.LogAbnormalSummary(0);
+}
+
 TEST_F(IsochTxDmaRingFiniteTest, ALateRefillCountsEveryCompletedPacket) {
     // Far more than the old 48-packet ring: no lap to guess, just more status.
     Complete(0, 300);

@@ -103,6 +103,12 @@ public:
         return index < segments_.size() ? &segments_[index] : nullptr;
     }
 
+    /// Index of the run containing `slabOffset`, or SegmentCount() when none does.
+    [[nodiscard]] std::size_t SegmentIndexContaining(std::uint64_t slabOffset) const noexcept {
+        const MappedSegment* segment = SegmentContaining(slabOffset);
+        return segment != nullptr ? static_cast<std::size_t>(segment - segments_.data()) : segments_.size();
+    }
+
     /// The run containing `slabOffset`; runs are in slab order, so a binary
     /// search keeps the per-packet cost flat however many pages the slab has.
     [[nodiscard]] const MappedSegment* SegmentContaining(std::uint64_t slabOffset) const noexcept {
