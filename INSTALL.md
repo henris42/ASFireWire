@@ -10,6 +10,7 @@ Each build comes as `ASFW-<version>-<macos>-b<build>.zip` and contains:
 |---|---|
 | `ASFW.app` | The app, with the driver (`net.asfw.driver.dext`) inside it. On Monterey/Ventura it is the **lite** ASFW app: configuration and diagnostics (install, bus inspector, controller status, AV/C and DICE reports, logs, logging settings, Core Audio, Duet) without the Metal audio analyzer, meters, DV capture and MCP; on Sonoma and later it is the full app |
 | `install.sh` | Installs, updates, checks and removes it |
+| `asfw-opencore-arm.sh` | Arms or disarms the FireWire controller in OpenCore's `config.plist` (see below) |
 | `Entitlements/` | Used by `install.sh` to sign the app and driver |
 | `BUILDINFO.txt` | Which source, macOS target and options this build was made from |
 
@@ -26,30 +27,42 @@ Each build comes as `ASFW-<version>-<macos>-b<build>.zip` and contains:
    as if ASFW were not there (`ioreg -rc IOUserService | grep -i asfw` prints
    nothing). That is a good first test. The driver also checks the property again
    in `Start()`, so a build that somehow matched anyway still refuses to run.
-   - Find the PCI path of the FireWire controller, for example with
+   - **With the script** (in the ZIP; `install.sh` offers it at the end on an OpenCore
+     machine): `sudo ./asfw-opencore-arm.sh --report` lists every FireWire controller,
+     its OpenCore path and the config state; `sudo ./asfw-opencore-arm.sh` arms them in
+     the boot disk's `EFI/OC/config.plist`, after a dated backup next to it. `--disarm`
+     undoes it, `--dry-run` shows the change, `--esp diskXsY` picks another EFI partition.
+   - **By hand:** find the PCI path of the FireWire controller, for example with
      [gfxutil](https://github.com/acidanthera/gfxutil): `gfxutil | grep -i 104c:8025`
      for the TI XIO2213B. It sits behind the card's bridge, so expect something like
-     `PciRoot(0x0)/Pci(0x1C,0x4)/Pci(0x0,0x0)/Pci(0x0,0x0)`.
-   - In OpenCore `config.plist`, under `DeviceProperties` > `Add` > *that path*, add the
-     key `asfw-armed`, type **Data**, value exactly `01` (one byte; `0001` or a
-     string does not arm). Reboot.
+     `PciRoot(0x0)/Pci(0x1C,0x4)/Pci(0x0,0x0)/Pci(0x0,0x0)`. In OpenCore `config.plist`,
+     under `DeviceProperties` > `Add` > *that path*, add the key `asfw-armed`, type
+     **Data**, value exactly `01` (one byte; `0001` or a string does not arm). Reboot.
    - Check: `ioreg -rc IOPCIDevice | grep -i asfw-armed`
-   - **To disarm, delete that key and reboot.** The EFI partition can be edited from
-     another OS if this one no longer boots.
+   - **To disarm, delete that key (or run `--disarm`) and reboot.** The EFI partition can
+     be edited from another OS if this one no longer boots.
 
-4. **Intel with more than 4 GiB of RAM: VT-d must be active.** FireWire OHCI controllers
-   address 32 bits of physical memory, whatever the OS. Apple's own drivers for such hardware
-   rely on the IOMMU (VT-d, `AppleVTD`) to remap DMA below 4 GiB; without it the kernel
-   silently routes a DriverKit driver's DMA through a copy buffer and the controller's data
-   never reaches the driver. ASFW detects this at start, logs
-   `DMA … is bounced through a kernel copy` with the remedy, and does not start, leaving the
-   card to Apple's driver. To make it work:
-   - BIOS: VT-d (Intel Virtualization Technology for Directed I/O) **enabled**.
-   - OpenCore `config.plist`: `Kernel > Quirks > DisableIoMapper = false` (and no
-     `DisableIoMapperMapping`), and keep the `DMAR` ACPI table. After boot,
-     `ioreg -l | grep -c AppleVTD` must be non-zero.
-   - In a VM: give the guest a virtual IOMMU (ESXi: *Enable IOMMU in this virtual machine*), or
-     keep the VM's memory at **≤ 3 GiB** so that no guest page lies above 4 GiB.
+4. **Intel with more than 4 GiB of RAM.** FireWire OHCI controllers address 32 bits of
+   physical memory, whatever the OS. Without an IOMMU the kernel would route a DriverKit
+   driver's DMA through a copy buffer that the controller and the driver never share.
+   From build 173 the driver notices this at start and from then on takes only pages that
+   lie below 4 GiB: it checks every DMA page one by one (on a 16 GiB machine about
+   2.3 GiB of RAM is there, under the PCI hole). The log says
+   `DMA: … bounced; from now on every DMA page is allocated on its own and kept only below 4 GiB`.
+   This is new and not yet verified on hardware.
+   - Keep `Kernel > Quirks > DisableIoMapper = true` (no VT-d for macOS). With VT-d active
+     (AppleVTD) an armed boot froze on a Z390 machine (build 170); that is being
+     investigated, so do not enable VT-d for ASFW yet.
+   - If the driver logs that too few pages lie below 4 GiB, limit RAM with the boot-arg
+     `maxmem=2048` (2 GiB works; build 170 was tested that way).
+   - In a VM: keep the VM's memory at **≤ 3 GiB**, or give the guest a virtual IOMMU. With
+     PCI passthrough and no virtual IOMMU, any guest page that falls inside the host's
+     memory window for the FireWire card's bridge is unreachable for DMA (ESXi put it at
+     `0x9030_0000–0x903F_FFFF`; build 170 traced the clicks to it). Read the window from the
+     host (`lspci -v` on the bridge, "memory base/limit") and pass it to the driver:
+     `sudo ./asfw-opencore-arm.sh --exclude 0x90300000-0x903fffff` (or the controller
+     property `asfw-dma-exclude` = "0x90300000-0x903fffff", type String). The log then says
+     `[DmaGuard] DMA pages avoid 0x90300000-0x903fffff`.
 
 ## Install or update
 
@@ -192,6 +205,19 @@ sudo launchctl asuser "$(id -u <user>)" /Applications/ASFW.app/Contents/MacOS/AS
 (Monterey/Ventura builds only; also `--deactivate`, `--status`.)
 
 ## If the Mac hangs or will not boot
+
+A hang during boot takes the unified log with it. To see how far the driver got, capture
+the kernel console on a serial port: boot-args `serial=3 drain_uart_sync=1` plus **`dk=0x3`**
+(or `sudo ./asfw-opencore-arm.sh --trace`). With `dk` bit 0x2 the kernel prints every
+start-up step of the driver as it happens:
+
+```
+DK: ASFWDriver-0x100000xyz::SetDispatchQueue(ASFW #12 linkEnable + BIBimageValid (the link starts DMA))
+```
+
+The last such line before the freeze names the step. Keep bit 0x1 set (`dk=0x3`, never
+`dk=0x2`): it is what enables DriverKit at all. Remove it again afterwards
+(`--no-trace`); it slows every driver's start a little.
 
 Use the first of these that you can:
 
