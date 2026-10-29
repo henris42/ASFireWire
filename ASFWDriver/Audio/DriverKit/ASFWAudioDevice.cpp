@@ -298,6 +298,7 @@ void ResetClientWriteSide(ASFWAudioDriver_IVars& ivars,
     control.playbackRingOldestValidFrame.store(0, std::memory_order_release);
     control.ResetOutputWriteLog();
     ivars.runtime.txFilledFrameEnd = 0;
+    ivars.runtime.txClearedFrameEnd = 0;
     // The ring holds the last session's output; a frame the fill meets before
     // CoreAudio writes it must be silence (see ArmPrimaryTxProducer).
     ASFW::Audio::DriverKit::ClearPlaybackRing(ivars);

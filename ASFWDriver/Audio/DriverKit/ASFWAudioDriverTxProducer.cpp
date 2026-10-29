@@ -1136,6 +1136,7 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
     ivars.runtime.txPlacementLogged = false;
     ivars.runtime.txSytLogged = false;
     ivars.runtime.txFilledFrameEnd = 0;
+    ivars.runtime.txClearedFrameEnd = 0;
     // CoreAudio's output ring still holds the previous session's output, and
     // the fill can meet a frame before CoreAudio writes it in this session
     // (b146: a cold start replayed about 170 ms of it). Silence it before IO.

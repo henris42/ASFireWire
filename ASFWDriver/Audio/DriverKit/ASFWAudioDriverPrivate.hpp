@@ -269,6 +269,10 @@ struct AudioDriverRuntimeState {
     // were already copied into their packets, or passed their finality and
     // stay silent. Reset per start, before IO runs.
     uint64_t txFilledFrameEnd{0};
+    // Ring frames below this are cleared. The fill clears copied frames a
+    // short window behind txFilledFrameEnd, so the newest of them stay at
+    // hand for the end of the stream.
+    uint64_t txClearedFrameEnd{0};
     std::atomic<uint64_t> txFillMaxDurationTicks{0};
     // framesMissedFinality at this stream's start; [TxPrep] reports the
     // difference, so the heartbeat counts only this stream's missed frames.

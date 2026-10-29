@@ -11,9 +11,10 @@
 //   owner), copies each written frame once from that ring into the armed
 //   packet that carries it, if the packet is still ahead of the hardware.
 //   RT-safe: no locks, no allocation; the timeline and the clock pair are
-//   read through their seqlocks. A frame is cleared in the ring once it has
-//   been copied, and the whole ring at every start (ClearPlaybackRing), so a
-//   frame CoreAudio never wrote is silence rather than an older write.
+//   read through their seqlocks. A frame is cleared in the ring a short
+//   window after it has been copied, and the whole ring at every start
+//   (ClearPlaybackRing), so a frame CoreAudio never wrote is silence rather
+//   than an older write.
 //
 // Both are called unchanged from the host TX tests.
 //
@@ -22,6 +23,7 @@
 #include "../Runtime/PlaybackRingRange.hpp"
 #include "../../Common/TimingUtils.hpp"
 
+#include <algorithm>
 #include <cstring>
 #ifdef ASFW_HOST_TEST
 #include "../../Testing/HostDriverKitStubs.hpp"
@@ -153,6 +155,37 @@ void ClearRingFrames(const ASFW::Audio::Runtime::AudioStreamMemory& memory,
     }
 }
 
+// Copied frames the ring keeps behind the fill, for the end of the stream. A
+// frame is copied at most about one IO buffer before its packet leaves (1024
+// frames is the HAL's largest), so 2048 covers every frame still ahead of the
+// hardware. At most a quarter of the ring, so a frame is cleared long before
+// CoreAudio writes its slot again.
+[[nodiscard]] uint64_t KeptCopiedFrames(uint32_t capacity) noexcept {
+    constexpr uint64_t kKeptCopiedFrames = 2048;
+    return std::min<uint64_t>(kKeptCopiedFrames, capacity / 4);
+}
+
+// Clears the copied frames in [clearedEnd, filledEnd - kept) and advances
+// clearedEnd. Never reaches back more than a ring before writtenEnd: those
+// slots hold the kept frames and the frames written but not yet copied.
+void ClearCopiedFrames(const ASFW::Audio::Runtime::AudioStreamMemory& memory,
+                       uint64_t& clearedEnd,
+                       uint64_t filledEnd,
+                       uint64_t writtenEnd) noexcept {
+    const uint32_t capacity = memory.outputFrameCapacity;
+    const uint64_t kept = KeptCopiedFrames(capacity);
+    if (filledEnd <= kept) {
+        return;
+    }
+    const uint64_t limit = filledEnd - kept;
+    const uint64_t floor = writtenEnd > capacity ? writtenEnd - capacity : 0;
+    const uint64_t first = std::max(clearedEnd, floor);
+    if (limit > first) {
+        ClearRingFrames(memory, first, limit - first);
+    }
+    clearedEnd = std::max(clearedEnd, limit);
+}
+
 } // namespace
 
 void ClearPlaybackRing(ASFWAudioDriver_IVars& ivars) noexcept {
@@ -174,12 +207,15 @@ void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars) noexcept {
     const uint64_t oldestValid =
         control->playbackRingOldestValidFrame.load(std::memory_order_acquire);
     uint64_t& filled = ivars.runtime.txFilledFrameEnd;
+    uint64_t& cleared = ivars.runtime.txClearedFrameEnd;
     const uint64_t writeStart =
         control->client.outputWriteEndSampleFrame.load(std::memory_order_acquire);
     if (filled == 0) {
         // Frames before CoreAudio's first write were never written: there is
-        // nothing to fill, and they must not count as missed deadlines.
+        // nothing to fill, and they must not count as missed deadlines. The
+        // start cleared the ring, so nothing below it needs clearing again.
         filled = writeStart;
+        cleared = writeStart;
     } else if (writeStart < filled) {
         // CoreAudio wrote frames this fill has already copied: an overlapping
         // write, or a written end that had run ahead and was just followed
@@ -187,6 +223,8 @@ void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars) noexcept {
         // still ahead of the hardware carries CoreAudio's latest write.
         filled = writeStart;
     }
+    // Frames copied again are cleared again once the fill has passed them.
+    cleared = std::min(cleared, filled);
     if (filled < oldestValid) {
         filled = oldestValid;  // frames the ring no longer holds stay silent
     }
@@ -223,11 +261,12 @@ void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars) noexcept {
     while (fillDuration > observed &&
            !maxDuration.compare_exchange_weak(observed, fillDuration,
                                              std::memory_order_relaxed)) {}
-    // Clear what was just copied. The ring keeps a frame until CoreAudio
-    // writes that slot again a ring later; a slot it skips, or a frame it
-    // reported without writing, must then read as silence, not as this one.
-    ClearRingFrames(memory, filled, hostBuffer.frameCount);
+    // Clear what was copied a short window ago. The ring keeps a frame until
+    // CoreAudio writes that slot again a ring later; a slot it skips, or a
+    // frame it reported without writing, must then read as silence, not as
+    // this one. The newest copied frames stay, for the end of the stream.
     filled += hostBuffer.frameCount;
+    ClearCopiedFrames(memory, cleared, filled, writtenEnd);
     control->playbackRingReadFrame.store(filled, std::memory_order_release);
 }
 

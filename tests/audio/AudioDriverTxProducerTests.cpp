@@ -1824,7 +1824,8 @@ TEST(TxOwnershipLifecycle, ArmingTheProducerClearsThePlaybackRing) {
 }
 
 // The fill clears each frame it copied, so a slot CoreAudio skips, or a frame
-// it reports without writing, reads as silence a ring later.
+// it reports without writing, reads as silence a ring later. The newest 2048
+// copied frames stay, for the end of the stream.
 TEST(TxOwnershipLifecycle, TheFillClearsTheFramesItCopied) {
     const ASFW::Isoch::Audio::DICE::DiceProfile profile{{.name = "Focusrite Saffire (DICE)"}};
     TxProducerRig rig;
@@ -1848,9 +1849,15 @@ TEST(TxOwnershipLifecycle, TheFillClearsTheFramesItCopied) {
                            ring.begin() + static_cast<std::ptrdiff_t>(at + channels),
                            [](float v) { return v == 0.0f; });
     };
+    constexpr uint64_t kKept = 2048;
+    ASSERT_GT(read, written - ringFrames + kKept);
     // Copied frames whose slots CoreAudio has not written again: silent.
-    for (uint64_t frame = written - ringFrames; frame < read; ++frame) {
+    for (uint64_t frame = written - ringFrames; frame < read - kKept; ++frame) {
         ASSERT_TRUE(frameIsSilent(frame)) << "frame " << frame << " kept after the fill copied it";
+    }
+    // The newest copied frames: still there.
+    for (uint64_t frame = read - kKept; frame < read; ++frame) {
+        ASSERT_FALSE(frameIsSilent(frame)) << "frame " << frame << " cleared inside the kept window";
     }
     // Written but not yet copied: CoreAudio's samples are still there.
     for (uint64_t frame = read; frame < written; ++frame) {
