@@ -277,11 +277,6 @@ struct AudioDriverRuntimeState {
     // framesMissedFinality at this stream's start; [TxPrep] reports the
     // difference, so the heartbeat counts only this stream's missed frames.
     uint64_t txMissedFinalityAtStart{0};
-    // MotuExperiments data hold: packets below this index go out as NO-DATA
-    // (taken from the one-shot knob at the first live packet; 0 = no hold).
-    uint64_t motuExperimentHoldUntilPacket{0};
-    // MotuExperiments transmit-only: synthetic blocking cadence, SPH from transmit time.
-    bool motuExperimentTransmitOnly{false};
     // [MotuTxStamp] lines logged this start (first few DATA packets).
     uint32_t motuStampLogged{0};
     // [TxCadence]: DATA / NO-DATA / header-only counts at the last heartbeat.

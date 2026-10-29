@@ -8,7 +8,6 @@
 // cross-validated with Linux dice-stream.c:326-374 and dice-interface.h:120-125.
 
 #include "RestartRoutine.hpp"
-#include "../Protocols/MOTU/MotuExperiments.hpp"
 #include "SessionClock.hpp"
 
 #include "../Protocols/Backends/DirectRxFormatDescriptor.hpp"
@@ -186,13 +185,6 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
     // A failed or superseded step rolls back through the stop routine, except
     // under teardown, when nothing may touch the hardware.
     auto rollback = [&](IOReturn status, const char* step) {
-        if (Audio::Motu::MotuExperiments::AnyArmed()) {
-            ASFW_LOG(Audio, "[MotuExperiment] start failed at %{public}s; clearing armed flags=0x%x extra=%u lead=%u",
-                     step, Audio::Motu::MotuExperiments::flags.load(std::memory_order_relaxed),
-                     Audio::Motu::MotuExperiments::extraNoDataPackets.load(std::memory_order_relaxed),
-                     Audio::Motu::MotuExperiments::presentationLeadTicks.load(std::memory_order_relaxed));
-            Audio::Motu::MotuExperiments::ClearAll();
-        }
         if (status == kIOReturnAborted && TeardownRequested()) {
             return std::unexpected(RestartFailure{.status = status, .step = step, .stopped = false,
                                                   .channels = channels, .runtimeCaps = caps});
@@ -545,28 +537,9 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
 
     bool receiveStarted = false;
     bool transmitStarted = false;
-    if (Audio::Motu::MotuExperiments::AnyArmed()) {
-        ASFW_LOG(Audio, "[MotuExperiment] armed for this start GUID=%llx: flags=0x%x extra=%u lead=%u",
-                 guid, Audio::Motu::MotuExperiments::flags.load(std::memory_order_relaxed),
-                 Audio::Motu::MotuExperiments::extraNoDataPackets.load(std::memory_order_relaxed),
-                 Audio::Motu::MotuExperiments::presentationLeadTicks.load(std::memory_order_relaxed));
-    }
-    const bool captureOnly = Audio::Motu::MotuExperiments::Take(Audio::Motu::kMotuExperimentCaptureOnly);
-    // Read, not taken: the producer reads the same flag when it arms; the
-    // start clears it once its readiness wait is over.
-    const bool transmitOnly = Audio::Motu::MotuExperiments::Has(Audio::Motu::kMotuExperimentTransmitOnly);
-    // A data hold (producer, MotuExperiments) delays the presentation timing
-    // the readiness wait below needs; give it that much longer.
-    const uint32_t holdMs = Audio::Motu::MotuExperiments::extraNoDataPackets.load(std::memory_order_relaxed) / 8;
     auto startReceive = [&](const char* step) -> std::optional<std::expected<RunningSession, RestartFailure>> {
         if (TeardownRequested()) {
             return aborted(step);
-        }
-        if (transmitOnly) {
-            ASFW_LOG(Audio, "[Session] experiment: transmit only, host receive not started GUID=%llx (%{public}s)",
-                     guid, step);
-            receiveStarted = true;
-            return std::nullopt;
         }
         const kern_return_t status = host.StartPreparedReceive();
         if (status != kIOReturnSuccess) {
@@ -581,14 +554,6 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
     auto startTransmit = [&](const char* step) -> std::optional<std::expected<RunningSession, RestartFailure>> {
         if (TeardownRequested()) {
             return aborted(step);
-        }
-        if (captureOnly) {
-            // Experiment (MotuExperiments.hpp): the device gets its channels
-            // and its RX activation but never a packet from us.
-            ASFW_LOG(Audio, "[Session] experiment: capture only, host transmit not started GUID=%llx (%{public}s)",
-                     guid, step);
-            transmitStarted = true;
-            return std::nullopt;
         }
         const kern_return_t status = host.StartPreparedTransmit();
         if (status != kIOReturnSuccess) {
@@ -671,14 +636,14 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
         if (!stillWanted()) return superseded("TransmitTimingReady");
         const auto elapsed = UptimeMilliseconds() - readyStartMs;
         if (elapsed >= readiness.minimumHostRunMs &&
-            (!readiness.requireTransmitTiming || captureOnly || transmitOnly || request.binding->IsTransmitTimingReady())) break;
+            (!readiness.requireTransmitTiming || request.binding->IsTransmitTimingReady())) break;
         // The unit's own timestamps give its real rate within a few
         // milliseconds of receive start. A unit that follows an external clock
         // of the other rate family runs at that clock's rate and never gives
         // transmit timing at the requested one (b149: 44.1 kHz on a 48 kHz word
         // clock measured 48000 Hz, then failed after a second). Say what it
         // runs at and fail now; a retry cannot help, so not as a timeout.
-        if (uint32_t measuredHz = 0; !transmitOnly &&
+        if (uint32_t measuredHz = 0;
             request.binding->MeasuredDeviceRateHz(measuredHz) &&
             IsForeignRate(measuredHz, clock.sampleRateHz)) {
             const uint32_t runsAt = NearestStandardRate(measuredHz);
@@ -697,7 +662,7 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
             }
             return rollback(kIOReturnUnsupported, "DeviceRate");
         }
-        if (elapsed >= readiness.timeoutMs + holdMs) {
+        if (elapsed >= readiness.timeoutMs) {
             // No timing and no rate to blame: on an external clock the unit
             // could not lock at this rate (b149: the clock signal itself is
             // sound, so never send the user to check it).
@@ -715,9 +680,6 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
     if (readiness.requireTransmitTiming || readiness.minimumHostRunMs)
         ASFW_LOG(Audio, "[SessionTiming] playback presentation acquired GUID=%llx elapsedMs=%llu",
                  request.guid, UptimeMilliseconds() - readyStartMs);
-    if (transmitOnly) {
-        (void)Audio::Motu::MotuExperiments::Take(Audio::Motu::kMotuExperimentTransmitOnly);
-    }
 
     // 8. Confirm the device runs what was armed.
     if (TeardownRequested()) {

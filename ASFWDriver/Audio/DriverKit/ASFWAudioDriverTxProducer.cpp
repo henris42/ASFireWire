@@ -17,7 +17,6 @@
 
 #include "ASFWAudioDevice.h"
 #include "ASFWAudioDriverPrivate.hpp"
-#include "../Protocols/MOTU/MotuExperiments.hpp"
 #include "../../Common/TimingUtils.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../Wire/IEC61883/Syt.hpp"
@@ -379,35 +378,15 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
         ASFW::Protocols::Audio::AMDTP::AmdtpTimingState timing{};
         timing.disposition =
             ASFW::Protocols::Audio::AMDTP::AmdtpPacketDisposition::NoData;
-        // Transmit-only experiment (MotuExperiments): no receive history will
-        // ever establish, so the configured blocking cadence carries data and
-        // the SPH clock seeds from the packet's own transmit time.
-        const bool syntheticCadence =
-            motuSphActive && ivars.runtime.motuExperimentTransmitOnly && !allowRecoveredClock;
         const bool bootstrapCadence =
-            (ivars.runtime.rxReplayAfterBootstrap.load(std::memory_order_acquire) &&
-             !allowRecoveredClock) || syntheticCadence;
+            ivars.runtime.rxReplayAfterBootstrap.load(std::memory_order_acquire) &&
+            !allowRecoveredClock;
         // Start with configured cadence; after RX history establishes, the
         // next writable index is the immutable transition boundary.
         timing.replayValid = !bootstrapCadence;
         if (bootstrapCadence) {
             timing.disposition =
                 ASFW::Protocols::Audio::AMDTP::AmdtpPacketDisposition::Data;
-        }
-        if (syntheticCadence) {
-            int64_t anchorTicks = 0;
-            if (ivars.runtime.txExecutionTimeline.AnchorForPacket(nextPacketToPrepare, anchorTicks)) {
-                timing.transmitCycle = static_cast<uint32_t>(
-                    (ASFW::Timing::normalizeOffsetDomain(anchorTicks) / ASFW::Timing::kTicksPerCycle) %
-                    ASFW::Timing::kCyclesPerSecond);
-                timing.transmitCycleValid = true;
-                timing.transmitTicks = anchorTicks;
-                timing.txClockValid = true;
-            }
-            if (nextPacketToPrepare == numSlots) {
-                ASFW_LOG(DirectAudio,
-                         "[MotuExperiment] transmit only: configured blocking cadence, SPH free-running from transmit time, PCM muted");
-            }
         }
 
         ASFW::Audio::BeBoB::MAudioInternalTxTiming::PacketPlan mAudioPlan{};
@@ -671,25 +650,6 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                 timing.disposition =
                     ASFW::Protocols::Audio::AMDTP::
                         AmdtpPacketDisposition::Data;
-                // Experiment (MotuExperiments.hpp): hold the first data packet
-                // back by N packets past the prefill, as NO-DATA, so the moment
-                // data starts moves while everything else stays.
-                if (motuSphActive && nextPacketToPrepare == numSlots) {
-                    // One-shot: taken at the first live packet, cleared for the next start.
-                    if (const uint32_t extra = ASFW::Audio::Motu::MotuExperiments::TakeExtraNoDataPackets();
-                        extra != 0) {
-                        ivars.runtime.motuExperimentHoldUntilPacket =
-                            static_cast<uint64_t>(numSlots) + extra;
-                        ASFW_LOG(DirectAudio,
-                                 "[MotuExperiment] holding data back: NO-DATA until packet %llu (%u ms after the prefill)",
-                                 static_cast<unsigned long long>(ivars.runtime.motuExperimentHoldUntilPacket), extra / 8);
-                    }
-                }
-                if (motuSphActive && nextPacketToPrepare < ivars.runtime.motuExperimentHoldUntilPacket) {
-                    timing.txClockValid = false;
-                    timing.disposition =
-                        ASFW::Protocols::Audio::AMDTP::AmdtpPacketDisposition::NoData;
-                }
                 const uint32_t txDelay =
                     directControl->txTransferDelayTicks.load(
                         std::memory_order_relaxed);
@@ -969,14 +929,9 @@ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
     // a power cycle aborted its own stream on the first data packet that
     // followed, every start since b74, and never after a skip-cycle lap
     // (b104 wire capture, b107 runs). Other families keep their recorded
-    // start sequences. An experiment flag restores the old lap for A/B.
-    const bool emptyCipPrefill =
-        ASFW::Audio::Motu::MotuExperiments::Take(ASFW::Audio::Motu::kMotuExperimentEmptyCipPrefill);
-    timing.skipCycle = ivars.runtime.motuSphActive.load(std::memory_order_relaxed) && !emptyCipPrefill &&
+    // start sequences.
+    timing.skipCycle = ivars.runtime.motuSphActive.load(std::memory_order_relaxed) &&
                        timing.disposition == ASFW::Protocols::Audio::AMDTP::AmdtpPacketDisposition::NoData;
-    if (emptyCipPrefill) {
-        ASFW_LOG(DirectAudio, "[MotuExperiment] priming with header-only CIP packets (pre-b110 lap)");
-    }
 
     uint32_t prepared = 0;
     for (uint64_t packetIndex = 0;
@@ -1033,10 +988,7 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
     // prime ("committed prefill > slots").
     memory.queueControl->ResetProducerForStart();
 
-    ivars.runtime.motuExperimentHoldUntilPacket = 0;
     ivars.runtime.motuStampLogged = 0;
-    ivars.runtime.motuExperimentTransmitOnly =
-        ASFW::Audio::Motu::MotuExperiments::Has(ASFW::Audio::Motu::kMotuExperimentTransmitOnly);
     ivars.runtime.txCadenceLastData = 0;
     ivars.runtime.txCadenceLastNoData = 0;
     ivars.runtime.txCadenceLastEmpty = 0;
@@ -1053,9 +1005,6 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
 
     // A device's own slot order (the Phase 88 is planar) arrives in txConfig
     // from its discovered graph; Configure prefers it over the profile's map.
-    if (ASFW::Audio::Motu::MotuExperiments::Take(ASFW::Audio::Motu::kMotuExperimentStartEventDbc)) {
-        ASFW_LOG(DirectAudio, "[MotuExperiment] DBC counts start-of-packet this start (data: first block, empty: next packet)");
-    }
     if (!ivars.runtime.txStreamEngine.Configure(profile, txConfig)) {
         ASFW_LOG(Audio, "ASFWAudioDevice: txStreamEngine Configure failed");
         return {kIOReturnError, "ConfigureTxStreamEngine"};
@@ -1064,25 +1013,11 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
     ivars.runtime.motuSphActive.store(false, std::memory_order_relaxed);
     const auto txPolicy = profile.TxStreamPolicy();
     if (txPolicy.hostToDevicePcmEncoding == ASFW::Encoding::AudioWireFormat::kMotuPacked) {
-        // Every MOTU model is timed by the SPH regulator; a rate it has no
-        // configuration for cannot be timed at all.
-        // The model's lead and loop mode, unless this start's experiment
-        // (MotuExperiments, one-shot) says otherwise.
-        uint32_t leadTicks = txPolicy.motuPresentationLeadTicks;
-        bool holdAbsolute = txPolicy.motuHoldAbsolutePhase;
-        if (const uint32_t override = ASFW::Audio::Motu::MotuExperiments::TakePresentationLeadTicks();
-            override != 0) {
-            leadTicks = override;
-        }
-        if (ASFW::Audio::Motu::MotuExperiments::Take(ASFW::Audio::Motu::kMotuExperimentHoldAbsolutePhase)) {
-            holdAbsolute = true;
-        }
-        if (leadTicks != txPolicy.motuPresentationLeadTicks || holdAbsolute != txPolicy.motuHoldAbsolutePhase) {
-            ASFW_LOG(DirectAudio, "[MotuExperiment] SPH lead=%u ticks (model %u) holdAbsolutePhase=%u (model %u)",
-                     leadTicks, txPolicy.motuPresentationLeadTicks, holdAbsolute ? 1U : 0U,
-                     txPolicy.motuHoldAbsolutePhase ? 1U : 0U);
-        }
-        const auto setpoint = holdAbsolute
+        // Every MOTU model is timed by the SPH regulator, with the model's
+        // lead and loop mode; a rate it has no configuration for cannot be
+        // timed at all.
+        const uint32_t leadTicks = txPolicy.motuPresentationLeadTicks;
+        const auto setpoint = txPolicy.motuHoldAbsolutePhase
             ? ::ASFW::Encoding::Motu::AbsolutePhaseSetpointTicksAtRate(
                   txPolicy.motuAbsolutePhaseSetpointTicks48k, txConfig.sampleRate)
             : std::nullopt;

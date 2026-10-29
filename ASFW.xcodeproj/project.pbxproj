@@ -697,7 +697,6 @@
 		19D1BBF77FBBD5C0E848DFCC /* ASFWMCPTestGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWMCPTestGate.swift; sourceTree = "<group>"; };
 		1A659E6F5865070706C22D40 /* ASFWAudioDriverOutputWrite.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ASFWAudioDriverOutputWrite.cpp; sourceTree = "<group>"; };
 		1A7429E4FB1ED19779350B84 /* IRMAllocationManager.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = IRMAllocationManager.cpp; sourceTree = "<group>"; };
-		1A997CB203B1BF8331FC52D5 /* MotuExperiments.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuExperiments.hpp; sourceTree = "<group>"; };
 		1ADEB88C26F27428F79D86B4 /* ControllerCoreDiscovery.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ControllerCoreDiscovery.cpp; sourceTree = "<group>"; };
 		1AFA6FC4ECEF232870D75867 /* AmdtpTxPacketizer.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AmdtpTxPacketizer.hpp; sourceTree = "<group>"; };
 		1C12C1C06AF92442230E4C87 /* DeviceConfigurationStateMachine.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = DeviceConfigurationStateMachine.cpp; sourceTree = "<group>"; };
@@ -2084,7 +2083,6 @@
 		37AF15EE4187516EA2FDB2CB /* MOTU */ = {
 			isa = PBXGroup;
 			children = (
-				1A997CB203B1BF8331FC52D5 /* MotuExperiments.hpp */,
 				5A313DFDC45EA360D7C53492 /* MotuNotificationMailbox.hpp */,
 				00AE75553E2F19A3E2A29980 /* MotuProtocol.cpp */,
 				C5E583C7BF3E87EA0C34C09C /* MotuProtocol.hpp */,

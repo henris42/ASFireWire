@@ -13,7 +13,6 @@
 #include "../../Isoch/IsochReceiveContext.hpp"
 #include "../../Logging/LogConfig.hpp"
 #include "../../Logging/Logging.hpp"
-#include "../../Audio/Protocols/MOTU/MotuExperiments.hpp"
 #include "../../Protocols/AVC/AVCDiscovery.hpp"
 #include "../../Protocols/AVC/CMP/CMPClient.hpp"
 #include "../../Protocols/AVC/Commands/GeneralCommands.hpp"
@@ -43,31 +42,6 @@ kern_return_t IsochHandler::MotuCapture(IOUserClientMethodArguments* args) {
         args->structureOutput = OSData::withBytes(output.data(), output.size());
         if (!args->structureOutput) return kIOReturnNoMemory;
     }
-    return kIOReturnSuccess;
-}
-
-// Scalar inputs: flags (MotuExperimentFlag bits), extra NO-DATA packets after
-// the prefill. Process-wide; applied at the next stream start.
-kern_return_t IsochHandler::SetMotuExperiment(IOUserClientMethodArguments* args) {
-    if (!args || !args->scalarInput || args->scalarInputCount < 2 || args->scalarInputCount > 3) {
-        return kIOReturnBadArgument;
-    }
-    const auto flags = static_cast<uint32_t>(args->scalarInput[0]);
-    const auto extra = static_cast<uint32_t>(args->scalarInput[1]);
-    const auto leadTicks = args->scalarInputCount == 3 ? static_cast<uint32_t>(args->scalarInput[2]) : 0U;
-    if ((flags & ~ASFW::Audio::Motu::kMotuExperimentAllFlags) || extra > 8000 * 60 || leadTicks > 16 * 3072) {
-        return kIOReturnBadArgument;
-    }
-    ASFW::Audio::Motu::MotuExperiments::flags.store(flags, std::memory_order_relaxed);
-    ASFW::Audio::Motu::MotuExperiments::extraNoDataPackets.store(extra, std::memory_order_relaxed);
-    ASFW::Audio::Motu::MotuExperiments::presentationLeadTicks.store(leadTicks, std::memory_order_relaxed);
-    ASFW_LOG(UserClient, "[MotuExperiment] flags=0x%x (forceFetchEnable=%u captureOnly=%u holdAbsolutePhase=%u transmitOnly=%u emptyCipPrefill=%u startEventDbc=%u) extraNoDataPackets=%u leadTicks=%u; consumed by the next stream start (one-shot)",
-             flags, (flags & ASFW::Audio::Motu::kMotuExperimentForceFetchEnable) ? 1U : 0U,
-             (flags & ASFW::Audio::Motu::kMotuExperimentCaptureOnly) ? 1U : 0U,
-             (flags & ASFW::Audio::Motu::kMotuExperimentHoldAbsolutePhase) ? 1U : 0U,
-             (flags & ASFW::Audio::Motu::kMotuExperimentTransmitOnly) ? 1U : 0U,
-             (flags & ASFW::Audio::Motu::kMotuExperimentEmptyCipPrefill) ? 1U : 0U,
-             (flags & ASFW::Audio::Motu::kMotuExperimentStartEventDbc) ? 1U : 0U, extra, leadTicks);
     return kIOReturnSuccess;
 }
 

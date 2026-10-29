@@ -83,8 +83,7 @@ enum {
     // Device settings (clock source, optical modes): request/result pair.
     kMethodRequestDeviceSettings = 69,
     kMethodGetDeviceSettingsResult = 70,
-    // MOTU stream-start experiments (MotuExperiments.hpp): flags, extra NO-DATA packets.
-    kMethodSetMotuExperiment = 71,
+    // 71 retired (was the MOTU stream-start experiments, b92-b110).
     // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
     kMethodTestIRMAllocation = 26,
     kMethodTestIRMRelease = 27,
@@ -387,8 +386,6 @@ MethodDispatchResult DispatchIsochMethods(ASFW::UserClient::UserClientRuntimeSta
         return runtimeState.Isoch().StopIsochTransmit(arguments);
     case kMethodMotuCapture:
         return runtimeState.Isoch().MotuCapture(arguments);
-    case kMethodSetMotuExperiment:
-        return runtimeState.Isoch().SetMotuExperiment(arguments);
     case kMethodStartDVCapture:
         return runtimeState.Isoch().StartDVCapture(arguments);
     case kMethodStopDVCapture:
