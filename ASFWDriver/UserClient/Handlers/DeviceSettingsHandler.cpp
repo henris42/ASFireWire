@@ -167,6 +167,9 @@ kern_return_t DeviceSettingsHandler::GetDeviceSettingsResult(IOUserClientMethodA
     wire.opticalModeOptions = result.snapshot.opticalModeOptions;
     wire.clockRaw = result.snapshot.clockRaw;
     wire.opticalRaw = result.snapshot.opticalRaw;
+    wire.analogInputSwitches = result.snapshot.analogInputSwitches;
+    wire.inputLevelRaw = result.snapshot.inputLevelRaw;
+    wire.inputBoostRaw = result.snapshot.inputBoostRaw;
     args->structureOutput = OSData::withBytes(&wire, sizeof(wire));
     return args->structureOutput ? kIOReturnSuccess : kIOReturnNoMemory;
 }

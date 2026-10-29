@@ -167,8 +167,8 @@ public:
     }
 
     /// Host-settable configuration (DeviceSettings.hpp): the device's current
-    /// clock source and optical port modes with the options it offers. The
-    /// default has none.
+    /// clock source, optical port modes and analog input switches with the
+    /// options it offers. The default has none.
     virtual void ReadDeviceSettings(std::function<void(IOReturn, DeviceSettingsSnapshot)> callback) {
         if (callback) callback(kIOReturnUnsupported, DeviceSettingsSnapshot{});
     }

@@ -1081,7 +1081,8 @@ IOReturn MotuProtocol::Stop() {
 }
 
 //==============================================================================
-// Device settings (IDeviceProtocol): clock source and optical port modes
+// Device settings (IDeviceProtocol): clock source, optical port modes and
+// analog input switches
 //==============================================================================
 
 uint32_t MotuProtocol::V2ClockSourceOptions() const noexcept {
@@ -1152,9 +1153,49 @@ void MotuProtocol::ReadDeviceSettings(std::function<void(IOReturn, DeviceSetting
                     snapshot.opticalInputMode = optical ? static_cast<uint32_t>(optical->input) : 0;
                     snapshot.opticalOutputMode = optical ? static_cast<uint32_t>(optical->output) : 0;
                 }
-                if (callback) callback(kIOReturnSuccess, snapshot);
+                ReadAnalogInputSwitches(snapshot, std::move(callback));
             });
     });
+}
+
+void MotuProtocol::ReadAnalogInputSwitches(DeviceSettingsSnapshot snapshot,
+                                           std::function<void(IOReturn, DeviceSettingsSnapshot)> callback) {
+    const uint32_t switches = AnalogInputSwitchesV2(unitSwVersion_);
+    if (switches == 0) {
+        if (callback) callback(kIOReturnSuccess, snapshot);
+        return;
+    }
+    // A failed read leaves the switches out; clock and optical stay settable.
+    const auto withoutSwitches = [](const char* which, Async::AsyncStatus status) {
+        ASFW_LOG(Audio, "MotuProtocol: input %{public}s register not read (%{public}s); input switches not offered",
+                 which, Logging::IOReturnName(Protocols::Ports::MapAsyncStatusToIOReturn(status)));
+    };
+    (void)io_.ReadQuadBE(
+        AddressOf(Reg::InputLevelV2),
+        [this, snapshot, switches, withoutSwitches, callback = std::move(callback)](
+            Async::AsyncStatus levelStatus, uint32_t levelRaw) mutable {
+            if (levelStatus != Async::AsyncStatus::kSuccess) {
+                withoutSwitches("level", levelStatus);
+                if (callback) callback(kIOReturnSuccess, snapshot);
+                return;
+            }
+            (void)io_.ReadQuadBE(
+                AddressOf(Reg::InputBoostV2),
+                [snapshot, switches, levelRaw, withoutSwitches, callback = std::move(callback)](
+                    Async::AsyncStatus boostStatus, uint32_t boostRaw) mutable {
+                    if (boostStatus != Async::AsyncStatus::kSuccess) {
+                        withoutSwitches("boost", boostStatus);
+                        if (callback) callback(kIOReturnSuccess, snapshot);
+                        return;
+                    }
+                    snapshot.analogInputSwitches = switches;
+                    snapshot.inputLevelRaw = levelRaw;
+                    snapshot.inputBoostRaw = boostRaw;
+                    snapshot.supportedSettings |= SettingBit(DeviceSetting::InputLevels) |
+                                                  SettingBit(DeviceSetting::InputBoosts);
+                    if (callback) callback(kIOReturnSuccess, snapshot);
+                });
+        });
 }
 
 void MotuProtocol::ApplyDeviceSetting(DeviceSetting setting, uint32_t value,
@@ -1196,6 +1237,26 @@ void MotuProtocol::ApplyDeviceSetting(DeviceSetting setting, uint32_t value,
                            }
                            if (callback) callback(status);
                        });
+        return;
+    }
+    case DeviceSetting::InputLevels:
+    case DeviceSetting::InputBoosts: {
+        const uint32_t switches = AnalogInputSwitchesV2(unitSwVersion_);
+        if (switches == 0) {
+            if (callback) callback(kIOReturnUnsupported);
+            return;
+        }
+        if ((value & ~switches) != 0) {
+            if (callback) callback(kIOReturnBadArgument);
+            return;
+        }
+        const bool levels = setting == DeviceSetting::InputLevels;
+        ASFW_LOG(Audio, "MotuProtocol: analog input %{public}s -> 0x%02x",
+                 levels ? "+4 dBu levels" : "boosts", value);
+        // Only the inputs' own bits change; whatever else the register holds stays.
+        ModifyRegister(levels ? Reg::InputLevelV2 : Reg::InputBoostV2,
+                       [switches, value](uint32_t current) { return (current & ~switches) | value; },
+                       std::move(callback));
         return;
     }
     }

@@ -36,6 +36,15 @@ struct DeviceSettingsResultWire {
     uint32_t opticalModeOptions;
     uint32_t clockRaw;
     uint32_t opticalRaw;
+    // Added after the first release, without a version change: a reader tells
+    // by the size (60 bytes) whether they are there, and a reader that predates
+    // them takes the first 48 bytes as before.
+    uint32_t analogInputSwitches;
+    uint32_t inputLevelRaw;
+    uint32_t inputBoostRaw;
 } __attribute__((packed));
+
+static_assert(sizeof(DeviceSettingsResultWire) == 60,
+              "the app reads the extended fields by size, and its result buffer is 64 bytes");
 
 } // namespace ASFW::UserClient::Wire

@@ -33,6 +33,8 @@ enum class Reg : uint32_t {
     PacketFormat = 0x0b10,
     ClockStatusV2 = 0x0b14,
     InOutConfV2 = 0x0c04,
+    InputLevelV2 = 0x0c08,
+    InputBoostV2 = 0x0c14,
     OpticalBanksV3 = 0x0c94,
     StreamConfigV3 = 0x0b1c,
 };
@@ -87,6 +89,30 @@ enum class ClockSourceV2 : uint32_t {
     case 5: return ClockSourceV2::AdatOnDsub;
     case 7: return ClockSourceV2::AesEbuOnXlr;
     default: return std::nullopt;
+    }
+}
+
+//==============================================================================
+// Analog input level (0x0c08) and boost (0x0c14): bit n is analog input n+1. A
+// set level bit selects +4 dBu, a clear one -10 dBV; a set boost bit adds 6 dB.
+// Neither register has set-enable bits, so a change is a read-modify-write of
+// the input's bit. The 828mk2 has both switches on analog 1-8, the Traveler on
+// 5-8 (1-4 are mic inputs with trim and pad); the 896HD, UltraLite and 8pre
+// have neither. Cross-validated with FFADO 2.5.0 motu_mixer.cpp:210-225,
+// motu_controls.cpp MotuBinarySwitch and mixer-qt4 motu.py:751-769, and with
+// snd-firewire-ctl-services protocols/motu/src/register_dsp.rs:985-1092 and
+// version_2.rs:347-350,616-619.
+//==============================================================================
+
+/// Bit n: analog input n+1 of a v2 model has the level and boost switches.
+[[nodiscard]] constexpr uint32_t AnalogInputSwitchesV2(uint32_t unitSwVersion) noexcept {
+    switch (unitSwVersion) {
+    case 0x3:   // 828mk2
+        return 0xffu;
+    case 0x9:   // Traveler
+        return 0xf0u;
+    default:
+        return 0;
     }
 }
 

@@ -142,8 +142,10 @@ public:
     void ReadClockStatus(ClockStatusCallback callback);
 
     // IDeviceProtocol device settings: v2 models expose the clock source
-    // (clock status register bits [2:0]) and the optical port modes (in/out
-    // config register bits [9:8] and [11:10]); v1 and v3 report none yet.
+    // (clock status register bits [2:0]), the optical port modes (in/out
+    // config register bits [9:8] and [11:10]) and, on the models that have
+    // them, the analog input level and boost switches (0x0c08, 0x0c14); v1 and
+    // v3 report none yet.
     void ReadDeviceSettings(std::function<void(IOReturn, DeviceSettingsSnapshot)> callback) override;
     void ApplyDeviceSetting(DeviceSetting setting, uint32_t value,
                             std::function<void(IOReturn)> callback) override;
@@ -194,6 +196,9 @@ private:
     /// What the model's hardware offers (MotuModel.hpp); the app shows only these.
     [[nodiscard]] uint32_t V2ClockSourceOptions() const noexcept;
     [[nodiscard]] uint32_t V2OpticalModeOptions() const noexcept;
+    /// Completes `snapshot` with the analog input switches, on a model that has them.
+    void ReadAnalogInputSwitches(DeviceSettingsSnapshot snapshot,
+                                 std::function<void(IOReturn, DeviceSettingsSnapshot)> callback);
     [[nodiscard]] Reg ClockRegister() const noexcept { return unitSwVersion_ == 1 ? Reg::IsocCommControl : Reg::ClockStatusV2; }
     void EnsureAsyncAddress(CompletionCallback callback);
     void SetSampleRateV3(uint32_t rate, ClockStatus clock, CompletionCallback callback);

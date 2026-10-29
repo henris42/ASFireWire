@@ -1486,3 +1486,140 @@ TEST(MotuV3Protocol, ResetDuringRegistrationCannotPublishStaleRegisteredState) {
     EXPECT_EQ(result, kIOReturnOffline);
     EXPECT_FALSE(protocol.HasRegisteredAsyncAddress());
 }
+
+//==============================================================================
+// Device settings: analog input level (+4 dBu / -10 dBV) and boost switches
+//==============================================================================
+
+namespace {
+
+using ASFW::Audio::DeviceSetting;
+using ASFW::Audio::DeviceSettingsSnapshot;
+using ASFW::Audio::SettingBit;
+
+constexpr uint32_t kTravelerSwVersion = 0x000009U;
+
+// The clock status and optical config every settings read starts with.
+void ProgramClockAndOptical(RecordingBus& bus) {
+    bus.readValues[LowOf(Reg::ClockStatusV2)] = 0x0000000cU;  // 48 kHz, word clock
+    bus.readValues[LowOf(Reg::InOutConfV2)] = 0x00000000U;
+}
+
+std::optional<DeviceSettingsSnapshot> ReadSettings(MotuProtocol& protocol) {
+    std::optional<DeviceSettingsSnapshot> snapshot;
+    protocol.ReadDeviceSettings([&](IOReturn status, DeviceSettingsSnapshot read) {
+        EXPECT_EQ(status, kIOReturnSuccess);
+        snapshot = read;
+    });
+    return snapshot;
+}
+
+std::optional<IOReturn> Apply(MotuProtocol& protocol, DeviceSetting setting, uint32_t value) {
+    std::optional<IOReturn> result;
+    protocol.ApplyDeviceSetting(setting, value, [&](IOReturn status) { result = status; });
+    return result;
+}
+
+} // namespace
+
+TEST(MotuDeviceSettingsTests, The828mk2OffersLevelAndBoostOnAnalog1To8) {
+    RecordingBus bus;
+    ProgramClockAndOptical(bus);
+    bus.readValues[LowOf(Reg::InputLevelV2)] = 0x00000003U;  // analog 1-2 at +4 dBu
+    bus.readValues[LowOf(Reg::InputBoostV2)] = 0x00000080U;  // analog 8 boosted
+    RouteState routes;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    const auto snapshot = ReadSettings(protocol);
+
+    ASSERT_TRUE(snapshot.has_value());
+    EXPECT_EQ(snapshot->analogInputSwitches, 0xffU);
+    EXPECT_EQ(snapshot->inputLevelRaw, 0x03U);
+    EXPECT_EQ(snapshot->inputBoostRaw, 0x80U);
+    EXPECT_NE(snapshot->supportedSettings & SettingBit(DeviceSetting::InputLevels), 0U);
+    EXPECT_NE(snapshot->supportedSettings & SettingBit(DeviceSetting::InputBoosts), 0U);
+    // The clock and optical settings are read as before.
+    EXPECT_EQ(snapshot->clockSource, 4U);
+    EXPECT_NE(snapshot->supportedSettings & SettingBit(DeviceSetting::ClockSource), 0U);
+}
+
+TEST(MotuDeviceSettingsTests, ALevelChangeRewritesOnlyTheInputBits) {
+    RecordingBus bus;
+    bus.readValues[LowOf(Reg::InputLevelV2)] = 0xa5a50003U;
+    RouteState routes;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    EXPECT_EQ(Apply(protocol, DeviceSetting::InputLevels, 0x0fU), kIOReturnSuccess);
+
+    ASSERT_EQ(bus.writes.size(), 1U);
+    EXPECT_EQ(bus.writes[0].addressLo, LowOf(Reg::InputLevelV2));
+    EXPECT_EQ(bus.writes[0].value, 0xa5a5000fU);
+}
+
+TEST(MotuDeviceSettingsTests, ABoostChangeWritesTheBoostRegister) {
+    RecordingBus bus;
+    bus.readValues[LowOf(Reg::InputBoostV2)] = 0x000000ffU;
+    RouteState routes;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    EXPECT_EQ(Apply(protocol, DeviceSetting::InputBoosts, 0x00U), kIOReturnSuccess);
+
+    ASSERT_EQ(bus.writes.size(), 1U);
+    EXPECT_EQ(bus.writes[0].addressLo, LowOf(Reg::InputBoostV2));
+    EXPECT_EQ(bus.writes[0].value, 0x00000000U);
+}
+
+TEST(MotuDeviceSettingsTests, TheTravelerSwitchesOnlyAnalog5To8) {
+    RecordingBus bus;
+    ProgramClockAndOptical(bus);
+    bus.readValues[LowOf(Reg::InputLevelV2)] = 0x0000000fU;
+    bus.readValues[LowOf(Reg::InputBoostV2)] = 0x00000000U;
+    RouteState routes;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, kTravelerSwVersion);
+
+    const auto snapshot = ReadSettings(protocol);
+    ASSERT_TRUE(snapshot.has_value());
+    EXPECT_EQ(snapshot->analogInputSwitches, 0xf0U);
+
+    // Analog 1 is a mic input: refused before any bus traffic.
+    bus.reads.clear();
+    EXPECT_EQ(Apply(protocol, DeviceSetting::InputLevels, 0x01U), kIOReturnBadArgument);
+    EXPECT_TRUE(bus.reads.empty());
+    EXPECT_TRUE(bus.writes.empty());
+
+    EXPECT_EQ(Apply(protocol, DeviceSetting::InputLevels, 0x30U), kIOReturnSuccess);
+    ASSERT_EQ(bus.writes.size(), 1U);
+    EXPECT_EQ(bus.writes[0].value, 0x0000003fU);  // analog 1-4 bits untouched
+}
+
+TEST(MotuDeviceSettingsTests, AModelWithoutSwitchesNeitherReadsNorWritesThem) {
+    RecordingBus bus;
+    ProgramClockAndOptical(bus);
+    RouteState routes;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, kUltraliteSwVersion);
+
+    const auto snapshot = ReadSettings(protocol);
+
+    ASSERT_TRUE(snapshot.has_value());
+    EXPECT_EQ(snapshot->analogInputSwitches, 0U);
+    EXPECT_EQ(snapshot->supportedSettings & SettingBit(DeviceSetting::InputLevels), 0U);
+    EXPECT_EQ(std::count(bus.reads.begin(), bus.reads.end(), LowOf(Reg::InputLevelV2)), 0);
+    EXPECT_EQ(std::count(bus.reads.begin(), bus.reads.end(), LowOf(Reg::InputBoostV2)), 0);
+    EXPECT_EQ(Apply(protocol, DeviceSetting::InputLevels, 0x01U), kIOReturnUnsupported);
+    EXPECT_TRUE(bus.writes.empty());
+}
+
+TEST(MotuDeviceSettingsTests, AnUnreadableSwitchRegisterLeavesClockAndOpticalSettable) {
+    RecordingBus bus;
+    ProgramClockAndOptical(bus);  // no value for the level register: a short read
+    RouteState routes;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    const auto snapshot = ReadSettings(protocol);
+
+    ASSERT_TRUE(snapshot.has_value());
+    EXPECT_EQ(snapshot->analogInputSwitches, 0U);
+    EXPECT_EQ(snapshot->supportedSettings & SettingBit(DeviceSetting::InputLevels), 0U);
+    EXPECT_NE(snapshot->supportedSettings & SettingBit(DeviceSetting::ClockSource), 0U);
+    EXPECT_NE(snapshot->supportedSettings & SettingBit(DeviceSetting::OpticalInputMode), 0U);
+}
