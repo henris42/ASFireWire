@@ -203,9 +203,9 @@ TEST(MotuProtocolTests, DecodesTheClockStatusObservedOnHardware) {
     EXPECT_EQ(protocol.CachedSampleRateHz(), 48000U);
 }
 
-// The clock read feeds the HAL clock source control (b146: every unit ran on
-// word clock, 0x0b14 = 0x0c at 48 kHz, while Audio MIDI Setup showed
-// "Default"). Nothing is published before a read succeeds.
+// The clock read feeds the HAL clock source control and a failed start's log
+// (b146: every unit ran on word clock, 0x0b14 = 0x0c at 48 kHz, while Audio
+// MIDI Setup showed "Default"). Nothing is published before a read succeeds.
 TEST(MotuProtocolTests, TheClockReadNamesTheSourceTheUnitFollows) {
     RecordingBus bus;
     bus.readValue = 0x0000000cU;  // 48 kHz, word clock on BNC
@@ -214,6 +214,7 @@ TEST(MotuProtocolTests, TheClockReadNamesTheSourceTheUnitFollows) {
     std::vector<std::pair<uint32_t, std::string>> choices;
     uint32_t current = 99;
     EXPECT_FALSE(protocol.GetClockSourceChoices(choices, current));
+    EXPECT_EQ(protocol.ExternalClockSourceName(), nullptr);
 
     protocol.ReadClockStatus([](IOReturn, ClockStatus) {});
 
@@ -222,9 +223,13 @@ TEST(MotuProtocolTests, TheClockReadNamesTheSourceTheUnitFollows) {
     ASSERT_EQ(choices.size(), 4U);
     EXPECT_EQ(choices[0], (std::pair<uint32_t, std::string>{0U, "Internal"}));
     EXPECT_EQ(choices[3], (std::pair<uint32_t, std::string>{4U, "Word clock"}));
+    ASSERT_NE(protocol.ExternalClockSourceName(), nullptr);
+    EXPECT_STREQ(protocol.ExternalClockSourceName(), "Word clock");
 
+    // On its own clock there is no external input to blame.
     bus.readValue = 0x00000008U;
     protocol.ReadClockStatus([](IOReturn, ClockStatus) {});
+    EXPECT_EQ(protocol.ExternalClockSourceName(), nullptr);
     ASSERT_TRUE(protocol.GetClockSourceChoices(choices, current));
     EXPECT_EQ(current, 0U);
 }

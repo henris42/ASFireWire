@@ -121,6 +121,7 @@ public:
     void SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept override;
     [[nodiscard]] StartReadinessPolicy GetStartReadinessPolicy() const noexcept override;
     [[nodiscard]] bool RetriesRegisterStagesOnTimeout() const noexcept override { return true; }
+    [[nodiscard]] const char* ExternalClockSourceName() const noexcept override;
     [[nodiscard]] IOReturn LoadGeometry() override;
     [[nodiscard]] std::optional<AudioStreamRuntimeCaps> RuntimeCaps() const override;
     [[nodiscard]] std::expected<DuplexPrepareResult, IOReturn> Configure(

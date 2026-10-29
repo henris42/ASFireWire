@@ -90,6 +90,11 @@ public:
     // its stages are idempotent register writes and reads. CMP families keep
     // their single attempt: a repeated connect is not idempotent.
     [[nodiscard]] virtual bool RetriesRegisterStagesOnTimeout() const noexcept { return false; }
+
+    // The name of the external clock input the device follows, as of its last
+    // clock read; null when it runs on its own clock or the family cannot say.
+    // Only names the input in a failed start's log.
+    [[nodiscard]] virtual const char* ExternalClockSourceName() const noexcept { return nullptr; }
     // Clock and lock state, for the pre-stream clock gate.
     [[nodiscard]] virtual std::expected<DuplexHealthResult, IOReturn> ReadHealth(uint32_t timeoutMs) = 0;
     // Arm the streams the device receives (host playback).

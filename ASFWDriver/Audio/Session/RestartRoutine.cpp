@@ -642,7 +642,20 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
         const auto elapsed = UptimeMilliseconds() - readyStartMs;
         if (elapsed >= readiness.minimumHostRunMs &&
             (!readiness.requireTransmitTiming || captureOnly || transmitOnly || request.binding->IsTransmitTimingReady())) break;
-        if (elapsed >= readiness.timeoutMs + holdMs) return rollback(kIOReturnTimeout, "TransmitTimingReady");
+        if (elapsed >= readiness.timeoutMs + holdMs) {
+            // A unit clocked from an external input that is missing or not
+            // locked gives no usable timing; say which input to check, so a
+            // clock problem is not read as a driver fault (b146: a unit on
+            // word clock failed every start with a bare timeout).
+            if (const char* source = family.ExternalClockSourceName()) {
+                ASFW_LOG_ERROR(Audio,
+                               "[Session] no transmit timing after %llu ms: the unit is clocked from "
+                               "%{public}s, and that input is probably absent or not locked; check the "
+                               "%{public}s signal GUID=%llx",
+                               elapsed, source, source, guid);
+            }
+            return rollback(kIOReturnTimeout, "TransmitTimingReady");
+        }
         IOSleep(1);
     }
 

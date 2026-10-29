@@ -520,6 +520,15 @@ namespace {
 
 } // namespace
 
+const char* MotuProtocol::ExternalClockSourceName() const noexcept {
+    const uint32_t source = cachedClockSource_.load(std::memory_order_acquire);
+    if (!IsV2() || source == kNoClockSource || source == static_cast<uint32_t>(ClockSourceV2::Internal) ||
+        source == static_cast<uint32_t>(ClockSourceV2::Sph)) {
+        return nullptr;
+    }
+    return ClockSourceNameV2(source);
+}
+
 bool MotuProtocol::GetClockSourceChoices(std::vector<std::pair<uint32_t, std::string>>& choices,
                                          uint32_t& current) const {
     choices.clear();
