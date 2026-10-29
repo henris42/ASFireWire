@@ -1140,6 +1140,10 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
     // the fill can meet a frame before CoreAudio writes it in this session
     // (b146: a cold start replayed about 170 ms of it). Silence it before IO.
     ClearPlaybackRing(ivars);
+    // Peaks are per interval of one stream: the previous start's last
+    // interval must not open this start's [TxContent] line.
+    (void)ivars.runtime.motuPayloadWriter.TakePeakWrittenQ24();
+    (void)ivars.runtime.txStreamEngine.TakePeakWrittenQ24(nullptr);
     // The interval minimum belongs to one stream: drop the previous one's.
     (void)ivars.runtime.txStreamEngine.TakeMinFinalityMarginPackets();
     ivars.runtime.txMissedFinalityAtStart =
