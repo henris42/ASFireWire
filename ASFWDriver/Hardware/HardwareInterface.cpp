@@ -88,8 +88,10 @@ kern_return_t HardwareInterface::Attach(IOService* owner, IOService* provider) {
         return kr;
     }
 
-#ifndef ASFW_HOST_TEST
     uint16_t vendorId = 0, deviceId = 0;
+    uint16_t command = 0;
+    uint16_t commandVerify = 0;
+#ifndef ASFW_HOST_TEST
     pci->ConfigurationRead16(kIOPCIConfigurationOffsetVendorID, &vendorId);
     pci->ConfigurationRead16(kIOPCIConfigurationOffsetDeviceID, &deviceId);
     if (vendorId == 0xFFFF) {
@@ -103,15 +105,15 @@ kern_return_t HardwareInterface::Attach(IOService* owner, IOService* provider) {
         ASFW_LOG(Hardware, "⚠️  Agere/LSI chipset detected");
     }
 
-    uint16_t command = 0;
     pci->ConfigurationRead16(kIOPCIConfigurationOffsetCommand, &command);
+    bringUpTrace_.Step("pci %04x:%04x open, command 0x%04x; enabling memory space and bus master",
+                       vendorId, deviceId, command);
 
     const uint16_t desired = command | kRequiredCommandBits;
     if (desired != command) {
         pci->ConfigurationWrite16(kIOPCIConfigurationOffsetCommand, desired);
     }
 
-    uint16_t commandVerify = 0;
     pci->ConfigurationRead16(kIOPCIConfigurationOffsetCommand, &commandVerify);
     if ((commandVerify & kRequiredCommandBits) != kRequiredCommandBits) {
         pci->Close(owner);
@@ -155,6 +157,8 @@ kern_return_t HardwareInterface::Attach(IOService* owner, IOService* provider) {
     hardwareGoneReason_.store(static_cast<uint8_t>(HardwareGoneReason::kNone),
                               std::memory_order_release);
     accessGate_.Open();
+    bringUpTrace_.Step("pci command 0x%04x -> 0x%04x, BAR0 %llu bytes type %u",
+                       command, commandVerify, barSize, barType);
     return kIOReturnSuccess;
 }
 
@@ -854,6 +858,9 @@ HardwareInterface::AllocateDMA(size_t length, uint64_t options, size_t alignment
 
     ASFW_LOG_V2(Hardware, "DMA buffer allocated: iova=0x%llx size=%zu align=%zu", mappedAddress,
                 length, alignment);
+    if (bringUpTrace_.ConsoleActive()) {
+        bringUpTrace_.Step("DMA %zu bytes at 0x%llx", length, mappedAddress);
+    }
 
     return DMABuffer{.descriptor = OSSharedPtr(buffer, OSNoRetain),
                      .dmaCommand = std::move(command),
@@ -965,6 +972,16 @@ HardwareInterface::AllocateDMAPaged(size_t length, uint64_t options) {
     result.deviceAddress = result.segments.front().address;
     ASFW_LOG(Hardware, "DMA paged buffer allocated: %zu bytes in %zu page run(s), %zu window(s), first iova=0x%llx",
              length, result.segments.size(), result.windowCommands.size(), result.deviceAddress);
+    if (bringUpTrace_.ConsoleActive()) {
+        uint64_t lowest = UINT64_MAX;
+        uint64_t highestEnd = 0;
+        for (const auto& segment : result.segments) {
+            lowest = std::min<uint64_t>(lowest, segment.address);
+            highestEnd = std::max<uint64_t>(highestEnd, segment.address + segment.length);
+        }
+        bringUpTrace_.Step("DMA %zu bytes in %zu runs within 0x%llx-0x%llx", length,
+                           result.segments.size(), lowest, highestEnd - 1);
+    }
     return result;
 }
 
@@ -1153,6 +1170,7 @@ uint32_t HardwareInterface::ProbeIsochContextCount() noexcept {
     const uint32_t receiveConfirmed = confirm(receive, [](uint32_t n) { return DMAContextHelpers::IsoRcvCommandPtr(n); });
     ASFW_LOG(Hardware, "Isoch contexts implemented: IT=%u (mask bits %u) IR=%u (mask bits %u)",
              transmitConfirmed, transmit, receiveConfirmed, receive);
+    bringUpTrace_.Step("isoch contexts IT %u IR %u", transmitConfirmed, receiveConfirmed);
     return transmitConfirmed < receiveConfirmed ? transmitConfirmed : receiveConfirmed;
 }
 

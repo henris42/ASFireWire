@@ -399,6 +399,7 @@
 		B6C8B50E9320B7B8C8835734 /* Submitter.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7C6E6B639FFA01B9719F0C9C /* Submitter.cpp */; };
 		B6E2C5C7E735F9E2CFC4D82A /* ASFWMCPHardwareSmokeRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2F29A145F23C0F76691EC4F /* ASFWMCPHardwareSmokeRunner.swift */; };
 		B6E71966B40BEADE279FB2D6 /* DiceWireTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A754FD91C272D2F8CCC9EE0 /* DiceWireTests.swift */; };
+		B8495B3BDCE5327CE40F4638 /* ConsoleTrace.cpp in Sources */ = {isa = PBXBuildFile; fileRef = AD7E638692E931B45BDF5EED /* ConsoleTrace.cpp */; };
 		B88224662B577BC1F022CE84 /* AsyncSubsystem.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3FD92A76AA32886FBDD522A0 /* AsyncSubsystem.cpp */; };
 		B918D8919D1BAC0AE4587DF2 /* AudioDriverConfig.cpp in Sources */ = {isa = PBXBuildFile; fileRef = B8B02346383E39CA66366AAE /* AudioDriverConfig.cpp */; };
 		BACFCC74111E0AA826093480 /* DriverLogViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34ABE94694B100B9B628072C /* DriverLogViewModel.swift */; };
@@ -1319,6 +1320,7 @@
 		AC7A2164238E9D98E27E762F /* ASFWTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWTests.swift; sourceTree = "<group>"; };
 		ACBDCEDBC88AE37C5679DEE2 /* TopologyHandler.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = TopologyHandler.cpp; sourceTree = "<group>"; };
 		AD43066EE46FD26D0E8F3607 /* AnalyzerCalibrationState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalyzerCalibrationState.swift; sourceTree = "<group>"; };
+		AD7E638692E931B45BDF5EED /* ConsoleTrace.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ConsoleTrace.cpp; sourceTree = "<group>"; };
 		ADDC685CE0354DEC6F205B48 /* DVCaptureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DVCaptureView.swift; sourceTree = "<group>"; };
 		AE01B2EA28A717F023AFC23E /* AudioSubunitDescriptor.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AudioSubunitDescriptor.hpp; sourceTree = "<group>"; };
 		AE208856E70C5C9AC1A54F71 /* ASFW-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "ASFW-Bridging-Header.h"; sourceTree = "<group>"; };
@@ -1421,6 +1423,7 @@
 		C5EB42ED67DD30C52C95743F /* FCPTransport.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = FCPTransport.hpp; sourceTree = "<group>"; };
 		C64C8AC9F441E49E97E2C236 /* BusResetPacketCapture.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = BusResetPacketCapture.hpp; sourceTree = "<group>"; };
 		C672AC32C5C2FA37BF966A50 /* TopologyTypes.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = TopologyTypes.hpp; sourceTree = "<group>"; };
+		C675DE777CAC98A366E20CA9 /* ConsoleTrace.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ConsoleTrace.hpp; sourceTree = "<group>"; };
 		C690E61167E6B1DCFB0725C2 /* SidebarGroup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarGroup.swift; sourceTree = "<group>"; };
 		C69AC3B622A686464AF6F6B9 /* DriverContext.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = DriverContext.cpp; sourceTree = "<group>"; };
 		C79124724AED4E250F663ED1 /* MemoryMapView.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MemoryMapView.hpp; sourceTree = "<group>"; };
@@ -2560,6 +2563,8 @@
 		64703FF5DF32EA80FEFED722 /* Logging */ = {
 			isa = PBXGroup;
 			children = (
+				AD7E638692E931B45BDF5EED /* ConsoleTrace.cpp */,
+				C675DE777CAC98A366E20CA9 /* ConsoleTrace.hpp */,
 				36677308040EB4AD3F4E9527 /* IOReturnName.hpp */,
 				ED4A3A1028716DA2733167A2 /* LogConfig.cpp */,
 				70353FE22B6FC379ACA5F0D5 /* LogConfig.hpp */,
@@ -4160,6 +4165,7 @@
 				E5B0BB14C3239E88402A3D8D /* ConfigROMParser.cpp in Sources */,
 				5265A95B80F541E35B75C761 /* ConfigROMStager.cpp in Sources */,
 				63BF68577A00D0DEFF5D03AD /* ConfigROMStore.cpp in Sources */,
+				B8495B3BDCE5327CE40F4638 /* ConsoleTrace.cpp in Sources */,
 				8E4205A0D0AE5828E6BD320E /* ContextManager.cpp in Sources */,
 				60932C294CA3A780B880C4E2 /* ControllerConfig.cpp in Sources */,
 				0CB9E9932DEA395E4C22999E /* ControllerCore.cpp in Sources */,

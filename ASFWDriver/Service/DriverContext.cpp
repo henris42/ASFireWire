@@ -429,6 +429,17 @@ kern_return_t DriverWiring::PrepareInterrupts(ASFWDriver& service, IOService* pr
         }
         ASFW_LOG(Controller, "PrepareInterrupts: using %{public}s interrupts (last status 0x%08x)",
                  mode, status);
+        // Bit 0 of the kernel's type is kIOInterruptTypeLevel (IOKit/IOInterrupts.h);
+        // a level source stays disabled until the driver has run its handler
+        // (xnu IOUserServer.cpp, IOInterruptDispatchSourceInterrupt).
+        uint64_t type = 0;
+        const kern_return_t typeStatus = IOInterruptDispatchSource::GetInterruptType(pci, 0, &type);
+        if (ctx.deps.hardware) {
+            ctx.deps.hardware->BringUpTrace().Step(
+                "interrupts %s, source 0 type 0x%llx (%s, status 0x%08x)", mode, type,
+                typeStatus != kIOReturnSuccess ? "unknown" : ((type & 1U) != 0 ? "level" : "edge"),
+                typeStatus);
+        }
     }
 
     if (!ctx.interruptAction) {

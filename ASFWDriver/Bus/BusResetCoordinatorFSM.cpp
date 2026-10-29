@@ -98,6 +98,11 @@ BusResetCoordinator::StepResult BusResetCoordinator::StepWaitingSelfID() {
 
         const bool decoded = DecodeSelfID();
         ConsumeSelfIDLatch();
+        if (hardware_ != nullptr && hardware_->BringUpTrace().ConsoleActive()) {
+            hardware_->BringUpTrace().Step("self-IDs %s, generation %u",
+                                           decoded ? "decoded" : "not decoded",
+                                           static_cast<unsigned>(lastGeneration_.value));
+        }
         if (decoded) {
             // Anchor post-reset timing gates to Self-ID completion, BEFORE the
             // topology graph is built, so they stay armed even if that build

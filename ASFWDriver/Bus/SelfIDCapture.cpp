@@ -134,6 +134,7 @@ kern_return_t SelfIDCapture::PrepareBuffers(size_t quadCapacity, HardwareInterfa
     segment_ = segment;
     segmentValid_ = true;
     quadCapacity_ = allocBytes / sizeof(uint32_t);
+    hw.BringUpTrace().Step("self-ID buffer %zu bytes at 0x%llx", allocBytes, segment.address);
 
     if (map_) {
         const uint64_t addr = map_->GetAddress();

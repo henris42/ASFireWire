@@ -91,6 +91,7 @@ kern_return_t ConfigROMStager::Prepare(HardwareInterface& hw, size_t romBytes) {
     segment_ = segment;
     dmaFlags_ = flags;
     prepared_ = true;
+    hw.BringUpTrace().Step("config ROM buffer %zu bytes at 0x%llx", romBytes, segment.address);
     // ZeroBuffer already called before PrepareForDMA to ensure physical page allocation
     return kIOReturnSuccess;
 }

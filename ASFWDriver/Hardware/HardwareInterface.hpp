@@ -21,6 +21,7 @@
 
 #include "../Common/BarrierUtils.hpp"
 #include "../Controller/ControllerTypes.hpp"
+#include "../Logging/ConsoleTrace.hpp"
 #include "../Phy/PhyPackets.hpp"
 #include "HardwareAccessGate.hpp"
 #include "RegisterMap.hpp"
@@ -182,6 +183,10 @@ class HardwareInterface {
                                        uint64_t preparedOffset, const char* what);
     [[nodiscard]] OSSharedPtr<IODMACommand> CreateDMACommand();
 
+    // Bring-up steps that also reach the kernel console, for a boot that
+    // freezes before logd keeps anything (Logging/ConsoleTrace.hpp).
+    [[nodiscard]] ASFW::Logging::ConsoleTrace& BringUpTrace() noexcept { return bringUpTrace_; }
+
     [[nodiscard]] uint32_t ReadHCControl() const noexcept;
     void SetHCControlBits(uint32_t bits) noexcept;
     void ClearHCControlBits(uint32_t bits) noexcept;
@@ -286,6 +291,7 @@ class HardwareInterface {
     void LatchHardwareGoneFromPresenceProbe(Register32 reg) const noexcept;
 
     mutable HardwareAccessGate accessGate_;
+    ASFW::Logging::ConsoleTrace bringUpTrace_;
     OSSharedPtr<IOPCIDevice> device_;
     // Scratch page VerifyDirectDMA reads the DMA view into (created on first use)
     OSSharedPtr<IOBufferMemoryDescriptor> dmaProbeScratch_;

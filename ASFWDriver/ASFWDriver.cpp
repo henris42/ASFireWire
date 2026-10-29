@@ -80,6 +80,7 @@
 #include "SCSIController/SBP2NubPublisher.hpp"
 #include "SCSIController/SBP2TargetBridge.hpp"
 #include "Shared/Memory/DMAMemoryManager.hpp"
+#include "Version/DriverVersion.hpp"
 #include <net.asfw.driver/ASFWAudioNub.h>
 
 using namespace ASFW::Driver;
@@ -461,6 +462,23 @@ void ASFWDriver::StartWatchdogFired_Impl(ASFWDriver_StartWatchdogFired_Args) {
     __builtin_trap();
 }
 
+namespace {
+// The platform expert keeps IOPlatformMapperPresent only while an IOMMU remaps
+// DMA: AppleVTD removes it when it does not start (IOPCIFamily vtd.c), as does
+// the dart=0 boot-arg (xnu IOPlatformExpert.cpp).
+const char* IommuState(IOService* provider) {
+    OSContainer* value = nullptr;
+    if (provider == nullptr ||
+        provider->SearchProperty("IOPlatformMapperPresent", kIOServicePlane,
+                                 kIOServiceSearchPropertyParents, &value) != kIOReturnSuccess ||
+        value == nullptr) {
+        return "off";
+    }
+    value->release();
+    return "on";
+}
+} // namespace
+
 kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
     if (!ivars || !ivars->context)
         return kIOReturnNoMemory;
@@ -473,6 +491,10 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
     ctx.lifecycle->MarkStageComplete(StartStage::kDependenciesReady);
     const auto failStart = [&ctx](kern_return_t status, const char* detail) {
         ASFW_LOG(Controller, "ASFWDriver::Start() failed at %{public}s: 0x%08x", detail, status);
+        if (ctx.deps.hardware) {
+            ctx.deps.hardware->BringUpTrace().Step("start failed at %s: 0x%08x", detail, status);
+            ctx.deps.hardware->BringUpTrace().Unbind();
+        }
         if (ctx.lifecycle) {
             if (const auto plan = ctx.lifecycle->BeginFailedStart(detail, mach_absolute_time())) {
                 if (plan->runTeardown) {
@@ -511,6 +533,11 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
         return failStart(kr, "dispatch queue prepare failed");
     }
     ctx.lifecycle->MarkStageComplete(StartStage::kQueueReady);
+    auto& trace = ctx.deps.hardware->BringUpTrace();
+    trace.Bind(this, ctx.workQueue.get());
+    trace.Step("start %s (%s%s), IOMMU %s", ASFW::Version::kSemanticVersion,
+               ASFW::Version::kGitCommitShort, ASFW::Version::kGitDirty ? " dirty" : "",
+               IommuState(provider));
 
     kr = ctx.deps.hardware->Attach(this, provider);
     if (kr != kIOReturnSuccess) {
@@ -530,6 +557,7 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
         return failStart(kr, "interrupt preparation failed");
     }
     ctx.lifecycle->MarkStageComplete(StartStage::kInterruptSourceReady);
+    trace.Step("async DMA setup");
 
     // Initialize AsyncSubsystem (requires hardware, workQueue, and a completion action)
     if (ctx.deps.asyncSubsystem && ctx.deps.hardware && ctx.workQueue && ctx.interruptAction) {
@@ -546,6 +574,7 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
                  traceActive ? "ENABLED" : "disabled", traceProperty ? "true" : "false");
     }
     ctx.lifecycle->MarkStageComplete(StartStage::kAsyncReady);
+    trace.Step("async DMA ready");
 
     kr = DriverWiring::PrepareWatchdog(*this, ctx);
     if (kr != kIOReturnSuccess) {
@@ -604,6 +633,7 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
         });
     }
 
+    trace.Step("controller start");
     kr = ctx.controller->Start(provider);
     if (kr != kIOReturnSuccess) {
         return failStart(kr, "controller start failed");
@@ -644,6 +674,7 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
                                 SharedStatusReason::Boot);
 
     const uint32_t initialMask = IntMaskBits::kMasterIntEnable | kBaseIntMask;
+    trace.Step("IntMaskSet 0x%08x", initialMask);
     ctx.deps.hardware->IntMaskSet(initialMask);
 
     // Register once per service instance: StartRuntime() is re-entered on wake.
@@ -677,6 +708,7 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
     // which the kernel delivers right after the PM join.
 
     ASFW_LOG(Controller, "ASFWDriver::Start() complete");
+    trace.Step("start complete");
 
     return kIOReturnSuccess;
 }
@@ -700,6 +732,7 @@ kern_return_t IMPL(ASFWDriver, Stop) {
     // Terminal service Stop must use the existing software-only teardown;
     // planned runtime quiesce while the provider is alive is separate.
     if (ivars && ivars->context && ivars->context->deps.hardware) {
+        ivars->context->deps.hardware->BringUpTrace().Unbind();
         ivars->context->deps.hardware->LatchProviderRevokedAndDrain();
     }
     RequestRuntimeQuiesce(static_cast<uint32_t>(QuiesceReason::kProviderRevoked));
@@ -1089,9 +1122,14 @@ kern_return_t IMPL(ASFWDriver, NewUserClient) {
     return kIOReturnSuccess;
 }
 
+namespace {
+// Bring-up trace: the first interrupts show on the console whether the line
+// fires at all, and whether it keeps firing with nothing pending.
+constexpr uint64_t kTracedInterrupts = 8;
+} // namespace
+
 void ASFWDriver::InterruptOccurred_Impl(ASFWDriver_InterruptOccurred_Args) {
     (void)action;
-    (void)count;
 
     // DIAGNOSTIC: Log every interrupt invocation
     ASFW_LOG_V3(Controller, "InterruptOccurred called: time=%llu count=%llu", time, count);
@@ -1116,7 +1154,7 @@ void ASFWDriver::InterruptOccurred_Impl(ASFWDriver_InterruptOccurred_Args) {
     // ticks made every downstream "now(ns) − timestamp" ≈ uptime, which silently
     // defeated the IEEE 1394-2008 §8.2.1 two-second repeated-reset holdoff and
     // forced the Annex H post-reset timing gates permanently open.
-    ctx.irqEntries.fetch_add(1, std::memory_order_relaxed);
+    const uint64_t irqEntry = ctx.irqEntries.fetch_add(1, std::memory_order_relaxed) + 1;
     struct IrqExit {
         ServiceContext& context;
         ~IrqExit() { context.irqExits.fetch_add(1, std::memory_order_release); }
@@ -1124,12 +1162,18 @@ void ASFWDriver::InterruptOccurred_Impl(ASFWDriver_InterruptOccurred_Args) {
     const uint64_t timestampNs = ASFW::Timing::hostTicksToNanos(time);
     auto& hardware = *ctx.deps.hardware;
     auto* interrupts = ctx.deps.interrupts.get();
+    bool irqTraced = false;
     const uint32_t stillPending = ASFW::Driver::ServiceUntilDeasserted(
         [&] { return hardware.CaptureInterruptSnapshot(timestampNs); },
         [&] { return interrupts != nullptr ? interrupts->EnabledMask() : 0U; },
         [&](const ASFW::Driver::InterruptSnapshot& snap) {
             ASFW_LOG_V2(Controller, "InterruptOccurred: captured snapshot intEvent=0x%08x",
                         snap.intEvent);
+            if (irqEntry <= kTracedInterrupts && !irqTraced) {
+                irqTraced = true;
+                hardware.BringUpTrace().Step("interrupt %llu (count %llu): IntEvent 0x%08x",
+                                             irqEntry, count, snap.intEvent);
+            }
             ctx.interruptDispatcher.HandleSnapshot(snap, *ctx.controller, hardware,
                                                    *ctx.workQueue, ctx.isochLanes,
                                                    ctx.statusPublisher,

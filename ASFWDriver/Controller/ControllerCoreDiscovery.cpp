@@ -499,6 +499,14 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
     ASFW_LOG(Discovery, "ROM scan complete for gen=%u, processing results...", gen.value);
 
     ASFW_LOG(Discovery, "Discovered %zu ROMs (hadBusy=%d)", roms.size(), hadBusyNodes);
+    if (deps_.hardware) {
+        auto& trace = deps_.hardware->BringUpTrace();
+        if (trace.ConsoleActive()) {
+            trace.Step("ROM scan generation %u: %zu ROMs", static_cast<unsigned>(gen.value),
+                       roms.size());
+            trace.Finish("bus up");
+        }
+    }
 
     if (deps_.busReset) {
         if (hadBusyNodes) {

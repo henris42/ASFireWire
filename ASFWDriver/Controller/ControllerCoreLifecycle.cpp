@@ -45,6 +45,8 @@ namespace {
 // NOTE: OHCI hardware constants moved to OHCIConstants.hpp
 
 kern_return_t EnableLinkPowerStatus(ASFW::Driver::HardwareInterface& hw) {
+    hw.BringUpTrace().Step("link power status: HCControlSet 0x%08x",
+                           ASFW::Driver::kPostedWritePrimingBits);
     hw.SetHCControlBits(ASFW::Driver::kPostedWritePrimingBits);
 
     bool lpsAchieved = false;
@@ -296,6 +298,7 @@ kern_return_t PrepareSelfIdBuffer(const std::shared_ptr<ASFW::Driver::SelfIDCapt
         return kIOReturnSuccess;
     }
 
+    hw.BringUpTrace().Step("self-ID buffer");
     const kern_return_t prepStatus = selfId->PrepareBuffers(512, hw);
     if (prepStatus != kIOReturnSuccess) {
         ASFW_LOG(Hardware, "Self-ID PrepareBuffers failed: 0x%08x (DMA allocation failed)",
@@ -308,6 +311,7 @@ kern_return_t PrepareSelfIdBuffer(const std::shared_ptr<ASFW::Driver::SelfIDCapt
         ASFW_LOG(Hardware, "Self-ID Arm failed: 0x%08x", armStatus);
         return armStatus;
     }
+    hw.BringUpTrace().Step("self-ID buffer armed");
 
     ASFW_LOG(
         Hardware,
@@ -324,6 +328,7 @@ void SeedInitialInterruptMask(ASFW::Driver::HardwareInterface& hw,
 
     const uint32_t initialMask =
         ASFW::Driver::kBaseIntMask | ASFW::Driver::IntMaskBits::kMasterIntEnable;
+    hw.BringUpTrace().Step("IntMask cleared, IntMaskSet 0x%08x", initialMask);
     access.Write(ASFW::Driver::Register32::kIntMaskSet, initialMask);
     if (interrupts) {
         interrupts->EnableInterrupts(initialMask);
@@ -351,6 +356,7 @@ void SeedInitialInterruptMask(ASFW::Driver::HardwareInterface& hw,
 // reset the bus, and the 828 Mk3 stayed unseen until the cable was replugged.
 kern_return_t ForceInitialBusReset(ASFW::Driver::HardwareInterface& hw) {
     ASFW_LOG(Hardware, "Forcing bus reset via PHY to guarantee Config ROM shadow activation");
+    hw.BringUpTrace().Step("forcing a bus reset");
     const bool forced = hw.InitiateBusReset(false);
     if (!forced) {
         if (hw.HardwareGone()) {
@@ -362,7 +368,9 @@ kern_return_t ForceInitialBusReset(ASFW::Driver::HardwareInterface& hw) {
     return kIOReturnSuccess;
 }
 
-kern_return_t ArmAsyncReceiveContexts(ASFW::Async::IAsyncControllerPort* asyncController) {
+kern_return_t ArmAsyncReceiveContexts(ASFW::Async::IAsyncControllerPort* asyncController,
+                                      ASFW::Driver::HardwareInterface& hw) {
+    hw.BringUpTrace().Step("AR contexts: run");
     if (!asyncController) {
         ASFW_LOG(Controller, "No AsyncSubsystem - DMA contexts not armed");
         return kIOReturnSuccess;
@@ -375,6 +383,7 @@ kern_return_t ArmAsyncReceiveContexts(ASFW::Async::IAsyncControllerPort* asyncCo
     }
 
     ASFW_LOG(Hardware, "AR contexts armed successfully");
+    hw.BringUpTrace().Step("AR contexts running");
     return kIOReturnSuccess;
 }
 
@@ -559,6 +568,7 @@ kern_return_t ControllerCore::Start(IOService* provider) {
     running_ = true;
     ASFW_LOG(Controller,
              "Enabling IOInterruptDispatchSource AFTER hardware staging (Linux ordering)...");
+    deps_.hardware->BringUpTrace().Step("interrupt source enable");
     deps_.interrupts->Enable();
     ASFW_LOG(Controller, "✓ IOInterruptDispatchSource enabled");
 
@@ -618,6 +628,7 @@ kern_return_t ControllerCore::PerformSoftReset() const {
 
     auto& hw = *deps_.hardware;
     ASFW_LOG(Hardware, "Performing software reset...");
+    hw.BringUpTrace().Step("soft reset");
     hw.SetHCControlBits(HCControlBits::kSoftReset);
 
     using ASFW::Driver::kSoftResetPollUsec;
@@ -632,6 +643,7 @@ kern_return_t ControllerCore::PerformSoftReset() const {
     }
 
     ASFW_LOG(Hardware, "Software reset complete");
+    hw.BringUpTrace().Step("soft reset done, HCControl 0x%08x", hw.ReadHCControl());
     return kIOReturnSuccess;
 }
 
@@ -695,6 +707,7 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
         version = versionAccess.Read(Register32::kVersion);
     }
     ohciVersion_ = version & 0x00FF00FF; // Store for feature detection
+    hw.BringUpTrace().Step("LPS on, OHCI version 0x%08x", version);
     const bool isOHCI_1_1_OrLater = (ohciVersion_ >= ASFW::Driver::kOHCI_1_1);
 
     // Step 3a: Enable OHCI 1.1+ features if supported
@@ -734,6 +747,8 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
     }
 
     phyConfigOk_ = phyConfigOk;
+    hw.BringUpTrace().Step("PHY configured (programPhyEnable %d, ok %d)",
+                           programPhyEnableSupported ? 1 : 0, phyConfigOk ? 1 : 0);
 
     // Step 5b: Finalize PHY-Link enhancement configuration (OHCI §5.7.2 + §5.7.3)
     // Per OHCI §5.7.2: "Software should clear programPhyEnable once the PHY and Link
@@ -773,6 +788,8 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
     // TODO(ASFW-DMA): Confirm whether remote DMA still requires this register programming.
     // Per Linux ohci_enable(): Don't pre-write NodeID; bus reset will assign it from Self-ID
     // The kProvisionalNodeId value would be immediately overwritten anyway
+    hw.BringUpTrace().Step("config ROM staged; LinkControlSet 0x%08x",
+                           ASFW::Driver::kDefaultLinkControl);
     hw.SetLinkControlBits(ASFW::Driver::kDefaultLinkControl);
     ASFW_LOG(Hardware,
              "LinkControl: rcvSelfID | rcvPhyPkt | cycleTimerEnable "
@@ -809,12 +826,13 @@ kern_return_t ControllerCore::EnableInterruptsAndStartBus() {
 
     ASFW_LOG(Hardware,
              "Setting linkEnable + BIBimageValid atomically - will trigger auto bus reset");
+    hw.BringUpTrace().Step("linkEnable + BIBimageValid (the link starts DMA)");
     hw.SetHCControlBits(HCControlBits::kLinkEnable | HCControlBits::kBibImageValid);
     if (const kern_return_t resetKr = ForceInitialBusReset(hw); resetKr != kIOReturnSuccess) {
         return resetKr;
     }
 
-    const kern_return_t armStatus = ArmAsyncReceiveContexts(deps_.asyncController.get());
+    const kern_return_t armStatus = ArmAsyncReceiveContexts(deps_.asyncController.get(), hw);
     if (armStatus != kIOReturnSuccess) {
         return armStatus;
     }
