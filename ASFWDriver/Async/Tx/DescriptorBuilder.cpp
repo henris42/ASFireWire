@@ -52,9 +52,16 @@ namespace {
 } // namespace
 
 DescriptorBuilder::DescriptorBuilder(DescriptorRing& ring, DMAMemoryManager& dmaManager)
-    : ring_(ring), dmaManager_(dmaManager) {
+    : ring_(ring), dmaManager_(dmaManager), allocationLock_(IOLockAlloc()) {
     // Start allocations after the sentinel descriptor at ring tail
     nextAllocationIndex_ = ring_.Tail();
+}
+
+DescriptorBuilder::~DescriptorBuilder() {
+    if (allocationLock_) {
+        IOLockFree(allocationLock_);
+        allocationLock_ = nullptr;
+    }
 }
 
 size_t DescriptorBuilder::ReserveBlocks(uint8_t blocks) noexcept {

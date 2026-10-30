@@ -14,7 +14,10 @@
 //   CommandPtr on the furthest fetched block (OHCI §7.7). A zero-status head
 //   is still in flight; Linux stops and waits there (ohci.c:1550-1552).
 
+#include <atomic>
+#include <chrono>
 #include <cstring>
+#include <thread>
 #include <vector>
 #include <gtest/gtest.h>
 
@@ -345,6 +348,82 @@ TEST_F(ATCompletionScanTest, CompletedPacketKeepsTheBranchAnIdleContextResumesFr
     EXPECT_EQ(finished.last->branchWord, link) << "the WAKE resume link must survive the completion";
     EXPECT_EQ(finished.last->xferStatus, 0u);
     EXPECT_EQ(ring_.Head(), appended.startIndex);
+}
+
+// b184: two units started at once and two threads built requests in the same
+// millisecond. The builder allocates at the ring's tail, which only the
+// submit advances, so both took the same descriptors. Builders hold the
+// allocation guard from building until the chain is queued.
+class ATConcurrentSubmitTest : public ::testing::Test {
+protected:
+    HardwareInterface hw_{};
+    DMAMemoryManager dma_{};
+    DescriptorRing ring_{};
+    ATRequestContext ctx_{};
+    std::unique_ptr<DescriptorBuilder> builder_;
+    std::unique_ptr<ATManager<ATRequestContext, DescriptorRing, ATRequestTag>> manager_;
+
+    void SetUp() override {
+        constexpr size_t kNumDescriptors = 64;
+        ASSERT_TRUE(dma_.Initialize(hw_, 64 * 1024));
+        auto region = dma_.AllocateRegion(kNumDescriptors * sizeof(HW::OHCIDescriptor));
+        ASSERT_TRUE(region.has_value());
+        auto* descriptors = reinterpret_cast<HW::OHCIDescriptor*>(region->virtualBase);
+        ASSERT_TRUE(ring_.Initialize(std::span<HW::OHCIDescriptor>{descriptors, kNumDescriptors}));
+        ASSERT_TRUE(ring_.Finalize(region->deviceBase));
+        ASSERT_EQ(ctx_.Initialize(hw_, ring_, dma_), kIOReturnSuccess);
+        builder_ = std::make_unique<DescriptorBuilder>(ring_, dma_);
+        manager_ = std::make_unique<ATManager<ATRequestContext, DescriptorRing, ATRequestTag>>(
+            ctx_, ring_, *builder_);
+    }
+
+    void TearDown() override {
+        manager_.reset();
+        builder_.reset();
+    }
+
+    DescriptorBuilder::DescriptorChain BuildQuadlet() {
+        const std::array<uint8_t, 16> header{};
+        return builder_->BuildTransactionChain(header.data(), header.size(), 0, 0, false, 0);
+    }
+};
+
+TEST_F(ATConcurrentSubmitTest, ChainsBuiltBeforeASubmitShareTheirSlots) {
+    // The hazard the guard exists for.
+    const auto first = BuildQuadlet();
+    const auto second = BuildQuadlet();
+    ASSERT_FALSE(first.Empty());
+    ASSERT_FALSE(second.Empty());
+    EXPECT_EQ(first.firstRingIndex, second.firstRingIndex);
+}
+
+TEST_F(ATConcurrentSubmitTest, SecondBuilderWaitsForTheFirstSubmitAndGetsTheNextSlots) {
+    std::atomic<bool> otherBuilt{false};
+    size_t otherIndex = SIZE_MAX;
+    size_t firstIndex = SIZE_MAX;
+    std::thread other;
+    {
+        DescriptorBuilder::AllocationGuard allocation(*builder_);
+        auto chain = BuildQuadlet();
+        ASSERT_FALSE(chain.Empty());
+        firstIndex = chain.firstRingIndex;
+
+        other = std::thread([&] {
+            DescriptorBuilder::AllocationGuard otherAllocation(*builder_);
+            auto otherChain = BuildQuadlet();
+            otherIndex = otherChain.firstRingIndex;
+            otherBuilt.store(true);
+            EXPECT_EQ(manager_->Submit(std::move(otherChain), {}), kIOReturnSuccess);
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        EXPECT_FALSE(otherBuilt.load()) << "the other builder must wait for this submit";
+        ASSERT_EQ(manager_->Submit(std::move(chain), {}), kIOReturnSuccess);
+        hw_.SetTestRegister(ATRequestTag::kControlSetReg, kContextControlRunBit);
+    }
+    other.join();
+    EXPECT_TRUE(otherBuilt.load());
+    EXPECT_EQ(otherIndex, (firstIndex + 2) % ring_.Capacity()) << "the next packet's slots, not the same ones";
+    EXPECT_EQ(ring_.Tail(), (firstIndex + 4) % ring_.Capacity());
 }
 
 } // namespace

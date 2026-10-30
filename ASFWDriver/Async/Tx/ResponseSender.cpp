@@ -112,6 +112,8 @@ void ResponseSender::SendResponse(const ARPacketView& request,
 
     // BuildTransactionChain takes the header as a byte span; reinterpret the
     // host-order quadlet buffer the same way AsyncCommandImpl/SendWriteResponse do.
+    // Held until the chain is submitted (DescriptorBuilder::AllocationGuard).
+    DescriptorBuilder::AllocationGuard allocation(builder_);
     auto chain = builder_.BuildTransactionChain(
         reinterpret_cast<const uint8_t*>(header),
         headerBytes,

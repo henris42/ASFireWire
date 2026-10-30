@@ -135,7 +135,10 @@ AsyncHandle AsyncCommand<Derived>::Submit(AsyncSubsystem& subsys) {
     // needsFlush = true for block operations with scatter/gather DMA (complex)
     // needsFlush = false for quadlet operations without DMA (simple)
     const bool needsFlush = (payloadLen > 4);  // Block ops need flush, quadlet ops don't
-    
+
+    // From the allocation until the chain is submitted: the builder takes
+    // blocks at the ring's tail, which only the submit advances.
+    DescriptorBuilder::AllocationGuard allocation(*subsys.GetDescriptorBuilder());
     auto chain = subsys.GetDescriptorBuilder()->BuildTransactionChain(
         headerBuffer, headerSize, payloadIOVA, payloadLen, needsFlush);
     if (!chain.first) {

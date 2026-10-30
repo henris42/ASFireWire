@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <DriverKit/IOLib.h>
 #include "../../Shared/Rings/DescriptorRing.hpp"
 #include "../../Shared/Memory/DMAMemoryManager.hpp"
 
@@ -40,8 +41,9 @@ struct OHCIDescriptor;
 //     release fence, then control.b forced to BranchAlways, followed by PublishRange().
 //   - UnlinkTail reverts branchWord→0 while leaving control.b=BranchAlways to restore EOL.
 // Threading:
-//   - DescriptorBuilder itself is not thread-safe; callers serialize access relative to
-//     DescriptorRing head/tail updates. Branch patch helpers are safe while AT RUNNING
+//   - Allocation reserves blocks at the ring's tail, which only the submit of the chain
+//     advances: callers hold an AllocationGuard from BuildTransactionChain until the
+//     chain is submitted or dropped. Branch patch helpers are safe while AT RUNNING
 //     because they only touch coherent cachelines and publish them immediately.
 // Error handling:
 //   - BuildTransactionChain returns an Empty() chain on validation/space failures; callers
@@ -79,7 +81,29 @@ public:
     };
 
     DescriptorBuilder(DescriptorRing& ring, DMAMemoryManager& dmaManager);
-    ~DescriptorBuilder() = default;
+    ~DescriptorBuilder();
+    DescriptorBuilder(const DescriptorBuilder&) = delete;
+    DescriptorBuilder& operator=(const DescriptorBuilder&) = delete;
+
+    // Held from BuildTransactionChain until the chain is submitted (or
+    // dropped). Allocation takes blocks at the ring's tail, which only the
+    // submit advances, so two builders in between took the same slots: two
+    // units starting at once wrote two requests into one descriptor, and the
+    // AT request context never completed another packet (b184).
+    class [[nodiscard]] AllocationGuard {
+    public:
+        explicit AllocationGuard(DescriptorBuilder& builder) noexcept : lock_(builder.allocationLock_) {
+            if (lock_) IOLockLock(lock_);
+        }
+        ~AllocationGuard() {
+            if (lock_) IOLockUnlock(lock_);
+        }
+        AllocationGuard(const AllocationGuard&) = delete;
+        AllocationGuard& operator=(const AllocationGuard&) = delete;
+
+    private:
+        IOLock* lock_;
+    };
 
     // atTimeStamp: split-timeout deadline written into the FIRST descriptor's
     // timeStamp field. The AT response context compares it against cycleTimer
@@ -129,6 +153,7 @@ public:
 private:
     DescriptorRing& ring_;
     DMAMemoryManager& dmaManager_;
+    IOLock* allocationLock_{nullptr};
     size_t nextAllocationIndex_{0};  ///< Track next free ring slot for allocation
     std::atomic<uint32_t> txCounter_{0};
 
