@@ -153,6 +153,8 @@ extension ASFWDriverConnector {
         }
 
         lastDeliveredSequence = 0
+        lastDeliveredStatus = nil
+        nextLiveStatusNanos = 0
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.isConnected = false
@@ -212,23 +214,34 @@ extension ASFWDriverConnector {
         }
     }
 
+    /// The driver rewrites the block every 250 ms, if only for its watchdog
+    /// counters. Subscribers (the views' refreshes, each a set of driver calls)
+    /// hear only of a changed controller or bus state; the live counters reach
+    /// `latestStatus` once a second (b187: the app at 47–67 % CPU, refreshing
+    /// every view four times a second).
     func pollStatusLocked() {
         guard let status = readSharedStatusLocked() else { return }
         guard status.sequence != lastDeliveredSequence else { return }
-        deliverStatusLocked(status)
+        let changed = !(lastDeliveredStatus?.hasSameState(as: status) ?? false)
+        guard changed || DispatchTime.now().uptimeNanoseconds >= nextLiveStatusNanos else { return }
+        deliverStatusLocked(status, notifySubscribers: changed)
     }
 
     func emitCurrentStatus() {
         guard let status = readSharedStatusLocked() else { return }
-        deliverStatusLocked(status)
+        deliverStatusLocked(status, notifySubscribers: true)
     }
 
-    private func deliverStatusLocked(_ status: DriverStatus) {
+    private func deliverStatusLocked(_ status: DriverStatus, notifySubscribers: Bool) {
         lastDeliveredSequence = status.sequence
+        lastDeliveredStatus = status
+        nextLiveStatusNanos = DispatchTime.now().uptimeNanoseconds + 1_000_000_000
         DispatchQueue.main.async { [weak self] in
             self?.latestStatus = status
         }
-        statusSubject.send(status)
+        if notifySubscribers {
+            statusSubject.send(status)
+        }
     }
 
     private func startMonitoringLocked() {

@@ -110,6 +110,19 @@ struct DriverConnectorStatus {
         self.watchdogLastTickUsec = loadUInt64(144)
     }
 
+    /// Whether `other` shows the same controller and bus state: every field but
+    /// the ones that move on each write of the block (sequence, timestamps,
+    /// watchdog ticks, the last async completion, the write's reason). The
+    /// app's views refresh, each with a set of driver calls, only when this
+    /// changes.
+    func hasSameState(as other: DriverConnectorStatus) -> Bool {
+        controllerState == other.controllerState && flags == other.flags &&
+            busGeneration == other.busGeneration && nodeCount == other.nodeCount &&
+            localNodeID == other.localNodeID && rootNodeID == other.rootNodeID &&
+            irmNodeID == other.irmNodeID && busResetCount == other.busResetCount &&
+            asyncTimeouts == other.asyncTimeouts
+    }
+
     var isIRM: Bool { (flags & DriverConnectorSharedStatusFlags.isIRM) != 0 }
     var isCycleMaster: Bool { (flags & DriverConnectorSharedStatusFlags.isCycleMaster) != 0 }
     var linkActive: Bool { (flags & DriverConnectorSharedStatusFlags.linkActive) != 0 }

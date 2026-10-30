@@ -28,6 +28,7 @@ class DebugViewModel: ObservableObject {
     private var inventoryRequestID = UUID()
     private var isRefreshingInventory = false
     private var cancellables = Set<AnyCancellable>()
+    private var lastForwardedLogID: UUID?
     
     init(connector: ASFWDriverConnector = ASFWDriverConnector()) {
         self.connector = connector
@@ -50,6 +51,14 @@ class DebugViewModel: ObservableObject {
             }
             .store(in: &cancellables)
         
+        // The live counters (watchdog ticks, timestamps) once a second; the
+        // driver calls only when the controller or bus state changed.
+        connector.$latestStatus
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] status in
+                self?.sharedStatus = status
+            }
+            .store(in: &cancellables)
         connector.statusPublisher
             .receive(on: DispatchQueue.main)
             .sink { [weak self] status in
@@ -72,9 +81,18 @@ class DebugViewModel: ObservableObject {
         connector.$logMessages
             .sink { [weak self] messages in
                 guard let self = self, let driverVM = self.driverViewModel else { return }
-                
-                // Forward only new messages
-                for message in messages {
+
+                // Forward only the messages after the last one forwarded. The
+                // sink gets the whole (bounded) list on every append; forwarding
+                // all of it each time re-logged up to 100 lines per new one.
+                var start = messages.startIndex
+                if let last = self.lastForwardedLogID,
+                   let index = messages.lastIndex(where: { $0.id == last }) {
+                    start = messages.index(after: index)
+                }
+                guard start < messages.endIndex else { return }
+                self.lastForwardedLogID = messages.last?.id
+                for message in messages[start...] {
                     let level: DriverViewModel.LogEntry.Level
                     switch message.level {
                     case .info: level = .info
@@ -106,6 +124,7 @@ class DebugViewModel: ObservableObject {
         sharedStatus = status
         fetchLatestSnapshots()
     }
+
 
     func dumpDebugSnapshot() {
         print("[DebugVM] sharedStatus=\(String(describing: sharedStatus))")

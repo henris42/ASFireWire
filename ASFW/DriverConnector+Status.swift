@@ -166,7 +166,8 @@ extension ASFWDriverConnector {
                 log("⚠️  getTopologySnapshot: topology not valid yet", level: .warning)
                 return nil
             }
-            log("✅ getTopologySnapshot: gen=\(result.generation) nodes=\(result.nodes.count)", level: .success)
+            // No line per call: the views fetch the topology on every state
+            // change, and each log line is a list update in the app.
             return result
         } catch {
             log("❌ getTopologySnapshot: \(error.localizedDescription)", level: .error)

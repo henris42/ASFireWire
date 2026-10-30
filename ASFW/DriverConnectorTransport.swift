@@ -19,10 +19,12 @@ final class DriverConnectorTransport {
         self.interpretIOReturn = interpretIOReturn
     }
 
+    /// `traceCalls` prints each call; errors print regardless. Off by default:
+    /// the views call the driver on every state change.
     func callStruct(selector: UInt32,
                     input: Data? = nil,
                     initialCap: Int = 64 * 1024,
-                    traceCalls: Bool = true) -> Data? {
+                    traceCalls: Bool = false) -> Data? {
         let connection = connectionProvider()
         guard connection != 0 else {
             errorHandler("Not connected to driver")
@@ -66,9 +68,7 @@ final class DriverConnectorTransport {
 
         guard kr == KERN_SUCCESS else {
             let errMsg = "selector \(selector) failed: \(interpretIOReturn(kr))"
-            if traceCalls {
-                print("[Connector] ❌ callStruct error: \(errMsg)")
-            }
+            print("[Connector] ❌ callStruct error: \(errMsg)")
             errorHandler(errMsg)
             return nil
         }
@@ -90,8 +90,6 @@ final class DriverConnectorTransport {
             print("[Connector] ❌ callStructWithScalar: connection=0 (not connected)")
             return nil
         }
-
-        print("[Connector] 📞 callStructWithScalar: selector=\(selector) connection=0x\(String(connection, radix: 16)) initialCap=\(initialCap)")
 
         var outSize = initialCap
         var out = Data(count: outSize)
@@ -119,7 +117,6 @@ final class DriverConnectorTransport {
 
         var kr = doCall()
         if kr == kIOReturnNoSpace {
-            print("[Connector] callStructWithScalar: got kIOReturnNoSpace, retrying with size=\(outSize)")
             out = Data(count: outSize)
             kr = doCall()
         }
@@ -131,7 +128,6 @@ final class DriverConnectorTransport {
             return nil
         }
 
-        print("[Connector] ✅ callStructWithScalar success: selector=\(selector) outSize=\(outSize) scalarOut=\(scalarOutput)")
         out.count = outSize
         return out
     }

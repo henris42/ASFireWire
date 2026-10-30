@@ -133,6 +133,10 @@ final class ASFWDriverConnector: ObservableObject {
     var sharedMemoryLength: mach_vm_size_t = 0
     var sharedMemoryPointer: UnsafeMutableRawPointer?
     var lastDeliveredSequence: UInt64 = 0
+    /// The last status handed on, and when the live counters may next reach
+    /// `latestStatus` without a state change (DriverConnector+Lifecycle).
+    var lastDeliveredStatus: DriverStatus?
+    var nextLiveStatusNanos: UInt64 = 0
     private let logStore = DriverConnectorLogStore(maxEntries: 100)
 
     lazy var transport = DriverConnectorTransport(
