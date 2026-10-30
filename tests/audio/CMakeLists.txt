@@ -34,6 +34,11 @@ target_link_libraries(IsochReceiveContextTests PRIVATE
 )
 gtest_discover_tests(IsochReceiveContextTests)
 
+# [Glitch] event log: 64-bit sample positions, lap and loss accounting
+add_audio_test(GlitchEventLogTests
+    GlitchEventLogTests.cpp
+)
+
 # Isoch DMA Memory Manager Tests
 add_audio_test(IsochDMAMemoryManagerTests
     IsochDMAMemoryManagerTests.cpp

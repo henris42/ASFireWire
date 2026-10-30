@@ -190,6 +190,17 @@ void ClearPlaybackRing(ASFWAudioDriver_IVars& ivars) noexcept {
     ClearRingFrames(memory, 0, memory.outputFrameCapacity);
 }
 
+namespace {
+
+[[nodiscard]] uint64_t MissedFinalityFrames(const ASFWAudioDriver_IVars& ivars) noexcept {
+    return ivars.runtime.txStreamEngine.PayloadWriterCounters().framesMissedFinality.load(
+               std::memory_order_relaxed) +
+           ivars.runtime.motuPayloadWriter.Counters().framesMissedFinality.load(
+               std::memory_order_relaxed);
+}
+
+} // namespace
+
 void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars) noexcept {
     auto* control = ivars.runtime.directAudioGraph.control;
     const auto* queue = ivars.runtime.txSlotProvider.queueControl;
@@ -244,6 +255,7 @@ void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars) noexcept {
     hostBuffer.frameCapacity = memory.outputFrameCapacity;
     hostBuffer.channels = memory.outputChannels;
 
+    const uint64_t missedBefore = MissedFinalityFrames(ivars);
     const uint64_t fillStarted = TxHostNow();
     ivars.runtime.txStreamEngine.FillFromHostOutput(hostBuffer, firstWritable);
     // The secondary stream carries host channels [16, 32) of the same frames
@@ -252,12 +264,25 @@ void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars) noexcept {
         ivars.runtime.txStreamEngineSecondary.FillFromHostOutput(hostBuffer, firstWritable);
     }
 
-    const uint64_t fillDuration = TxHostNow() - fillStarted;
-    auto& maxDuration = ivars.runtime.txFillMaxDurationTicks;
-    uint64_t observed = maxDuration.load(std::memory_order_relaxed);
-    while (fillDuration > observed &&
-           !maxDuration.compare_exchange_weak(observed, fillDuration,
-                                             std::memory_order_relaxed)) {}
+    const uint64_t fillEnded = TxHostNow();
+    const uint64_t fillDuration = fillEnded - fillStarted;
+    for (auto* maxDuration : {&ivars.runtime.txFillMaxDurationTicks, &ivars.runtime.glitchFillMaxTicks}) {
+        uint64_t observed = maxDuration->load(std::memory_order_relaxed);
+        while (fillDuration > observed &&
+               !maxDuration->compare_exchange_weak(observed, fillDuration,
+                                                  std::memory_order_relaxed)) {}
+    }
+    // Frames that missed their packet are the oldest of this range: the
+    // writer reaches past the finality frontier only at its start.
+    if (const uint64_t missed = MissedFinalityFrames(ivars) - missedBefore; missed != 0) {
+        ivars.runtime.glitchEvents.Record({
+            .sampleFrame = filled,
+            .hostTicks = fillEnded,
+            .kind = ASFW::Audio::Runtime::GlitchEventKind::MissedOutputFrames,
+            .frames = static_cast<uint16_t>(std::min<uint64_t>(missed, UINT16_MAX)),
+            .thread = ASFW::Audio::Runtime::CurrentThreadTag(),
+        });
+    }
     // Clear what was copied a short window ago. The ring keeps a frame until
     // CoreAudio writes that slot again a ring later; a slot it skips, or a
     // frame it reported without writing, must then read as silence, not as
@@ -276,13 +301,6 @@ constexpr uint64_t kMinStopFadeFrames = 16;
 // Packets past the finality frontier where the stop looks for its first
 // frame, so the frontier cannot pass that frame before the rewrite runs.
 constexpr uint64_t kStopMarginPackets = 4;
-
-[[nodiscard]] uint64_t MissedFinalityFrames(const ASFWAudioDriver_IVars& ivars) noexcept {
-    return ivars.runtime.txStreamEngine.PayloadWriterCounters().framesMissedFinality.load(
-               std::memory_order_relaxed) +
-           ivars.runtime.motuPayloadWriter.Counters().framesMissedFinality.load(
-               std::memory_order_relaxed);
-}
 
 } // namespace
 

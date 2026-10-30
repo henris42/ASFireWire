@@ -46,32 +46,115 @@ void RecordMin(std::atomic<T>& slot, T value) noexcept {
     }
 }
 
-// Debug level only ([HalIoTime]): where this read sits on our timeline. The
-// host time of a frame by the last zero timestamp we gave the HAL, at the
-// nominal rate; lead = how long before `nowTicks` the read's last frame
-// arrived, skew = the HAL's host time for its first frame minus ours.
-void RecordInputTiming(ASFWAudioDriver_IVars& ivars, uint64_t sampleTime, uint32_t frames,
-                       uint64_t halHostTime, uint64_t nowTicks) noexcept {
-    auto& runtime = ivars.runtime;
+// Where a read sits on our timeline: the host time of a frame by the last
+// zero timestamp we gave CoreAudio, at the nominal rate. lead = how long
+// before `nowTicks` the read's last frame arrived (negative: not yet), skew =
+// CoreAudio's host time for the read's first frame minus ours.
+struct InputTiming {
+    bool valid{false};
+    int64_t leadNanos{0};
+    int64_t skewNanos{0};
+    bool haveSkew{false};
+};
+
+[[nodiscard]] InputTiming MeasureInputTiming(const ASFWAudioDriver_IVars& ivars, uint64_t sampleTime,
+                                             uint32_t frames, uint64_t halHostTime,
+                                             uint64_t nowTicks) noexcept {
+    const auto& runtime = ivars.runtime;
     const uint64_t ztsHost = runtime.lastHalZeroTimestampHostTicks.load(std::memory_order_relaxed);
     const uint64_t ztsFrame = runtime.lastHalZeroTimestampSampleFrame.load(std::memory_order_relaxed);
     const uint32_t rate = runtime.directAudioGraph.sampleRateHz;
     if (ztsHost == 0 || rate == 0) {
-        return;
+        return {};
     }
     const auto ourNanos = [&](uint64_t frame) noexcept {
         const int64_t framesFromZts = static_cast<int64_t>(frame) - static_cast<int64_t>(ztsFrame);
         return static_cast<int64_t>(ASFW::Timing::hostTicksToNanos(ztsHost)) +
                framesFromZts * 1'000'000'000LL / static_cast<int64_t>(rate);
     };
-    const int64_t nowNanos = static_cast<int64_t>(ASFW::Timing::hostTicksToNanos(nowTicks));
-    RecordMin(runtime.ioInputLeadMinNanos, nowNanos - ourNanos(sampleTime + frames));
+    InputTiming timing{.valid = true};
+    timing.leadNanos = static_cast<int64_t>(ASFW::Timing::hostTicksToNanos(nowTicks)) -
+                       ourNanos(sampleTime + frames);
     if (halHostTime != 0) {
-        const int64_t skew = static_cast<int64_t>(ASFW::Timing::hostTicksToNanos(halHostTime)) -
-                             ourNanos(sampleTime);
-        RecordMin(runtime.ioHalSkewMinNanos, skew);
-        RecordMax(runtime.ioHalSkewMaxNanos, skew);
+        timing.skewNanos = static_cast<int64_t>(ASFW::Timing::hostTicksToNanos(halHostTime)) -
+                           ourNanos(sampleTime);
+        timing.haveSkew = true;
     }
+    return timing;
+}
+
+// Debug level only ([HalIoTime]).
+void RecordInputTiming(ASFWAudioDriver_IVars& ivars, uint64_t sampleTime, uint32_t frames,
+                       uint64_t halHostTime, uint64_t nowTicks) noexcept {
+    auto& runtime = ivars.runtime;
+    const InputTiming timing = MeasureInputTiming(ivars, sampleTime, frames, halHostTime, nowTicks);
+    if (!timing.valid) {
+        return;
+    }
+    RecordMin(runtime.ioInputLeadMinNanos, timing.leadNanos);
+    RecordMax(runtime.ioInputLeadMaxNanos, timing.leadNanos);
+    if (timing.leadNanos < 0) {
+        runtime.ioInputLeadNegative.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (timing.haveSkew) {
+        RecordMin(runtime.ioHalSkewMinNanos, timing.skewNanos);
+        RecordMax(runtime.ioHalSkewMaxNanos, timing.skewNanos);
+    }
+}
+
+[[nodiscard]] int32_t ClampToInt32(int64_t value) noexcept {
+    return static_cast<int32_t>(std::clamp<int64_t>(value, INT32_MIN, INT32_MAX));
+}
+
+// A BeginRead's place in the stream and around it, for a short read's event.
+struct BeginReadContext {
+    uint64_t sampleTime{0};
+    uint32_t frames{0};
+    uint64_t halHostTime{0};
+    uint64_t entryTicks{0};
+    uint64_t previousFrame{0};
+    uint64_t previousTicks{0};
+    uint64_t writeBefore{0};
+};
+
+// A read that came up short after start-up goes into the [Glitch] event log
+// with everything that tells an early read from a late packet.
+void RecordShortRead(ASFWAudioDriver_IVars& ivars, const BeginReadContext& read,
+                     const ASFW::Audio::Runtime::RxPullResult& pull, uint64_t writeAfter) noexcept {
+    using ASFW::Audio::Runtime::GlitchEvent;
+    using ASFW::Audio::Runtime::GlitchEventKind;
+    const uint64_t readEnd = read.sampleTime + read.frames;
+    GlitchEvent event{};
+    event.sampleFrame = read.sampleTime;
+    event.hostTicks = read.entryTicks;
+    event.kind = GlitchEventKind::ShortCaptureRead;
+    event.pull = pull.outcome;
+    event.frames = static_cast<uint16_t>(std::min<uint32_t>(read.frames, UINT16_MAX));
+    event.missing = static_cast<uint16_t>(
+        std::min<uint64_t>(writeAfter < readEnd ? readEnd - writeAfter : 0, UINT16_MAX));
+    event.drained = static_cast<uint16_t>(std::min<uint32_t>(pull.drained, UINT16_MAX));
+    event.thread = ASFW::Audio::Runtime::CurrentThreadTag();
+    event.gapBefore = ClampToInt32(static_cast<int64_t>(readEnd) - static_cast<int64_t>(read.writeBefore));
+    const InputTiming timing =
+        MeasureInputTiming(ivars, read.sampleTime, read.frames, read.halHostTime, read.entryTicks);
+    if (timing.valid) {
+        event.leadUs = ClampToInt32(timing.leadNanos / 1000);
+        event.skewUs = timing.haveSkew ? ClampToInt32(timing.skewNanos / 1000) : 0;
+    }
+    if (read.previousTicks != 0) {
+        event.prevFrames = ClampToInt32(static_cast<int64_t>(read.sampleTime) -
+                                        static_cast<int64_t>(read.previousFrame));
+        event.prevUs = ClampToInt32(static_cast<int64_t>(
+            ASFW::Timing::hostTicksToNanos(read.entryTicks - std::min(read.entryTicks, read.previousTicks)) /
+            1000));
+    }
+    const uint64_t published =
+        ivars.runtime.lastHalZeroTimestampPublishTicks.load(std::memory_order_relaxed);
+    if (published != 0 && read.entryTicks > published) {
+        event.ztsAgeUs = static_cast<uint32_t>(std::min<uint64_t>(
+            ASFW::Timing::hostTicksToNanos(read.entryTicks - published) / 1000, UINT32_MAX));
+    }
+    ivars.runtime.glitchEvents.Record(event);
 }
 
 // What a BeginRead pull drains for: the capture ring's write frame reaching
@@ -102,15 +185,19 @@ void ZeroInputFrameIfMissing(ASFW::Audio::Runtime::AudioGraphBinding& graph,
                 static_cast<size_t>(graph.memory.inputChannels) * sizeof(int32_t));
 }
 
-bool PrepareCaptureRingForBeginRead(ASFW::Audio::Runtime::AudioGraphBinding& graph,
-                                    ASFW::Audio::Runtime::AudioTransportControlBlock& control,
-                                    uint64_t sampleTime,
-                                    uint32_t frameCount) noexcept {
-    if (frameCount == 0) {
-        return true;
-    }
-    if (!graph.HasInput()) {
-        return false;
+// What a BeginRead found in the capture ring: the write position it read
+// against, and whether frames were missing after start-up (a glitch).
+struct CaptureRead {
+    uint64_t write{0};
+    bool shortAfterStartup{false};
+};
+
+CaptureRead PrepareCaptureRingForBeginRead(ASFW::Audio::Runtime::AudioGraphBinding& graph,
+                                           ASFW::Audio::Runtime::AudioTransportControlBlock& control,
+                                           uint64_t sampleTime,
+                                           uint32_t frameCount) noexcept {
+    if (frameCount == 0 || !graph.HasInput()) {
+        return {};
     }
 
     const uint64_t write =
@@ -145,7 +232,7 @@ bool PrepareCaptureRingForBeginRead(ASFW::Audio::Runtime::AudioGraphBinding& gra
     if (settledFrom == 0 || mach_absolute_time() < settledFrom) {
         if (starved) {
             control.captureRingStartupStarvations.fetch_add(1, std::memory_order_relaxed);
-            return true;
+            return {.write = write};
         }
         if (settledFrom == 0) {
             control.captureRingSettledHostTicks.store(
@@ -158,7 +245,7 @@ bool PrepareCaptureRingForBeginRead(ASFW::Audio::Runtime::AudioGraphBinding& gra
     }
     control.rxCaptureBufferTelemetry.Observe(
         write, readEnd, capacity);
-    return true;
+    return {.write = write, .shortAfterStartup = starved};
 }
 
 } // namespace
@@ -241,6 +328,19 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                 }
                 control->client.PublishBeginRead(sampleTime, hostTime, ioBufferFrameSize);
                 control->rxCaptureBufferTelemetry.RecordReaderBeginRead();
+                auto& runtime = driverIvars->runtime;
+                const uint64_t entryTicks = timeIo ? ioStartTicks : mach_absolute_time();
+                const BeginReadContext readContext{
+                    .sampleTime = sampleTime,
+                    .frames = ioBufferFrameSize,
+                    .halHostTime = hostTime,
+                    .entryTicks = entryTicks,
+                    .previousFrame =
+                        runtime.lastBeginReadFrame.exchange(sampleTime, std::memory_order_relaxed),
+                    .previousTicks =
+                        runtime.lastBeginReadTicks.exchange(entryTicks, std::memory_order_relaxed),
+                    .writeBefore = control->captureRingWriteFrame.load(std::memory_order_acquire),
+                };
                 // The frames this read needs are not all in the capture ring:
                 // drain the receive ring here rather than wait for the
                 // interrupt, which a real-time load can hold off for
@@ -250,20 +350,23 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                     .writeFrame = &control->captureRingWriteFrame,
                     .readEnd = sampleTime + ioBufferFrameSize,
                 };
-                if (!RxPullTarget::Covered(&pullTarget)) {
+                ASFW::Audio::Runtime::RxPullResult pull{
+                    .outcome = ASFW::Audio::Runtime::RxPullOutcome::Covered};
+                if (readContext.writeBefore < pullTarget.readEnd) {
                     const uint64_t budgetNanos = RxPullBudgetNanos(
-                        ioBufferFrameSize, driverIvars->runtime.directAudioGraph.sampleRateHz);
-                    (void)control->rxPull.Pull({
+                        ioBufferFrameSize, runtime.directAudioGraph.sampleRateHz);
+                    pull = control->rxPull.Pull({
                         .enough = &RxPullTarget::Covered,
                         .context = &pullTarget,
                         .deadlineTicks = mach_absolute_time() +
                                          ASFW::Timing::nanosToHostTicks(budgetNanos),
                     });
                 }
-                (void)PrepareCaptureRingForBeginRead(driverIvars->runtime.directAudioGraph,
-                                                     *control,
-                                                     sampleTime,
-                                                     ioBufferFrameSize);
+                const CaptureRead read = PrepareCaptureRingForBeginRead(
+                    runtime.directAudioGraph, *control, sampleTime, ioBufferFrameSize);
+                if (read.shortAfterStartup) {
+                    RecordShortRead(*driverIvars, readContext, pull, read.write);
+                }
                 control->counters.CountBeginRead();
                 if (timeIo) {
                     RecordInputTiming(*driverIvars, sampleTime, ioBufferFrameSize, hostTime,

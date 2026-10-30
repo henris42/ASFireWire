@@ -10,6 +10,7 @@
 #include "Runtime/AudioGraphBinding.hpp"
 #include "Runtime/AudioTransportControlBlock.hpp"
 #include "Runtime/DirectAudioDebugSnapshot.hpp"
+#include "Runtime/GlitchEventLog.hpp"
 #include "Runtime/MotuTxPhaseTracePublisher.hpp"
 #include "../Config/AudioConstants.hpp"
 #include "../Protocols/BeBoB/MAudioInternalTxTiming.hpp"
@@ -252,6 +253,13 @@ struct AudioDriverRuntimeState {
     std::atomic<uint64_t> lastHalZeroTimestampGeneration{0};
     std::atomic<uint64_t> lastHalZeroTimestampSampleFrame{0};
     std::atomic<uint64_t> lastHalZeroTimestampHostTicks{0};
+    // When that zero timestamp went to CoreAudio (mach time): a glitch
+    // event's "zts" age.
+    std::atomic<uint64_t> lastHalZeroTimestampPublishTicks{0};
+    // [HalIoTime] (debug, reset per heartbeat): the steps between consecutive
+    // zero timestamps against the nominal rate (ASFWAudioDriverZts.cpp).
+    std::atomic<int64_t> ztsJumpMinNanos{INT64_MAX};
+    std::atomic<int64_t> ztsJumpMaxNanos{INT64_MIN};
 
     uint64_t metricsLogCounter{0};
     bool rxStartupDrained{false};
@@ -269,8 +277,17 @@ struct AudioDriverRuntimeState {
     std::atomic<uint64_t> ioBeginReadMaxTicks{0};
     std::atomic<uint64_t> ioWriteEndMaxTicks{0};
     std::atomic<int64_t> ioInputLeadMinNanos{INT64_MAX};
+    std::atomic<int64_t> ioInputLeadMaxNanos{INT64_MIN};
+    // Reads whose last frame had not arrived yet by our zero timestamps.
+    std::atomic<uint64_t> ioInputLeadNegative{0};
     std::atomic<int64_t> ioHalSkewMinNanos{INT64_MAX};
     std::atomic<int64_t> ioHalSkewMaxNanos{INT64_MIN};
+    // Lost audio with its sample position (GlitchEventLog.hpp), printed by
+    // the [Glitch] report; and the previous BeginRead on this device (any IO
+    // thread), for an event's "prev" deltas.
+    ASFW::Audio::Runtime::GlitchEventLog glitchEvents;
+    std::atomic<uint64_t> lastBeginReadFrame{0};
+    std::atomic<uint64_t> lastBeginReadTicks{0};
     std::atomic<bool> txActive{false};
     // [TxPlace] and [TxSyt] log once per stream (TX preparation queue).
     bool txPlacementLogged{false};
@@ -284,6 +301,9 @@ struct AudioDriverRuntimeState {
     // hand for the end of the stream.
     uint64_t txClearedFrameEnd{0};
     std::atomic<uint64_t> txFillMaxDurationTicks{0};
+    // The longest fill since the last [Glitch] report (that report's own
+    // window; txFillMaxDurationTicks is the debug heartbeat's).
+    std::atomic<uint64_t> glitchFillMaxTicks{0};
     // framesMissedFinality at this stream's start; [TxPrep] reports the
     // difference, so the heartbeat counts only this stream's missed frames.
     uint64_t txMissedFinalityAtStart{0};
@@ -294,6 +314,7 @@ struct AudioDriverRuntimeState {
     uint64_t glitchReportedStarved{0};
     uint64_t glitchReportedPulls{0};
     uint64_t glitchReportedPullBusy{0};
+    uint64_t glitchReportedPullCut{0};
     uint64_t glitchLastReportTicks{0};
     // [MotuTxStamp] lines logged this start (first few DATA packets).
     uint32_t motuStampLogged{0};

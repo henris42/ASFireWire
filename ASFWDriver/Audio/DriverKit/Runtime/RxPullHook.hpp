@@ -18,6 +18,7 @@
 #pragma once
 
 #include "../../../Isoch/Core/IsochReceivePollSource.hpp"
+#include "GlitchEventLog.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -25,6 +26,12 @@
 #include <DriverKit/IOLib.h>
 
 namespace ASFW::Audio::Runtime {
+
+// What one pull did: the packets it drained and what it found.
+struct RxPullResult {
+    uint32_t drained{0};
+    RxPullOutcome outcome{RxPullOutcome::NoPull};
+};
 
 struct RxPullHook final {
     std::atomic<::ASFW::Isoch::IIsochReceivePollSource*> source{nullptr};
@@ -62,28 +69,36 @@ struct RxPullHook final {
     // draining the same ring), spin until that poll has covered the read or
     // the deadline passes, rather than read a short ring. Without a deadline
     // the pull tries once.
-    uint32_t Pull(const ::ASFW::Isoch::IsochReceiveDrainLimit& limit) noexcept {
+    RxPullResult Pull(const ::ASFW::Isoch::IsochReceiveDrainLimit& limit) noexcept {
         inFlight.fetch_add(1, std::memory_order_seq_cst);
-        uint32_t drained = 0;
+        RxPullResult result{};
         if (auto* pollSource = source.load(std::memory_order_seq_cst)) {
-            bool polled = pollSource->TryPoll(drained, limit);
+            bool polled = pollSource->TryPoll(result.drained, limit);
             while (!polled && limit.deadlineTicks != 0 && !limit.Reached(mach_absolute_time())) {
                 CpuRelax();
-                polled = pollSource->TryPoll(drained, limit);
+                polled = pollSource->TryPoll(result.drained, limit);
             }
             pulls.fetch_add(1, std::memory_order_relaxed);
+            if (limit.Enough()) {
+                result.outcome = RxPullOutcome::Covered;
+            } else if (!polled) {
+                result.outcome = RxPullOutcome::Busy;
+            } else if (limit.deadlineTicks != 0 && mach_absolute_time() >= limit.deadlineTicks) {
+                result.outcome = RxPullOutcome::Cut;
+            } else {
+                result.outcome = RxPullOutcome::NotArrived;
+            }
             if (polled) {
-                pulledPackets.fetch_add(drained, std::memory_order_relaxed);
-                if (limit.deadlineTicks != 0 && !limit.Enough() &&
-                    mach_absolute_time() >= limit.deadlineTicks) {
-                    cut.fetch_add(1, std::memory_order_relaxed);
-                }
-            } else if (!limit.Enough()) {
+                pulledPackets.fetch_add(result.drained, std::memory_order_relaxed);
+            }
+            if (result.outcome == RxPullOutcome::Cut) {
+                cut.fetch_add(1, std::memory_order_relaxed);
+            } else if (result.outcome == RxPullOutcome::Busy) {
                 busy.fetch_add(1, std::memory_order_relaxed);
             }
         }
         inFlight.fetch_sub(1, std::memory_order_seq_cst);
-        return drained;
+        return result;
     }
 
   private:

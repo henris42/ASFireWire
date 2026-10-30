@@ -59,11 +59,40 @@ ASFW::Audio::Runtime::ZtsMirrorPublishResult PublishSharedZeroTimestampToHAL(
         return ASFW::Audio::Runtime::ZtsMirrorPublishResult::StaleEpoch;
     }
 
-    const bool firstPublication =
-        ivars.runtime.lastHalZeroTimestampHostTicks.load(
-            std::memory_order_relaxed) == 0;
+    const uint64_t previousHost =
+        ivars.runtime.lastHalZeroTimestampHostTicks.load(std::memory_order_relaxed);
+    const uint64_t previousFrame =
+        ivars.runtime.lastHalZeroTimestampSampleFrame.load(std::memory_order_relaxed);
+    const bool firstPublication = previousHost == 0;
     audioDevice->UpdateCurrentZeroTimestamp(
         anchor.sampleFrame, anchor.hostTicks);
+    ivars.runtime.lastHalZeroTimestampPublishTicks.store(mach_absolute_time(),
+                                                         std::memory_order_relaxed);
+    // How far this zero timestamp lands from the previous one projected at the
+    // nominal rate: CoreAudio's clock for the device takes every step. Word
+    // clock against the host clock moves it a few microseconds per period; a
+    // step of a packet's worth or more is the timestamps', not the clock's.
+    const uint32_t rate = ivars.runtime.directAudioGraph.sampleRateHz;
+    if (!firstPublication && rate != 0 && anchor.sampleFrame > previousFrame) {
+        const int64_t expectedNanos = static_cast<int64_t>(
+            (anchor.sampleFrame - previousFrame) * 1'000'000'000ULL / rate);
+        const int64_t actualNanos =
+            static_cast<int64_t>(ASFW::Timing::hostTicksToNanos(anchor.hostTicks)) -
+            static_cast<int64_t>(ASFW::Timing::hostTicksToNanos(previousHost));
+        const int64_t jump = actualNanos - expectedNanos;
+        auto& jumpMin = ivars.runtime.ztsJumpMinNanos;
+        auto& jumpMax = ivars.runtime.ztsJumpMaxNanos;
+        if (jump < jumpMin.load(std::memory_order_relaxed)) jumpMin.store(jump, std::memory_order_relaxed);
+        if (jump > jumpMax.load(std::memory_order_relaxed)) jumpMax.store(jump, std::memory_order_relaxed);
+        constexpr int64_t kZtsJumpWarnNanos = 500'000;
+        if (jump > kZtsJumpWarnNanos || jump < -kZtsJumpWarnNanos) {
+            ASFW_LOG_RL(DirectAudio, "zts/jump", 5000, Warning,
+                        "[Zts] unit 0x%016llx: zero timestamp for frame %llu lands %lld us from the "
+                        "previous one (frame %llu) at the nominal rate",
+                        ivars.device.guid, anchor.sampleFrame, static_cast<long long>(jump / 1000),
+                        previousFrame);
+        }
+    }
     ivars.runtime.lastHalZeroTimestampSampleFrame.store(
         anchor.sampleFrame, std::memory_order_relaxed);
     ivars.runtime.lastHalZeroTimestampHostTicks.store(

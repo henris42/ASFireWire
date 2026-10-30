@@ -24,6 +24,7 @@ using ASFW::Audio::Runtime::AudioTransportControlBlock;
 using ASFW::Audio::Runtime::DirectAudioBindingSnapshot;
 using ASFW::Audio::Runtime::IDirectAudioBindingSource;
 using ASFW::Audio::Runtime::RxPullHook;
+using ASFW::Audio::Runtime::RxPullOutcome;
 using ASFW::AudioEngine::Direct::Rx::DirectAudioReceiveConsumer;
 using ASFW::Isoch::IIsochReceivePollSource;
 using ASFW::Isoch::IsochReceiveDrainLimit;
@@ -97,7 +98,9 @@ IsochReceiveDrainLimit Within(uint64_t nanos, const FakeRead* read = nullptr) {
 
 TEST(RxPullHookTests, APullWithoutASourceDoesNothing) {
     RxPullHook hook;
-    EXPECT_EQ(hook.Pull(Within(100'000)), 0U);
+    const auto result = hook.Pull(Within(100'000));
+    EXPECT_EQ(result.drained, 0U);
+    EXPECT_EQ(result.outcome, RxPullOutcome::NoPull);
     EXPECT_EQ(hook.pulls.load(), 0U);
     EXPECT_EQ(hook.inFlight.load(), 0U);
 }
@@ -107,7 +110,9 @@ TEST(RxPullHookTests, APullDrainsThroughThePublishedSource) {
     FakePollSource source;
     source.packets = 5;
     hook.Publish(&source);
-    EXPECT_EQ(hook.Pull(Within(100'000'000)), 5U);
+    const auto result = hook.Pull(Within(100'000'000));
+    EXPECT_EQ(result.drained, 5U);
+    EXPECT_EQ(result.outcome, RxPullOutcome::NotArrived) << "drained everything, nothing says enough";
     EXPECT_EQ(hook.pulls.load(), 1U);
     EXPECT_EQ(hook.pulledPackets.load(), 5U);
     EXPECT_EQ(hook.busy.load(), 0U);
@@ -120,7 +125,9 @@ TEST(RxPullHookTests, APullDrainsOnlyUntilTheReadIsCovered) {
     source.packets = 40;  // a backlog after the interrupt was held off
     hook.Publish(&source);
     const FakeRead read{.source = &source, .need = 3};
-    EXPECT_EQ(hook.Pull(Within(100'000'000, &read)), 3U);
+    const auto result = hook.Pull(Within(100'000'000, &read));
+    EXPECT_EQ(result.drained, 3U);
+    EXPECT_EQ(result.outcome, RxPullOutcome::Covered);
     EXPECT_EQ(source.packets, 37U) << "the rest is left to the interrupt";
     EXPECT_EQ(hook.cut.load(), 0U);
 }
@@ -133,7 +140,9 @@ TEST(RxPullHookTests, APullStopsAtItsDeadlineAndCountsTheCut) {
     const FakeRead read{.source = &source, .need = 30};
     const IsochReceiveDrainLimit expired{
         .enough = &FakeRead::Covered, .context = &read, .deadlineTicks = 1};
-    EXPECT_EQ(hook.Pull(expired), 1U);
+    const auto result = hook.Pull(expired);
+    EXPECT_EQ(result.drained, 1U);
+    EXPECT_EQ(result.outcome, RxPullOutcome::Cut);
     EXPECT_EQ(hook.cut.load(), 1U);
 }
 
@@ -143,7 +152,7 @@ TEST(RxPullHookTests, APullWaitsOutAPollInProgress) {
     source.busyPolls = 3;
     source.packets = 8;
     hook.Publish(&source);
-    EXPECT_EQ(hook.Pull(Within(1'000'000'000)), 8U);
+    EXPECT_EQ(hook.Pull(Within(1'000'000'000)).drained, 8U);
     EXPECT_EQ(source.tries, 4U);
     EXPECT_EQ(hook.busy.load(), 0U);
 }
@@ -154,7 +163,9 @@ TEST(RxPullHookTests, APullStopsWaitingOnceThePollInProgressCoveredTheRead) {
     source.busyPolls = UINT32_MAX;
     hook.Publish(&source);
     const FakeRead read{.source = &source, .coveredAfterTries = 5};
-    EXPECT_EQ(hook.Pull(Within(1'000'000'000, &read)), 0U);
+    const auto result = hook.Pull(Within(1'000'000'000, &read));
+    EXPECT_EQ(result.drained, 0U);
+    EXPECT_EQ(result.outcome, RxPullOutcome::Covered);
     EXPECT_EQ(source.tries, 5U);
     EXPECT_EQ(hook.busy.load(), 0U) << "covered by the other poll, not given up";
 }
@@ -164,7 +175,9 @@ TEST(RxPullHookTests, APullGivesUpAfterItsBudget) {
     FakePollSource source;
     source.busyPolls = UINT32_MAX;
     hook.Publish(&source);
-    EXPECT_EQ(hook.Pull({}), 0U);  // no deadline: one try
+    const auto result = hook.Pull({});  // no deadline: one try
+    EXPECT_EQ(result.drained, 0U);
+    EXPECT_EQ(result.outcome, RxPullOutcome::Busy);
     EXPECT_EQ(source.tries, 1U);
     EXPECT_EQ(hook.pulls.load(), 1U);
     EXPECT_EQ(hook.busy.load(), 1U);
