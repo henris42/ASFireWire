@@ -1151,7 +1151,7 @@ void ASFWDriver::InterruptOccurred_Impl(ASFWDriver_InterruptOccurred_Args) {
                                              irqEntry, count, snap.intEvent);
             }
             ctx.interruptDispatcher.HandleSnapshot(snap, *ctx.controller, hardware,
-                                                   *ctx.workQueue, ctx.isochLanes,
+                                                   ctx.isochLanes,
                                                    ctx.statusPublisher,
                                                    ctx.deps.asyncController.get());
         });

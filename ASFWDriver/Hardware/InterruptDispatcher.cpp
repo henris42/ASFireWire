@@ -12,7 +12,7 @@
 namespace ASFW::Driver {
 
 void InterruptDispatcher::HandleSnapshot(const InterruptSnapshot& snap, ControllerCore& controller,
-                                         HardwareInterface& hardware, IODispatchQueue& workQueue,
+                                         HardwareInterface& hardware,
                                          IsochLanes& lanes, StatusPublisher& statusPublisher,
                                          ASFW::Async::IAsyncSubsystemPort* asyncSubsystem) {
     controller.HandleInterrupt(snap);
@@ -32,17 +32,19 @@ void InterruptDispatcher::HandleSnapshot(const InterruptSnapshot& snap, Controll
         // its channel slice (e.g. 17–32) would never reach the input buffer.
         // Poll the master first so the producer timeline is published before the
         // secondary slices anchor to it.
-        const uint32_t recvEvent = isochEvents.receive;
-        workQueue.DispatchAsync(^{
-          for (uint32_t ctxIdx = 0; ctxIdx < IsochLanes::kMaxHardwareContexts; ++ctxIdx) {
-              if ((recvEvent & (1u << ctxIdx)) == 0) {
-                  continue;
-              }
-              if (auto* rx = lanes.ReceiveContext(ctxIdx)) {
-                  rx->Poll();
-              }
-          }
-        });
+        //
+        // Here, as the transmit refill below is: this handler already runs on
+        // the work queue (the interrupt thread dispatches it synchronously),
+        // and a block queued behind it waits for one more thread wake before
+        // the capture ring sees the packets.
+        for (uint32_t ctxIdx = 0; ctxIdx < IsochLanes::kMaxHardwareContexts; ++ctxIdx) {
+            if ((isochEvents.receive & (1u << ctxIdx)) == 0) {
+                continue;
+            }
+            if (auto* rx = lanes.ReceiveContext(ctxIdx)) {
+                rx->Poll();
+            }
+        }
     }
 
     // ===== ISOCHRONOUS TRANSMIT INTERRUPT =====

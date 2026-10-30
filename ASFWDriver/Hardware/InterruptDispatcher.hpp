@@ -29,7 +29,7 @@ class InterruptDispatcher {
     ~InterruptDispatcher() = default;
 
     void HandleSnapshot(const InterruptSnapshot& snap, ControllerCore& controller,
-                        HardwareInterface& hardware, IODispatchQueue& workQueue,
+                        HardwareInterface& hardware,
                         IsochLanes& lanes, StatusPublisher& statusPublisher,
                         ASFW::Async::IAsyncSubsystemPort* asyncSubsystem);
 };
