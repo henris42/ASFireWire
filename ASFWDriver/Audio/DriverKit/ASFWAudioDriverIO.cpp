@@ -19,6 +19,11 @@ namespace {
 // How long a BeginRead pull waits for a poll already in progress (the
 // interrupt draining the same ring) before it reads what is there.
 constexpr uint64_t kRxPullBusyBudgetNanos = 100'000;
+// After the first complete read, CoreAudio's clock for the device still
+// converges on the zero timestamps (one per 24576 frames, 256 ms at 96 kHz):
+// b184 had one short capture read in the first seconds of nearly every start
+// and none in 120 s of steady state. Short reads this soon are start-up.
+constexpr uint64_t kCaptureSettleNanos = 2'000'000'000ULL;
 
 void ZeroInputFrameIfMissing(ASFW::Audio::Runtime::AudioGraphBinding& graph,
                              uint64_t absoluteFrame) noexcept {
@@ -67,13 +72,20 @@ bool PrepareCaptureRingForBeginRead(ASFW::Audio::Runtime::AudioGraphBinding& gra
         control.captureRingStarvations.fetch_add(1, std::memory_order_relaxed);
     }
     // Until the first complete read the capture ring is still filling behind
-    // the HAL clock: count that as start-up, not as S_in headroom.
-    if (!control.captureRingFirstCompleteRead.load(std::memory_order_relaxed)) {
+    // the HAL clock, and for kCaptureSettleNanos after it the HAL clock still
+    // settles: count short reads then as start-up, not as S_in headroom.
+    const uint64_t settledFrom =
+        control.captureRingSettledHostTicks.load(std::memory_order_relaxed);
+    if (settledFrom == 0 || mach_absolute_time() < settledFrom) {
         if (starved) {
             control.captureRingStartupStarvations.fetch_add(1, std::memory_order_relaxed);
             return true;
         }
-        control.captureRingFirstCompleteRead.store(true, std::memory_order_relaxed);
+        if (settledFrom == 0) {
+            control.captureRingSettledHostTicks.store(
+                mach_absolute_time() + ASFW::Timing::nanosToHostTicks(kCaptureSettleNanos),
+                std::memory_order_relaxed);
+        }
     }
     if (starved) {
         control.rxCaptureBufferTelemetry.RecordStarvation(starvedFrames);

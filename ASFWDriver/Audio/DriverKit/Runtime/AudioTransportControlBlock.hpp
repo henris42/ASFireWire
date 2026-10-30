@@ -659,11 +659,14 @@ struct AudioTransportControlBlock final {
     std::atomic<uint64_t> captureRingReadFrame{0};
     std::atomic<uint64_t> captureRingOverruns{0};
     std::atomic<uint64_t> captureRingStarvations{0};
-    // Of those, the reads that starved before CoreAudio's first complete read
-    // of the stream: start-up, kept out of the S_in headroom telemetry so it
-    // measures the steady state. Written only on the IO thread.
+    // Of those, the reads that starved during start-up: before CoreAudio's
+    // first complete read of the stream and for a settle time after it. Kept
+    // out of the S_in headroom telemetry, so it measures the steady state,
+    // and out of [Glitch]. Written only on the IO thread.
     std::atomic<uint64_t> captureRingStartupStarvations{0};
-    std::atomic<bool> captureRingFirstCompleteRead{false};
+    // Host time from which a short read is no longer start-up; 0 until the
+    // first complete read. IO thread only.
+    std::atomic<uint64_t> captureRingSettledHostTicks{0};
     RxCaptureBufferTelemetry rxCaptureBufferTelemetry{};
     // The BeginRead pull (RxPullHook.hpp). Not reset per start: the receive
     // consumer publishes and withdraws it around its context's run.
@@ -781,7 +784,7 @@ struct AudioTransportControlBlock final {
         captureRingOverruns.store(0, std::memory_order_relaxed);
         captureRingStarvations.store(0, std::memory_order_relaxed);
         captureRingStartupStarvations.store(0, std::memory_order_relaxed);
-        captureRingFirstCompleteRead.store(false, std::memory_order_relaxed);
+        captureRingSettledHostTicks.store(0, std::memory_order_relaxed);
         rxCaptureBufferTelemetry.Reset();
 
         const uint64_t armedGeneration =

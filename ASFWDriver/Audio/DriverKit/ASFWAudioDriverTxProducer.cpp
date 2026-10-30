@@ -202,7 +202,8 @@ void ApplyMotuSphServoInput(ASFWAudioDriver_IVars& ivars,
 // (a refusal means another stream generation, never expected).
 // [Glitch]: lost audio at the default (warn) level. Output frames that
 // reached their packet too late (missedFinality) and capture reads that came
-// up short (starvations after start-up) are what the user hears; the line
+// up short (starvations after start-up: the first complete read and 2 s more,
+// ASFWAudioDriverIO.cpp) are what the user hears; the line
 // adds what explains them: the longest fill and the longest producer wake of
 // the current heartbeat interval, and the BeginRead pulls since the last
 // report (RxPullHook.hpp). At most one line per kGlitchReportIntervalNanos per
@@ -1657,8 +1658,9 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
             // sInMinFr = smallest S_in headroom, capture frames already
             //   written past the HAL read end (-1: no reads);
             // sInStarve = capture starvations this interval after start-up;
-            // sInStart = reads that starved before the stream's first complete
-            //   read (the capture ring still filling), for the whole stream.
+            // sInStart = reads that starved during start-up (before the
+            //   stream's first complete read and 2 s after it), for the whole
+            //   stream.
             const uint64_t missedNow =
                 ivars->runtime.txStreamEngine.PayloadWriterCounters()
                     .framesMissedFinality.load(std::memory_order_relaxed) +
