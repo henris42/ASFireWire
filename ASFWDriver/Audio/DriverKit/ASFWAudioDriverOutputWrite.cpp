@@ -76,7 +76,9 @@ bool HandleOutputWriteEnd(ASFWAudioDriver_IVars& ivars,
                           ASFW::Audio::Runtime::AudioTransportControlBlock& control,
                           uint64_t sampleTime,
                           uint64_t hostTime,
-                          uint32_t ioBufferFrameSize) noexcept {
+                          uint32_t ioBufferFrameSize,
+                          uint64_t entryTicks,
+                          uint16_t thread) noexcept {
     // CoreAudio may choose a larger span than kHalIoPeriodFrames while
     // remaining within the stream ring; the ring capacity is the hard bound.
     if (ioBufferFrameSize > ivars.runtime.directAudioGraph.memory.outputFrameCapacity) {
@@ -95,7 +97,10 @@ bool HandleOutputWriteEnd(ASFWAudioDriver_IVars& ivars,
     // the hardware (kTxCoverageLeadPackets), and every transmit interrupt
     // wakes it; a wake from this thread cost an OSAction message (an
     // allocation and a kevent) inside the HAL's IO cycle and added nothing.
-    FillTransmitPayloads(ivars);
+    FillTransmitPayloads(ivars, {.halHostTime = hostTime,
+                                 .entryTicks = entryTicks,
+                                 .frames = ioBufferFrameSize,
+                                 .thread = thread});
 
     control.counters.CountWriteEnd();
     return true;
@@ -243,7 +248,7 @@ namespace {
 
 } // namespace
 
-void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars) noexcept {
+void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars, const OutputWriteContext& write) noexcept {
     auto* control = ivars.runtime.directAudioGraph.control;
     const auto* queue = ivars.runtime.txSlotProvider.queueControl;
     const auto& memory = ivars.runtime.directAudioGraph.memory;
@@ -317,15 +322,45 @@ void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars) noexcept {
                                                   std::memory_order_relaxed)) {}
     }
     // Frames that missed their packet are the oldest of this range: the
-    // writer reaches past the finality frontier only at its start.
+    // writer reaches past the finality frontier only at its start. The event
+    // says where the write stood: how far behind the frontier its first
+    // frame's packet lay, the HAL's margin at WriteEnd entry (its presentation
+    // time for that frame minus the entry time), how old the clock pair was
+    // (a late refill) and how many sent packets no refill had harvested yet.
     if (const uint64_t missed = MissedFinalityFrames(ivars) - missedBefore; missed != 0) {
-        ivars.runtime.glitchEvents.Record({
-            .sampleFrame = filled,
-            .hostTicks = fillEnded,
-            .kind = ASFW::Audio::Runtime::GlitchEventKind::MissedOutputFrames,
-            .frames = static_cast<uint16_t>(std::min<uint64_t>(missed, UINT16_MAX)),
-            .thread = ASFW::Audio::Runtime::CurrentThreadTag(),
-        });
+        const auto signedMicros = [](uint64_t later, uint64_t earlier) noexcept {
+            const uint64_t nanos = ASFW::Timing::hostTicksToNanos(later >= earlier ? later - earlier
+                                                                                  : earlier - later);
+            const int64_t micros = static_cast<int64_t>(nanos / 1000);
+            return static_cast<int32_t>(std::clamp<int64_t>(later >= earlier ? micros : -micros,
+                                                            INT32_MIN, INT32_MAX));
+        };
+        ASFW::Audio::Runtime::GlitchEvent event{};
+        event.sampleFrame = filled;
+        event.hostTicks = fillEnded;
+        event.kind = ASFW::Audio::Runtime::GlitchEventKind::MissedOutputFrames;
+        event.frames = static_cast<uint16_t>(std::min<uint64_t>(missed, UINT16_MAX));
+        event.missing = static_cast<uint16_t>(std::min<uint32_t>(write.frames, UINT16_MAX));
+        event.thread = write.thread;
+        ASFW::Protocols::Audio::AMDTP::PacketSlotSnapshot head{};
+        if (ivars.runtime.txStreamEngine.Timeline().SnapshotSlotForAudioFrameNear(
+                filled, firstWritable, head)) {
+            event.gapBefore = static_cast<int32_t>(std::clamp<int64_t>(
+                static_cast<int64_t>(firstWritable) - static_cast<int64_t>(head.packetIndex),
+                INT32_MIN, INT32_MAX));
+        }
+        if (write.entryTicks != 0 && write.halHostTime != 0) {
+            event.leadUs = signedMicros(write.halHostTime, write.entryTicks);
+        }
+        event.skewUs = signedMicros(fillEnded, fillStarted);
+        ASFW::Isoch::IsochTxClockPairSample pair{};
+        if (queue->clockPair.TryRead(pair) && pair.hostTimeMid != 0) {
+            event.prevUs = signedMicros(fillStarted, pair.hostTimeMid);
+        }
+        const uint64_t harvested = queue->completionCursor.load(std::memory_order_acquire);
+        event.drained = static_cast<uint16_t>(
+            std::min<uint64_t>(onTheWire > harvested ? onTheWire - harvested : 0, UINT16_MAX));
+        ivars.runtime.glitchEvents.Record(event);
     }
     // Clear what was copied a short window ago. The ring keeps a frame until
     // CoreAudio writes that slot again a ring later; a slot it skips, or a

@@ -2,6 +2,8 @@
 // events come out oldest first with their 64-bit sample position, a writer
 // that laps the reader overwrites and the reader counts the loss, a slot
 // still being written ends a take, and a stream start drops what is left.
+// And the IO operation trace: a snapshot of the newest operations, oldest
+// first, without consuming them; one capture at a time for the report.
 
 #include <gtest/gtest.h>
 
@@ -18,6 +20,9 @@ namespace {
 using ASFW::Audio::Runtime::GlitchEvent;
 using ASFW::Audio::Runtime::GlitchEventKind;
 using ASFW::Audio::Runtime::GlitchEventLog;
+using ASFW::Audio::Runtime::IoOp;
+using ASFW::Audio::Runtime::IoOpTrace;
+using ASFW::Audio::Runtime::IoOpTraceCapture;
 
 GlitchEvent ShortRead(uint64_t frame) {
     GlitchEvent event{};
@@ -101,6 +106,76 @@ TEST(GlitchEventLogTests, TwoWritersAtOnceLoseNothingWithRoomToSpare) {
     for (uint32_t i = 0; i < taken; ++i) {
         EXPECT_EQ(out[i].missing, static_cast<uint16_t>(out[i].sampleFrame)) << "a torn event";
     }
+}
+
+IoOp Op(uint64_t entry, uint16_t operation) {
+    IoOp op{};
+    op.entryTicks = entry;
+    op.sampleTime = entry * 10;
+    op.operation = operation;
+    return op;
+}
+
+// A snapshot gives the newest operations oldest first and leaves them in
+// place; a trace with fewer operations than asked gives what it has.
+TEST(IoOpTraceTests, ASnapshotGivesTheNewestOperationsOldestFirstWithoutTakingThem) {
+    IoOpTrace trace;
+    std::array<IoOp, IoOpTrace::kCapacity> out{};
+    EXPECT_EQ(trace.Snapshot(out.data(), out.size()), 0U);
+    for (uint64_t entry = 1; entry <= IoOpTrace::kCapacity + 5; ++entry) {
+        trace.Record(Op(entry, static_cast<uint16_t>(entry % 2)));
+    }
+    ASSERT_EQ(trace.Snapshot(out.data(), 4), 4U);
+    EXPECT_EQ(out[0].entryTicks, IoOpTrace::kCapacity + 2);
+    EXPECT_EQ(out[3].entryTicks, IoOpTrace::kCapacity + 5);
+    EXPECT_EQ(out[3].sampleTime, (IoOpTrace::kCapacity + 5) * 10);
+    ASSERT_EQ(trace.Snapshot(out.data(), out.size()), IoOpTrace::kCapacity) << "a lap keeps the newest ring";
+    EXPECT_EQ(out[0].entryTicks, 6U);
+    EXPECT_EQ(trace.Recorded(), IoOpTrace::kCapacity + 5);
+    EXPECT_EQ(trace.Snapshot(out.data(), out.size()), IoOpTrace::kCapacity) << "nothing was consumed";
+}
+
+// Two IO threads record at once; every operation a snapshot returns is whole.
+TEST(IoOpTraceTests, TwoWritersAtOnceGiveWholeOperations) {
+    IoOpTrace trace;
+    auto writer = [&trace](uint64_t base) {
+        for (uint64_t i = 0; i < 200; ++i) {
+            trace.Record(Op(base + i, 0));
+        }
+    };
+    std::thread a(writer, 1);
+    std::thread b(writer, 100'000);
+    a.join();
+    b.join();
+    std::array<IoOp, IoOpTrace::kCapacity> out{};
+    const uint32_t count = trace.Snapshot(out.data(), out.size());
+    EXPECT_LE(count, IoOpTrace::kCapacity);
+    for (uint32_t i = 0; i < count; ++i) {
+        EXPECT_EQ(out[i].sampleTime, out[i].entryTicks * 10) << "a torn operation";
+    }
+}
+
+// A capture holds the operations before the read ahead and the read itself
+// last; a second read while one capture waits is not captured; the reader
+// frees the slot, and a stream start drops a capture nobody took.
+TEST(IoOpTraceTests, OneCaptureWaitsForTheReportWithTheReadAheadLast) {
+    IoOpTrace trace;
+    IoOpTraceCapture capture;
+    for (uint64_t entry = 1; entry <= 3; ++entry) {
+        trace.Record(Op(entry, 0));
+    }
+    const IoOp ahead = Op(4, 0);
+    EXPECT_TRUE(capture.TryCapture(trace, ahead));
+    trace.Record(ahead);
+    EXPECT_FALSE(capture.TryCapture(trace, Op(5, 0))) << "a capture already waits";
+    std::array<IoOp, IoOpTraceCapture::kMaxOps> out{};
+    ASSERT_EQ(capture.Take(out.data(), out.size()), 4U);
+    EXPECT_EQ(out[0].entryTicks, 1U);
+    EXPECT_EQ(out[3].entryTicks, 4U) << "the read ahead comes last";
+    EXPECT_EQ(capture.Take(out.data(), out.size()), 0U) << "taken once";
+    EXPECT_TRUE(capture.TryCapture(trace, Op(6, 0)));
+    capture.Reset();
+    EXPECT_EQ(capture.Take(out.data(), out.size()), 0U);
 }
 
 } // namespace

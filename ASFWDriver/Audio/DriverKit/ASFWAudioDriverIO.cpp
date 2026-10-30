@@ -337,6 +337,19 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
             // The IO thread's tag, taken here where every operation on a
             // thread has the same frame (GlitchEventLog.hpp).
             const uint16_t threadTag = ASFW::Audio::Runtime::CurrentThreadTag();
+            // Debug level only: the operation goes into the IO trace at the end.
+            const auto traceOp = [&](uint64_t entryTicks) noexcept {
+                return ASFW::Audio::Runtime::IoOp{
+                    .entryTicks = entryTicks,
+                    .sampleTime = sampleTime,
+                    .hostTime = hostTime,
+                    .frames = ioBufferFrameSize,
+                    .durationNanos = static_cast<uint32_t>(std::min<uint64_t>(
+                        ASFW::Timing::hostTicksToNanos(mach_absolute_time() - entryTicks), UINT32_MAX)),
+                    .operation = static_cast<uint16_t>(operation),
+                    .thread = threadTag,
+                };
+            };
             if (operation == IOUserAudioIOOperationBeginRead) {
                 // ADK permits operation spans that differ from the nominal IO
                 // size. The stream ring capacity is the actual hard bound.
@@ -363,7 +376,8 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                 // serve it and it is not S_in headroom. It reads silence and
                 // leaves the read position and the telemetry alone. b190 saw
                 // these only with two clients on a unit, at the output write's
-                // position; the event shows where the read sat.
+                // position; the event and the IO trace (debug) show the HAL's
+                // operations around it.
                 const uint64_t settledFrom =
                     control->captureRingSettledHostTicks.load(std::memory_order_relaxed);
                 if (settledFrom != 0 && entryTicks >= settledFrom &&
@@ -376,6 +390,9 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                     if (timeIo) {
                         runtime.ioAheadReads.fetch_add(1, std::memory_order_relaxed);
                         RecordMax(runtime.ioBeginReadMaxTicks, mach_absolute_time() - ioStartTicks);
+                        const ASFW::Audio::Runtime::IoOp op = traceOp(ioStartTicks);
+                        (void)runtime.ioOpTraceCapture.TryCapture(runtime.ioOpTrace, op);
+                        runtime.ioOpTrace.Record(op);
                     }
                     return kIOReturnSuccess;
                 }
@@ -414,17 +431,29 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                                       ioStartTicks);
                     RecordMax(driverIvars->runtime.ioBeginReadMaxTicks,
                               mach_absolute_time() - ioStartTicks);
+                    runtime.ioOpTrace.Record(traceOp(ioStartTicks));
                 }
             } else if (operation == IOUserAudioIOOperationWriteEnd) {
                 // See BeginRead above: CoreAudio may choose a larger span than
                 // kHalIoPeriodFrames while remaining within the stream ring.
+                const uint64_t entryTicks = timeIo ? ioStartTicks : mach_absolute_time();
                 if (!HandleOutputWriteEnd(*driverIvars, *control, sampleTime, hostTime,
-                                          ioBufferFrameSize)) {
+                                          ioBufferFrameSize, entryTicks, threadTag)) {
                     return returnError(kIOReturnBadArgument);
                 }
                 if (timeIo) {
-                    RecordMax(driverIvars->runtime.ioWriteEndMaxTicks,
-                              mach_absolute_time() - ioStartTicks);
+                    auto& runtime = driverIvars->runtime;
+                    RecordMax(runtime.ioWriteEndMaxTicks, mach_absolute_time() - ioStartTicks);
+                    // The HAL's margin: its presentation time for the write's
+                    // first frame against our entry ([HalIoTime] outMarginUs).
+                    if (hostTime != 0) {
+                        const int64_t marginNanos =
+                            hostTime >= ioStartTicks
+                                ? static_cast<int64_t>(ASFW::Timing::hostTicksToNanos(hostTime - ioStartTicks))
+                                : -static_cast<int64_t>(ASFW::Timing::hostTicksToNanos(ioStartTicks - hostTime));
+                        RecordMin(runtime.ioOutMarginMinNanos, marginNanos);
+                    }
+                    runtime.ioOpTrace.Record(traceOp(ioStartTicks));
                 }
             } else {
                 return returnError(kIOReturnBadArgument);

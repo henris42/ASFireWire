@@ -285,6 +285,13 @@ struct AudioDriverRuntimeState {
     // Reads ahead of the arrivals (GlitchEventKind::ReadAhead) this heartbeat;
     // they are kept out of the lead figures above.
     std::atomic<uint64_t> ioAheadReads{0};
+    // The least HAL margin at a WriteEnd's entry: the HAL's presentation time
+    // for the write's first frame minus the entry time (least, this heartbeat).
+    std::atomic<int64_t> ioOutMarginMinNanos{INT64_MAX};
+    // The last IO operations and one capture of them at a read ahead, printed
+    // by the [Glitch] report at debug (GlitchEventLog.hpp). Debug level only.
+    ASFW::Audio::Runtime::IoOpTrace ioOpTrace;
+    ASFW::Audio::Runtime::IoOpTraceCapture ioOpTraceCapture;
     // Lost audio with its sample position (GlitchEventLog.hpp), printed by
     // the [Glitch] report; and the previous BeginRead on this device (any IO
     // thread), for an event's "prev" deltas.
@@ -467,12 +474,24 @@ struct TxPlacementSample final {
 [[nodiscard]] bool MeasureTxPlacement(ASFWAudioDriver_IVars& ivars,
                                       TxPlacementSample& out) noexcept;
 
+// The WriteEnd the fill runs in, for a missed-frame event: the HAL's host
+// time for the write's first frame, the handler's entry time, the write's
+// frames and the IO thread's tag. All zero when the fill runs outside a
+// WriteEnd (the host tests).
+struct OutputWriteContext final {
+    uint64_t halHostTime{0};
+    uint64_t entryTicks{0};
+    uint32_t frames{0};
+    uint16_t thread{0};
+};
+
 // The TX fill (ASFWAudioDriverOutputWrite.cpp, documentation/TX_OWNERSHIP.md):
 // copies frames CoreAudio has written to the HAL output ring into the armed
 // packets that carry them, once each, unless the packet is at or behind the
 // finality frontier (the packet on the wire + guard). Runs inside WriteEnd on
 // CoreAudio's IO thread, its only owner; RT-safe.
-void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars) noexcept;
+void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars,
+                          const OutputWriteContext& write = {}) noexcept;
 // The packet the hardware is sending now. Exact from the newest completion
 // stamp (which packet went out in which bus cycle) and the clock pair (which
 // cycle it is now); while the stream has no completion yet, projected from
@@ -524,7 +543,9 @@ void RefreshClockSourceControl(ASFWAudioDriver_IVars& ivars) noexcept;
                                         ASFW::Audio::Runtime::AudioTransportControlBlock& control,
                                         uint64_t sampleTime,
                                         uint64_t hostTime,
-                                        uint32_t ioBufferFrameSize) noexcept;
+                                        uint32_t ioBufferFrameSize,
+                                        uint64_t entryTicks = 0,
+                                        uint16_t thread = 0) noexcept;
 
 [[nodiscard]] kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                                                       ASFWAudioDriver_IVars& ivars) noexcept;

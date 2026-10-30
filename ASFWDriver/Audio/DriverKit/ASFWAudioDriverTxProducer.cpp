@@ -243,11 +243,19 @@ void LogGlitchEvents(ASFWAudioDriver_IVars& ivars, uint64_t now) noexcept {
         const uint64_t agoMs =
             now > event.hostTicks ? ASFW::Timing::hostTicksToNanos(now - event.hostTicks) / 1'000'000 : 0;
         if (event.kind == GlitchEventKind::MissedOutputFrames) {
+            // Where the write stood (GlitchEvent, output meanings): its first
+            // frame's packet behind the finality frontier; the HAL's margin at
+            // WriteEnd entry (its presentation time for that frame minus the
+            // entry; the HAL finishes its write at least 500 us before, b190);
+            // the fill's time; the clock pair's age (a late refill) and the
+            // packets sent that no refill had harvested.
             ASFW_LOG_WARNING(DirectAudio,
                              "[GlitchEvent] 0x%016llx @%llu (%llu.%03llu s, %llu ms ago): %u output frames "
-                             "missed their packet, thr %04x",
+                             "missed their packet: %u-frame write %d pk behind the frontier, HAL margin "
+                             "%d us at entry, fill %d us, refill %d us ago, %u pk unharvested, thr %04x",
                              ivars.device.guid, event.sampleFrame, positionMs / 1000, positionMs % 1000,
-                             agoMs, event.frames, event.thread);
+                             agoMs, event.frames, event.missing, event.gapBefore, event.leadUs,
+                             event.skewUs, event.prevUs, event.drained, event.thread);
             continue;
         }
         if (event.kind == GlitchEventKind::ReadAhead) {
@@ -274,6 +282,38 @@ void LogGlitchEvents(ASFWAudioDriver_IVars& ivars, uint64_t now) noexcept {
         ASFW_LOG_WARNING(DirectAudio,
                          "[GlitchEvent] 0x%016llx: %llu more wait for the next report, %llu overwritten",
                          ivars.device.guid, more, lost);
+    }
+    // Debug: the IO operations up to the first read ahead since the last
+    // report, oldest first, each against that read's entry time; "hal" is the
+    // HAL's host time for the operation's first frame against the entry
+    // (negative: already presented, an input read; positive: still to come).
+    if (ASFW_LOG_ENABLED(DirectAudio, Debug)) {
+        using ASFW::Audio::Runtime::IoOp;
+        using ASFW::Audio::Runtime::IoOpTraceCapture;
+        std::array<IoOp, IoOpTraceCapture::kMaxOps> ops{};
+        const uint32_t opCount = ivars.runtime.ioOpTraceCapture.Take(ops.data(), ops.size());
+        const auto microsFrom = [](uint64_t later, uint64_t earlier) noexcept {
+            const uint64_t nanos = ASFW::Timing::hostTicksToNanos(later >= earlier ? later - earlier
+                                                                                  : earlier - later);
+            const auto micros = static_cast<long long>(nanos / 1000);
+            return later >= earlier ? micros : -micros;
+        };
+        if (opCount != 0) {
+            const uint64_t at = ops[opCount - 1].entryTicks;
+            for (uint32_t index = 0; index < opCount; ++index) {
+                const IoOp& op = ops[index];
+                ASFW_LOG_DEBUG(DirectAudio,
+                               "[IoOps] 0x%016llx %+lld us: %{public}s @%llu %u fr, hal %+lld us, took %u us, "
+                               "thr %04x",
+                               ivars.device.guid, microsFrom(op.entryTicks, at),
+                               op.operation == IOUserAudioIOOperationBeginRead ? "BeginRead"
+                               : op.operation == IOUserAudioIOOperationWriteEnd ? "WriteEnd"
+                                                                                : "op?",
+                               op.sampleTime, op.frames,
+                               op.hostTime != 0 ? microsFrom(op.hostTime, op.entryTicks) : 0LL,
+                               op.durationNanos / 1000, op.thread);
+            }
+        }
     }
 }
 
@@ -1227,6 +1267,7 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
     ivars.runtime.glitchReportedMissed = 0;
     ivars.runtime.glitchReportedStarved = 0;
     ivars.runtime.glitchReportedAhead = 0;
+    ivars.runtime.ioOpTraceCapture.Reset();
     ivars.runtime.glitchReportedPulls = control->rxPull.pulls.load(std::memory_order_relaxed);
     ivars.runtime.glitchReportedPullBusy = control->rxPull.busy.load(std::memory_order_relaxed);
     ivars.runtime.glitchLastReportTicks = 0;
@@ -1890,14 +1931,18 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                         runtime.ztsJumpMinNanos.exchange(INT64_MAX, std::memory_order_relaxed);
                     const int64_t jumpMax =
                         runtime.ztsJumpMaxNanos.exchange(INT64_MIN, std::memory_order_relaxed);
+                    const int64_t outMargin =
+                        runtime.ioOutMarginMinNanos.exchange(INT64_MAX, std::memory_order_relaxed);
                     // inLeadUs least/most and inLeadNeg (reads whose last frame
                     // had not arrived by our zero timestamps); ahead = reads
                     // ahead of the arrivals (kept out of the lead figures);
+                    // outMarginUs = the least HAL margin at a WriteEnd's entry;
                     // ztsJumpUs = the steps between zero timestamps against
                     // the nominal rate.
                     ASFW_LOG_DEBUG(DirectAudio,
                                    "[HalIoTime] beginReadMaxUs=%llu writeEndMaxUs=%llu inLeadUs=%lld/%lld "
-                                   "inLeadNeg=%llu ahead=%llu halSkewUs=%lld/%lld ztsJumpUs=%lld/%lld",
+                                   "inLeadNeg=%llu ahead=%llu outMarginUs=%lld halSkewUs=%lld/%lld "
+                                   "ztsJumpUs=%lld/%lld",
                                    ASFW::Timing::hostTicksToNanos(runtime.ioBeginReadMaxTicks.exchange(
                                        0, std::memory_order_relaxed)) / 1000,
                                    ASFW::Timing::hostTicksToNanos(runtime.ioWriteEndMaxTicks.exchange(
@@ -1906,6 +1951,7 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                                    leadMaxNanos == INT64_MIN ? 0LL : static_cast<long long>(leadMaxNanos / 1000),
                                    runtime.ioInputLeadNegative.exchange(0, std::memory_order_relaxed),
                                    runtime.ioAheadReads.exchange(0, std::memory_order_relaxed),
+                                   outMargin == INT64_MAX ? 0LL : static_cast<long long>(outMargin / 1000),
                                    skewMin == INT64_MAX ? 0LL : static_cast<long long>(skewMin / 1000),
                                    skewMax == INT64_MIN ? 0LL : static_cast<long long>(skewMax / 1000),
                                    jumpMin == INT64_MAX ? 0LL : static_cast<long long>(jumpMin / 1000),
