@@ -127,6 +127,11 @@ class IsochReceiveContext final
 
     Registers GetRegisters(uint8_t index) const;
     bool PollOnce(uint32_t& processed, const IsochReceiveDrainLimit* readerLimit) noexcept;
+    // The poll's view of the state, without lock_: the real-time IO thread
+    // polls too (TryPoll) and must not block. Set Running after Start's
+    // transition, cleared with Stop's; a poll reads it under the poll gate,
+    // which Stop holds while it stops the context.
+    std::atomic<bool> pollRunning_{false};
 };
 
 } // namespace ASFW::Isoch

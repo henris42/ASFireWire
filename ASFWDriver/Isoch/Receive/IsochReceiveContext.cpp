@@ -122,6 +122,7 @@ kern_return_t IsochReceiveContext::Start() {
     Transition(IRPolicy::State::Running, 0, "Start");
     IOLockUnlock(lock_);
     rxRing_.ResetForStart();
+    pollRunning_.store(true, std::memory_order_release);
 
     if (receiveConsumer_) {
         receiveConsumer_->SetReceivePollSource(this);
@@ -158,6 +159,7 @@ kern_return_t IsochReceiveContext::Stop() {
             IOLockLock(lock_);
             Transition(IRPolicy::State::Stopped, 0, "Stop/provider-gone");
             IOLockUnlock(lock_);
+            pollRunning_.store(false, std::memory_order_release);
             if (receiveConsumer_) {
                 receiveConsumer_->OnReceiveQuiesced();
                 receiveConsumer_->SetReceivePollSource(nullptr);
@@ -224,6 +226,7 @@ kern_return_t IsochReceiveContext::Stop() {
     IOLockLock(lock_);
     Transition(IRPolicy::State::Stopped, 0, "Stop");
     IOLockUnlock(lock_);
+    pollRunning_.store(false, std::memory_order_release);
 
     if (receiveConsumer_) {
         receiveConsumer_->OnReceiveQuiesced();
@@ -256,7 +259,7 @@ bool IsochReceiveContext::PollOnce(uint32_t& processed,
         return false;
     }
 
-    if (GetState() != IRPolicy::State::Running) {
+    if (!pollRunning_.load(std::memory_order_acquire)) {
         rxLock_.clear(std::memory_order_release);
         return true;
     }
