@@ -277,6 +277,14 @@ struct AudioDriverRuntimeState {
     // framesMissedFinality at this stream's start; [TxPrep] reports the
     // difference, so the heartbeat counts only this stream's missed frames.
     uint64_t txMissedFinalityAtStart{0};
+    // [Glitch], the warn-level loss report (ReportTransportGlitches): what
+    // the last report covered and when it went out. TX preparation queue
+    // only; reset when the TX producer is armed.
+    uint64_t glitchReportedMissed{0};
+    uint64_t glitchReportedStarved{0};
+    uint64_t glitchReportedPulls{0};
+    uint64_t glitchReportedPullBusy{0};
+    uint64_t glitchLastReportTicks{0};
     // [MotuTxStamp] lines logged this start (first few DATA packets).
     uint32_t motuStampLogged{0};
     // [TxCadence]: DATA / NO-DATA / header-only counts at the last heartbeat.

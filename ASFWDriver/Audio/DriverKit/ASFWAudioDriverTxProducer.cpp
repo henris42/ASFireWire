@@ -200,6 +200,59 @@ void ApplyMotuSphServoInput(ASFWAudioDriver_IVars& ivars,
 // back: bridge/frame/tick counters seen going backwards (never expected).
 // trace: cadence periods the phase-trace bridge took / refused this start
 // (a refusal means another stream generation, never expected).
+// [Glitch]: lost audio at the default (warn) level. Output frames that
+// reached their packet too late (missedFinality) and capture reads that came
+// up short (starvations after start-up) are what the user hears; the line
+// adds what explains them: the longest fill and the longest producer wake of
+// the current heartbeat interval, and the BeginRead pulls since the last
+// report (RxPullHook.hpp). At most one line per kGlitchReportIntervalNanos per
+// unit; what happens in between goes into the next line.
+void ReportTransportGlitches(ASFWAudioDriver_IVars& ivars,
+                             const ASFW::Audio::Runtime::AudioTransportControlBlock& control,
+                             uint64_t now) noexcept {
+    constexpr uint64_t kGlitchReportIntervalNanos = 5'000'000'000ULL;
+    auto& runtime = ivars.runtime;
+    const uint64_t missedTotal =
+        runtime.txStreamEngine.PayloadWriterCounters().framesMissedFinality.load(
+            std::memory_order_relaxed) +
+        runtime.motuPayloadWriter.Counters().framesMissedFinality.load(std::memory_order_relaxed);
+    const uint64_t missed = missedTotal >= runtime.txMissedFinalityAtStart
+                                ? missedTotal - runtime.txMissedFinalityAtStart
+                                : 0;
+    const uint64_t starvedAll = control.captureRingStarvations.load(std::memory_order_relaxed);
+    const uint64_t starvedStartup =
+        control.captureRingStartupStarvations.load(std::memory_order_relaxed);
+    const uint64_t starved = starvedAll >= starvedStartup ? starvedAll - starvedStartup : 0;
+    if (missed <= runtime.glitchReportedMissed && starved <= runtime.glitchReportedStarved) {
+        return;
+    }
+    const uint64_t last = runtime.glitchLastReportTicks;
+    if (last != 0 && now > last &&
+        ASFW::Timing::hostTicksToNanos(now - last) < kGlitchReportIntervalNanos) {
+        return;
+    }
+    const uint64_t pulls = control.rxPull.pulls.load(std::memory_order_relaxed);
+    const uint64_t pullBusy = control.rxPull.busy.load(std::memory_order_relaxed);
+    ASFW_LOG_WARNING(
+        DirectAudio,
+        "[Glitch] unit 0x%016llx: %llu output frames missed their packet, %llu capture reads "
+        "came up short; fill max %llu us, producer wake max %llu us, BeginRead pulls %llu "
+        "(%llu gave up)",
+        ivars.device.guid, missed - std::min(missed, runtime.glitchReportedMissed),
+        starved - std::min(starved, runtime.glitchReportedStarved),
+        ASFW::Timing::hostTicksToNanos(
+            runtime.txFillMaxDurationTicks.load(std::memory_order_relaxed)) / 1000,
+        ASFW::Timing::hostTicksToNanos(
+            control.txIntervalPreparationLatencyMaxTicks.load(std::memory_order_relaxed)) / 1000,
+        pulls - std::min(pulls, runtime.glitchReportedPulls),
+        pullBusy - std::min(pullBusy, runtime.glitchReportedPullBusy));
+    runtime.glitchReportedMissed = missed;
+    runtime.glitchReportedStarved = starved;
+    runtime.glitchReportedPulls = pulls;
+    runtime.glitchReportedPullBusy = pullBusy;
+    runtime.glitchLastReportTicks = now;
+}
+
 void LogMotuSphSummary(const ASFWAudioDriver_IVars& ivars) noexcept {
     const auto servo = ivars.runtime.motuTxTimingStamper.ServoTelemetrySnapshot();
     ASFW::Audio::Runtime::MotuRxSphClockSample bridge{};
@@ -1089,6 +1142,11 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
             std::memory_order_relaxed) +
         ivars.runtime.motuPayloadWriter.Counters().framesMissedFinality.load(
             std::memory_order_relaxed);
+    ivars.runtime.glitchReportedMissed = 0;
+    ivars.runtime.glitchReportedStarved = 0;
+    ivars.runtime.glitchReportedPulls = control->rxPull.pulls.load(std::memory_order_relaxed);
+    ivars.runtime.glitchReportedPullBusy = control->rxPull.busy.load(std::memory_order_relaxed);
+    ivars.runtime.glitchLastReportTicks = 0;
     ivars.runtime.txReplayReader.Reset();
     ivars.runtime.rxReplayLossRun.store(0, std::memory_order_relaxed);
     ivars.runtime.rxReplayRecoveryRequested.store(false, std::memory_order_relaxed);
@@ -1451,6 +1509,9 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
         directControl->txIntervalCommittedMarginHistogram[marginBucket]
             .fetch_add(1, std::memory_order_relaxed);
 
+        // Before the heartbeat below takes the interval maxima it reports.
+        ASFW::Audio::DriverKit::ReportTransportGlitches(*ivars, *directControl, now);
+
         // [TxPrep] Surface the cross-queue preparation health to the log. The
         // refill ISR trips kUnderrunFatal once committedMargin falls to the
         // hardware-owned ring depth, so emit on every new committed-margin low,
@@ -1702,15 +1763,21 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
             {
                 const uint64_t ztsHost =
                     ivars->runtime.lastHalZeroTimestampHostTicks.load(std::memory_order_relaxed);
+                // pulls: BeginRead pulls since the hook was built, the packets
+                // they drained, and those that gave up (RxPullHook.hpp).
                 ASFW_LOG_DEBUG(DirectAudio,
-                               "[HalIo] callbacks=%llu outsideRun=%llu zts=%llu ztsFrame=%llu ztsAgeMs=%llu",
+                               "[HalIo] callbacks=%llu outsideRun=%llu zts=%llu ztsFrame=%llu ztsAgeMs=%llu "
+                               "pulls=%llu/%llu busy=%llu",
                                ivars->runtime.ioDebugCallbacks.load(std::memory_order_relaxed),
                                ivars->runtime.ioCallbacksOutsideRun.load(std::memory_order_relaxed),
                                directControl->hostClockAnchor.mirrorPublications.load(std::memory_order_relaxed),
                                ivars->runtime.lastHalZeroTimestampSampleFrame.load(std::memory_order_relaxed),
                                ztsHost != 0 && now > ztsHost
                              ? ASFW::Timing::hostTicksToNanos(now - ztsHost) / 1000000
-                             : 0ULL);
+                             : 0ULL,
+                               directControl->rxPull.pulls.load(std::memory_order_relaxed),
+                               directControl->rxPull.pulledPackets.load(std::memory_order_relaxed),
+                               directControl->rxPull.busy.load(std::memory_order_relaxed));
             }
             // Cadence per interval: at 48 kHz blocking the device-replayed
             // pattern is 6 DATA : 2 NO-DATA per 8 cycles (6000 data packets/s

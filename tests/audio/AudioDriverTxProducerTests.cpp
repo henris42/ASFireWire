@@ -1536,6 +1536,24 @@ TEST(TxOwnershipGolden, SmallBufferFillDoesNotWaitForTheQueue) {
               missedAfterStart);
 }
 
+// Lost audio shows up at the default level: CoreAudio writing too late for
+// the frames' packets ([Glitch], ReportTransportGlitches) is a warning.
+TEST(TxOwnershipGolden, LateHostWritesAreReportedAtWarn) {
+    const ASFW::Isoch::Audio::DICE::DiceProfile profile{{.name = "Focusrite Saffire (DICE)"}};
+    ASFW::Logging::LogRing::Shared().Initialize();
+    const uint32_t before = CountLogLines("[Glitch]");
+    TxProducerRig rig;
+    rig.SetResolvedPlayback({.pcmChannels = 8, .am824Slots = 9, .midiPorts = 1});
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::FocusriteSPro24Dsp, 48000));
+    rig.FeedBlockingRx(8);
+    // Each 64-frame write lands 48 frames behind the HAL clock.
+    rig.EnableHostOutput({.ioFrames = 64, .leadFrames = 16});
+    ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets)) << rig.DescribeFault();
+    ASSERT_GT(rig.Ivars().runtime.txStreamEngine.PayloadWriterCounters().framesMissedFinality.load(),
+              0U);
+    EXPECT_GT(CountLogLines("[Glitch]"), before);
+}
+
 TEST(TxOwnershipGolden, MAudio1814Clean48k) {
     RecordMAudioTxGolden({"tx/maudio-1814/clean-48k-io512.txt",
                           {.ioFrames = 512, .leadFrames = 560, .clockFromZts = true}});
