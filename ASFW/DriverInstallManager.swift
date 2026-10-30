@@ -27,7 +27,7 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
             case .replacementVersionNotNewer(let existing, let replacement):
                 return "Cannot replace ASFW build \(existing) with build \(replacement): the replacement is not newer."
             case .orphanedDriverServer:
-                return "ASFW has an orphaned DriverKit server with no attached services."
+                return "The previous ASFW driver has not finished shutting down: its DriverKit server runs with no services attached."
             case .driverDidNotAttach:
                 return "ASFW was enabled, but ASFWDriver did not attach to the FireWire controller."
             case .driverDidNotDetach:
@@ -43,7 +43,9 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
                 #else
                 return "Install a newer ASFW build. Release builds only replace a driver with a higher build number."
                 #endif
-            case .orphanedDriverServer, .driverDidNotDetach:
+            case .orphanedDriverServer:
+                return "Restart the Mac to finish. Do not delete files from /Library/SystemExtensions manually."
+            case .driverDidNotDetach:
                 return "Quit ASFW and reboot before installing the new build. Do not delete files from /Library/SystemExtensions manually."
             case .driverDidNotAttach:
                 return "Reconnect the FireWire adapter. If the controller is present, remove ASFW, wait for it to detach, and install the build again."
@@ -136,6 +138,17 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
         guard let operation = pending else { return }
         operation.resultDescription =
             "\(operation.kind.rawValue.capitalized) finished with result \(result.rawValue)"
+        operation.progress?(operation.resultDescription)
+        // A replaced driver that was in use goes at the restart, and the new
+        // one starts then: until then the registry shows the old server
+        // detaching, which the verification would report as a failure (b178).
+        if result == .willCompleteAfterReboot {
+            finish(.success(
+                "\(operation.kind.rawValue.capitalized) completes when the Mac restarts; "
+                    + "the new build takes over then."
+            ))
+            return
+        }
         beginRegistryVerification()
     }
 
