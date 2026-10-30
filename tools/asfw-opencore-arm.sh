@@ -30,6 +30,10 @@
 #     --manual-start     set asfw-start = manual: the driver claims the controller at boot and leaves
 #                        it alone until `asfw-config-agent --bring-up`
 #     --auto-start       remove asfw-start again
+#     --path OCPATH      act on this OpenCore device path instead of the controllers found in the
+#                        I/O Registry (repeatable), e.g. arm a slot while the card is out:
+#                        --path 'PciRoot(0x0)/Pci(0x1C,0x4)/Pci(0x0,0x0)/Pci(0x0,0x0)'
+#                        (--report prints the path of every controller present)
 #     --dry-run          show what would change, write nothing
 #
 # Takes effect at the next boot. To undo by hand, copy the backup over config.plist,
@@ -46,7 +50,7 @@ info() { printf '        %s\n' "$*"; }
 # missing key's error on stdout, so its exit status decides, not its output.
 plget() { local v; v=$(plutil -extract "$1" raw -o - "$2" 2>/dev/null) || return 0; printf '%s' "$v"; }
 
-MODE=arm; ESP=""; VTD=0; DRY=0; LOGLEVEL=""; NO_LOGLEVEL=0; BOOTTRACE=""; NO_BOOTTRACE=0; START=""; NO_START=0
+MODE=arm; ESP=""; VTD=0; DRY=0; LOGLEVEL=""; NO_LOGLEVEL=0; BOOTTRACE=""; NO_BOOTTRACE=0; START=""; NO_START=0; GIVEN=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --arm) MODE=arm ;;
@@ -59,9 +63,14 @@ while [ $# -gt 0 ]; do
         --no-boot-trace) NO_BOOTTRACE=1 ;;
         --manual-start) START=manual ;;
         --auto-start) NO_START=1 ;;
+        --path)
+            if ! [[ "${2:-}" =~ ^PciRoot\(0x[0-9A-Fa-f]+\)(/Pci\(0x[0-9A-Fa-f]+,0x[0-9A-Fa-f]+\))+$ ]]; then
+                echo "--path wants an OpenCore device path like PciRoot(0x0)/Pci(0x1C,0x4)/Pci(0x0,0x0)"; exit 2
+            fi
+            GIVEN+="$2"$'\t'"given"$'\t'$'\n'; shift ;;
         --vtd) VTD=1 ;;
         --dry-run) DRY=1 ;;
-        -h|--help) sed -n '2,38p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
         *) echo "unknown option: $1 (see --help)"; exit 2 ;;
     esac
     shift
@@ -82,6 +91,10 @@ OCGUID=7C436110-AB2A-4BBB-A880-FE41995C9F82
 # bridge>) followed by Pci(dev,func) for each PCI device from the root port down,
 # taken from the node names (RP05@1C → 0x1C,0x0; XHC@14,3 → 0x14,0x3).
 bold "FireWire OHCI controllers"
+if [ -n "$GIVEN" ]; then
+    # The card need not be present: the paths come from the command line.
+    PATHS=$(printf '%s' "$GIVEN" | sort -u)
+else
 PATHS=$(ioreg -p IODeviceTree -w0 -l | perl -e '
     my @stack; my $cur;
     while (<STDIN>) {
@@ -108,7 +121,8 @@ PATHS=$(ioreg -p IODeviceTree -w0 -l | perl -e '
             print "PciRoot(0x" . sprintf("%X", $uid) . ")/" . join("/", @parts) . "\t$cur->{name}\t$ids\n" if @parts;
         }
     }')
-if [ -z "$PATHS" ]; then bad "no FireWire OHCI (class 0x0C0010) found in the I/O Registry"; exit 1; fi
+fi
+if [ -z "$PATHS" ]; then bad "no FireWire OHCI (class 0x0C0010) found in the I/O Registry (pass --path to arm an empty slot)"; exit 1; fi
 while IFS=$'\t' read -r p n ids; do ok "$p   ($n)"; done <<< "$PATHS"
 
 # ------------------------------------------------------------ config.plist
@@ -148,6 +162,19 @@ while IFS=$'\t' read -r p n ids; do
     start=$(plget "DeviceProperties.Add.$p.asfw-start" "$C")
     [ -n "$start" ] && info "         asfw-start = $start"
 done <<< "$PATHS"
+# Paths in the config that carry asfw-* properties but are not in the list above:
+# a card that was pulled, or a slot armed with --path.
+plutil -extract DeviceProperties.Add xml1 -o - "$C" 2>/dev/null | perl -e '
+    my $depth = 0; my $cur = ""; my %paths;
+    while (<STDIN>) {
+        if ($depth == 1 && m{<key>(PciRoot[^<]*)</key>}) { $cur = $1; $paths{$cur} = ""; }
+        if ($depth == 2 && $cur ne "" && m{<key>(asfw-[^<]+)</key>}) { $paths{$cur} .= " $1"; }
+        $depth += () = /<dict>/g; $depth -= () = m{</dict>}g;
+    }
+    for (sort keys %paths) { print "$_\t$paths{$_}\n" if $paths{$_} ne ""; }' |
+while IFS=$'\t' read -r p props; do
+    grep -q "^$p"$'\t' <<< "$PATHS" || warn "no controller at $p; config has:$props"
+done
 bootargs=$(plget "NVRAM.Add.$OCGUID.boot-args" "$C")
 info "boot-args: ${bootargs:-<none>}"
 if [ "$mem" -gt 4 ]; then
