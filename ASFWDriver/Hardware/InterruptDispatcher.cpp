@@ -72,7 +72,7 @@ void InterruptDispatcher::HandleSnapshot(const InterruptSnapshot& snap, Controll
         }
     }
 
-    if (snap.intEvent != 0) {
+    if (snap.intEvent != 0 && ShouldPublishStatus(snap.intEvent, snap.timestamp)) {
         const uint32_t asyncMask = IntEventBits::kReqTxComplete | IntEventBits::kRespTxComplete |
                                    IntEventBits::kARRQ | IntEventBits::kARRS |
                                    IntEventBits::kRQPkt | IntEventBits::kRSPkt;

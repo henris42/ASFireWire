@@ -211,6 +211,10 @@ add_core_test(TopologySpeedTests
 )
 
 # ControllerCore interrupt path, with a real topology and the register stub.
+add_core_test(InterruptStatusPublishTests
+    InterruptStatusPublishTests.cpp
+)
+
 add_core_test(ControllerCoreInterruptTests
     ControllerCoreInterruptTests.cpp
     "${ASFW_DRIVER_DIR}/Controller/ControllerCore.cpp"
