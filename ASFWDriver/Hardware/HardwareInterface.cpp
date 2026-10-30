@@ -637,6 +637,9 @@ std::optional<uint8_t> HardwareInterface::ReadPhyRegisterUnlocked(uint8_t addres
         }
 
         if (i >= kImmediateTries) {
+            // Not across the sleep: the scope holds every other MMIO user (the
+            // interrupt handler, the BeginRead pull on the IO thread) with it.
+            access = {};
             IOSleep(1);
         }
     }
@@ -679,6 +682,9 @@ bool HardwareInterface::WritePhyRegisterUnlocked(uint8_t address, uint8_t value)
         }
 
         if (i >= kImmediateTries) {
+            // Not across the sleep: the scope holds every other MMIO user (the
+            // interrupt handler, the BeginRead pull on the IO thread) with it.
+            access = {};
             IOSleep(1);
         }
     }
@@ -1382,6 +1388,7 @@ LocalCSRWriteResult HardwareInterface::WriteLocalIRMResource(uint32_t selectCode
 
             return {LocalCSRLockResult::Status::Success};
         }
+        access = {};  // not across the delay (see the PHY polls)
 #ifndef ASFW_HOST_TEST
         IODelay(5);
 #else
@@ -1426,6 +1433,7 @@ LocalCSRReadResult HardwareInterface::ReadLocalIRMResource(uint32_t selectCode) 
         if (ctrl & 0x80000000u) {
             return {LocalCSRLockResult::Status::Success, access.Read(Register32::kCSRData)};
         }
+        access = {};  // not across the delay (see the PHY polls)
 #ifndef ASFW_HOST_TEST
         IODelay(5);
 #else
@@ -1460,6 +1468,7 @@ LocalCSRLockResult HardwareInterface::CompareSwapLocalIRMResource(uint32_t selec
             const uint32_t oldValue = access.Read(Register32::kCSRData);
             return {LocalCSRLockResult::Status::Success, oldValue, (oldValue == compareValue)};
         }
+        access = {};  // not across the delay (see the PHY polls)
 #ifndef ASFW_HOST_TEST
         IODelay(5);
 #else
