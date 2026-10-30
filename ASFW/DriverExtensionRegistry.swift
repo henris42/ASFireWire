@@ -18,6 +18,10 @@ enum DriverExtensionActivationDisposition: Equatable, Sendable {
     case pending
     case orphanedServer
     case didNotAttach
+    /// This request replaced a loaded build that has not let go: sysextd
+    /// finishes the swap at the next restart (`terminated waiting to
+    /// uninstall on reboot` while the request itself reports completed).
+    case completesAtRestart
 }
 
 enum DriverExtensionDeactivationDisposition: Equatable, Sendable {
@@ -30,7 +34,8 @@ enum DriverExtensionDeactivationDisposition: Equatable, Sendable {
 struct DriverExtensionHealthPolicy {
     static func activationDisposition(
         for snapshot: DriverExtensionRegistrySnapshot,
-        timedOut: Bool
+        timedOut: Bool,
+        replacedLoadedBuild: Bool = false
     ) -> DriverExtensionActivationDisposition {
         if snapshot.driverAttached {
             return .attached
@@ -40,6 +45,9 @@ struct DriverExtensionHealthPolicy {
         }
         if !timedOut {
             return .pending
+        }
+        if replacedLoadedBuild {
+            return .completesAtRestart
         }
         if snapshot.hasOrphanedServer {
             return .orphanedServer

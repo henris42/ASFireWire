@@ -43,6 +43,28 @@ struct DriverExtensionHealthPolicyTests {
         ) == .orphanedServer)
     }
 
+    @Test func replacementOfALoadedBuildCompletesAtRestart() {
+        // b184: result 0, the old build "terminated waiting to uninstall on
+        // reboot", its server still up with no services.
+        for state in [snapshot(server: true), snapshot()] {
+            #expect(DriverExtensionHealthPolicy.activationDisposition(
+                for: state,
+                timedOut: false,
+                replacedLoadedBuild: true
+            ) == .pending)
+            #expect(DriverExtensionHealthPolicy.activationDisposition(
+                for: state,
+                timedOut: true,
+                replacedLoadedBuild: true
+            ) == .completesAtRestart)
+        }
+        #expect(DriverExtensionHealthPolicy.activationDisposition(
+            for: snapshot(driver: true, server: true, associated: 2),
+            timedOut: false,
+            replacedLoadedBuild: true
+        ) == .attached)
+    }
+
     @Test func missingServerAfterActivationIsAttachFailure() {
         let disposition = DriverExtensionHealthPolicy.activationDisposition(
             for: snapshot(),

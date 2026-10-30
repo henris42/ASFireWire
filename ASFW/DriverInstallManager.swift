@@ -62,6 +62,8 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
         let completion: CompletionHandler
         var resultDescription = ""
         var replacementError: OperationError?
+        /// The build this request replaced, when it replaced one.
+        var replacedBuild: String?
 
         init(kind: OperationKind,
              requireNewerBuild: Bool,
@@ -189,6 +191,7 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
         pending?.progress?(
             "Replacing ASFW build \(existingVersion) with build \(replacementVersion)…"
         )
+        pending?.replacedBuild = existingVersion
         return .replace
     }
 
@@ -221,7 +224,8 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
         case .activation:
             switch DriverExtensionHealthPolicy.activationDisposition(
                 for: snapshot,
-                timedOut: timedOut
+                timedOut: timedOut,
+                replacedLoadedBuild: operation.replacedBuild != nil
             ) {
             case .attached:
                 finish(.success(
@@ -237,6 +241,13 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
                 finish(.failure(OperationError.orphanedDriverServer))
             case .didNotAttach:
                 finish(.failure(OperationError.driverDidNotAttach))
+            case .completesAtRestart:
+                // b184: the request finished with result 0 while build N-1
+                // stayed loaded ("terminated waiting to uninstall on reboot").
+                finish(.success(
+                    "\(operation.resultDescription). Activation completes when the Mac restarts; "
+                        + "build \(operation.replacedBuild ?? "?") runs until then, and the new build takes over."
+                ))
             }
 
         case .deactivation:
