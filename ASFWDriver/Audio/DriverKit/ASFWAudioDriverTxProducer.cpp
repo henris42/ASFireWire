@@ -8,6 +8,7 @@
 // redesigns this side.
 //
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
@@ -1082,6 +1083,7 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
     (void)ivars.runtime.txStreamEngine.TakePeakWrittenQ24(nullptr);
     // The interval minimum belongs to one stream: drop the previous one's.
     (void)ivars.runtime.txStreamEngine.TakeMinFinalityMarginPackets();
+    (void)ivars.runtime.motuPayloadWriter.TakeMinFinalityMarginPackets();
     ivars.runtime.txMissedFinalityAtStart =
         ivars.runtime.txStreamEngine.PayloadWriterCounters().framesMissedFinality.load(
             std::memory_order_relaxed) +
@@ -1601,8 +1603,11 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                     .framesMissedFinality.load(std::memory_order_relaxed) +
                 ivars->runtime.motuPayloadWriter.Counters()
                     .framesMissedFinality.load(std::memory_order_relaxed);
+            // Each stream fills through one of the two writers; the other
+            // reports nothing (INT64_MAX).
             const int64_t sOutMin =
-                ivars->runtime.txStreamEngine.TakeMinFinalityMarginPackets();
+                std::min(ivars->runtime.txStreamEngine.TakeMinFinalityMarginPackets(),
+                         ivars->runtime.motuPayloadWriter.TakeMinFinalityMarginPackets());
             // The receive side also observes the capture ring, so without a
             // CoreAudio read in the interval the minimum is just the ring
             // capacity. Headroom only exists relative to a read.

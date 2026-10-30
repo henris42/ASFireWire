@@ -336,6 +336,26 @@ TEST(AmdtpPacketTimelineWalkTests, MotuWriterMatchesThePerFrameScan) {
     }
 }
 
+TEST(AmdtpPacketTimelineWalkTests, MotuWriterReportsItsFinalityMargin) {
+    using namespace ASFW::Encoding::Motu;
+    Ring ring{64, 8, DataBlockQuadlets(2)};
+    ring.Prepare(40);
+    MotuPayloadWriter writer{};
+    writer.Configure(MotuPayloadStreamConfig{.pcmChunks = 2, .sourceChannelOffset = 0});
+    writer.BindTimeline(&ring.timeline);
+    EXPECT_EQ(writer.TakeMinFinalityMarginPackets(), INT64_MAX);
+    const std::vector<float> host = MakeHostRing(256, 2);
+    HostAudioBufferView view{};
+    view.interleavedFloat32 = host.data();
+    view.firstFrame = 48;  // packet 8's first frame
+    view.frameCount = 16;
+    view.frameCapacity = 256;
+    view.channels = 2;
+    writer.WriteFloat32Interleaved(view, 5);
+    EXPECT_EQ(writer.TakeMinFinalityMarginPackets(), 3);
+    EXPECT_EQ(writer.TakeMinFinalityMarginPackets(), INT64_MAX);
+}
+
 // AmdtpPayloadWriter::WriteFloat32Interleaved before the walk, for the
 // default policy (identity map, AM824 MBLA): one scan per packet.
 void ReferenceAmdtpWrite(const AmdtpPacketTimeline& timeline, const AmdtpStreamConfig& config,

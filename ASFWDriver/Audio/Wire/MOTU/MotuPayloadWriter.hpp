@@ -57,6 +57,10 @@ struct MotuPayloadWriterCounters final {
     /// Largest |sample| written since the last TakePeakWrittenQ24(), as a
     /// 24-bit magnitude (0x7FFFFF = full scale). Zero while muted.
     std::atomic<uint32_t> intervalPeakWrittenQ24{0};
+    /// S_out headroom, as AmdtpPayloadWriterCounters has it: the smallest
+    /// distance in packets between a written frame's packet and the first
+    /// writable packet since the reader took it. INT64_MAX: nothing written.
+    std::atomic<int64_t> intervalMinFinalityMarginPackets{INT64_MAX};
 };
 
 struct MotuPayloadStreamConfig final {
@@ -98,6 +102,12 @@ public:
     /// The interval's peak written magnitude (24-bit); the interval restarts.
     [[nodiscard]] uint32_t TakePeakWrittenQ24() noexcept {
         return counters_.intervalPeakWrittenQ24.exchange(0, std::memory_order_relaxed);
+    }
+    /// The interval's smallest finality margin (INT64_MAX: nothing written);
+    /// the interval restarts.
+    [[nodiscard]] int64_t TakeMinFinalityMarginPackets() noexcept {
+        return counters_.intervalMinFinalityMarginPackets.exchange(INT64_MAX,
+                                                                   std::memory_order_relaxed);
     }
 
 private:

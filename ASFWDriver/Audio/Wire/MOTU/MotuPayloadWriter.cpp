@@ -70,6 +70,7 @@ void MotuPayloadWriter::WriteFloat32Interleaved(
     uint64_t outsidePacket = 0;
     uint64_t truncated = 0;
     uint64_t missedFinality = 0;
+    int64_t minMarginPackets = INT64_MAX;
     const MotuPortMap ports = EffectivePortMap(streamConfig_.ports, streamConfig_.pcmChunks);
     // One decision per call: a call never mixes muted and audible frames.
     const bool muted = muted_.load(std::memory_order_acquire);
@@ -121,11 +122,16 @@ void MotuPayloadWriter::WriteFloat32Interleaved(
         hint = snap.packetIndex + 1;
         haveHint = true;
 
-        if (firstWritablePacket != 0 &&
-            static_cast<int64_t>(snap.packetIndex - firstWritablePacket) < 0) {
-            missedFinality += runFrames;
-            frame = runEnd;
-            continue;
+        if (firstWritablePacket != 0) {
+            const auto margin = static_cast<int64_t>(snap.packetIndex - firstWritablePacket);
+            if (margin < 0) {
+                missedFinality += runFrames;
+                frame = runEnd;
+                continue;
+            }
+            if (margin < minMarginPackets) {
+                minMarginPackets = margin;
+            }
         }
 
         // dbs is the data block size in quadlets, which is exactly what
@@ -189,6 +195,14 @@ void MotuPayloadWriter::WriteFloat32Interleaved(
         while (peakQ24 > current &&
                !counters_.intervalPeakWrittenQ24.compare_exchange_weak(current, peakQ24,
                                                                        std::memory_order_relaxed)) {
+        }
+    }
+    if (minMarginPackets != INT64_MAX) {
+        int64_t current =
+            counters_.intervalMinFinalityMarginPackets.load(std::memory_order_relaxed);
+        while (minMarginPackets < current &&
+               !counters_.intervalMinFinalityMarginPackets.compare_exchange_weak(
+                   current, minMarginPackets, std::memory_order_relaxed)) {
         }
     }
     counters_.framesVisited.fetch_add(hostBuffer.frameCount, std::memory_order_relaxed);
