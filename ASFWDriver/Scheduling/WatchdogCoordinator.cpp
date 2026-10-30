@@ -8,6 +8,7 @@
 #include "../Async/Interfaces/IAsyncSubsystemPort.hpp"
 #include "../Controller/ControllerCore.hpp"
 #include "../Diagnostics/StatusPublisher.hpp"
+#include "../Isoch/IsochLanes.hpp"
 #include "../Isoch/IsochReceiveContext.hpp"
 #include "../Isoch/Transmit/IsochTransmitContext.hpp"
 
@@ -22,6 +23,9 @@ constexpr uint32_t kZtsRecordsPerDrain = 8;
 // Consumer-owned diagnostics (IO-callback error reports recorded by the
 // real-time path) are serviced every 100 ticks (~100 ms), off that path.
 constexpr uint32_t kConsumerDiagnosticsIntervalTicks = 100;
+// The app polls the shared status block; four writes a second keep it
+// current (bus resets are written at once from the interrupt).
+constexpr uint64_t kStatusPublishIntervalUsec = 250'000;
 
 uint64_t MicrosecondsToMachTicks(uint64_t usec) {
     static mach_timebase_info_data_t timebase{0, 0};
@@ -114,6 +118,7 @@ void WatchdogCoordinator::Reset() {
     queue_.reset();
     ztsLogDivider_ = 0;
     consumerDiagnosticsDivider_ = 0;
+    lastStatusPublishMach_ = 0;
     lastDrainEligible_ = true;
 }
 
@@ -135,7 +140,26 @@ void WatchdogCoordinator::HandleTick(ControllerCore* controller,
     TickAsyncSubsystem(asyncSubsystem, statusPublisher);
     TickIsochReceive(isochReceiveContext);
     TickIsochTransmit(isochTransmitContext);
-    statusPublisher.Publish(controller, asyncSubsystem, SharedStatusReason::Watchdog);
+    static const uint64_t publishIntervalMach = MicrosecondsToMachTicks(kStatusPublishIntervalUsec);
+    const uint64_t now = mach_absolute_time();
+    if (lastStatusPublishMach_ == 0 || now - lastStatusPublishMach_ >= publishIntervalMach) {
+        lastStatusPublishMach_ = now;
+        statusPublisher.Publish(controller, asyncSubsystem, SharedStatusReason::Watchdog);
+    }
+}
+
+uint64_t WatchdogCoordinator::TickPeriodUsec(IsochLanes& lanes) noexcept {
+    for (uint32_t index = 0; index < IsochLanes::kMaxHardwareContexts; ++index) {
+        const auto* receive = lanes.ReceiveContext(index);
+        if (receive && receive->GetState() == ASFW::Isoch::IRPolicy::State::Running) {
+            return kStreamingTickUsec;
+        }
+        const auto* transmit = lanes.TransmitContext(index);
+        if (transmit && transmit->GetState() == ASFW::Isoch::ITState::Running) {
+            return kStreamingTickUsec;
+        }
+    }
+    return kIdleTickUsec;
 }
 
 void WatchdogCoordinator::TickAsyncSubsystem(

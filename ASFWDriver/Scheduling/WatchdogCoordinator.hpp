@@ -26,6 +26,7 @@ class ASFWDriver;
 
 namespace ASFW::Driver {
 class ControllerCore;
+class IsochLanes;
 class StatusPublisher;
 
 class WatchdogCoordinator {
@@ -45,6 +46,13 @@ class WatchdogCoordinator {
                     ASFW::Isoch::IsochTransmitContext* isochTransmitContext,
                     StatusPublisher& statusPublisher);
 
+    // The next tick: 1 ms while an isochronous context runs (the tick backs up
+    // its interrupts and drains its telemetry), 10 ms otherwise, when the tick
+    // only times out transactions and watches the AT contexts.
+    [[nodiscard]] static uint64_t TickPeriodUsec(IsochLanes& lanes) noexcept;
+    static constexpr uint64_t kStreamingTickUsec = 1'000;
+    static constexpr uint64_t kIdleTickUsec = 10'000;
+
   private:
     std::shared_ptr<ASFW::Common::TeardownCompletion> teardownCompletion_;
     void TickAsyncSubsystem(ASFW::Async::IAsyncSubsystemPort* asyncSubsystem,
@@ -57,6 +65,8 @@ class WatchdogCoordinator {
     OSSharedPtr<OSAction> action_;
     uint32_t ztsLogDivider_{0};
     uint32_t consumerDiagnosticsDivider_{0};
+    // Mach time of the last status block write (the app polls it).
+    uint64_t lastStatusPublishMach_{0};
     // Edge-triggered so a permanently ineligible drain reports once, not at
     // 1 kHz. Starts true: the interesting event is the drop to false.
     bool lastDrainEligible_{true};

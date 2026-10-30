@@ -1252,7 +1252,9 @@ void ASFWDriver::AsyncWatchdogTimerFired_Impl(ASFWDriver_AsyncWatchdogTimerFired
         }
     }
 
-    ScheduleAsyncWatchdog(kAsyncWatchdogPeriodUsec);
+    ScheduleAsyncWatchdog(ivars && ivars->context
+                              ? WatchdogCoordinator::TickPeriodUsec(ivars->context->isochLanes)
+                              : kAsyncWatchdogPeriodUsec);
 }
 
 void ASFWDriver::SBP2SessionTimerFired_Impl(ASFWDriver_SBP2SessionTimerFired_Args) {
