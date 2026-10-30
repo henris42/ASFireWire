@@ -16,10 +16,6 @@
 
 namespace ASFW::Shared {
 
-namespace {
-constexpr size_t kPageGranule = DMAMemoryManager::kPageGranule;
-} // namespace
-
 DMAMemoryManager::~DMAMemoryManager() { Reset(); }
 
 namespace {
