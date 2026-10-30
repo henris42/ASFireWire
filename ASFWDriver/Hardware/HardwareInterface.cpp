@@ -1332,13 +1332,41 @@ void HardwareInterface::FlushPostedWrites() const {
 }
 
 std::pair<uint32_t, uint64_t> HardwareInterface::ReadCycleTimeAndUpTime() const noexcept {
-    // Read cycle timer and capture host uptime as atomically as possible.
-    // Per Apple's getCycleTimeAndUpTime(): read register first, then get uptime.
-    // The order matters for accurate correlation between FireWire bus time and host time.
-    auto access = const_cast<HardwareInterface*>(this)->TryBeginAccess();
-    const uint32_t cycleTimer = access ? access.Read(Register32::kCycleTimer) : 0;
-    const uint64_t uptime = mach_absolute_time();
-    return {cycleTimer, uptime};
+    // The cycle timer and the host time it was read at: every receive packet's
+    // host time and the capture zero-timestamp anchors are derived from this
+    // pair. Two host-time reads bracket the register read; the register is
+    // latched somewhere in between, so the midpoint is its host time. A thread
+    // preempted inside the bracket (the interrupt thread runs below every
+    // real-time thread, and Live keeps several busy) gives a wide one and a
+    // skewed pair; the read is then retried, keeping the tightest of three.
+    // Without the register lock: the BeginRead pull calls this on
+    // AudioDriverKit's real-time IO thread, which must not wait for it.
+    constexpr uint64_t kTightBracketNanos = 10'000;
+    static const uint64_t tightBracketTicks = [] {
+        mach_timebase_info_data_t timebase{};
+        mach_timebase_info(&timebase);
+        return timebase.numer == 0 ? kTightBracketNanos
+                                   : kTightBracketNanos * timebase.denom / timebase.numer;
+    }();
+    uint32_t bestTimer = 0;
+    uint64_t bestHost = 0;
+    uint64_t bestWidth = UINT64_MAX;
+    for (int attempt = 0; attempt < 3 && bestWidth > tightBracketTicks; ++attempt) {
+        uint32_t cycleTimer = 0;
+        const uint64_t before = mach_absolute_time();
+        const bool admitted = accessGate_.ReadWithoutLock(
+            [&] { cycleTimer = ReadScoped(Register32::kCycleTimer); });
+        const uint64_t after = mach_absolute_time();
+        if (!admitted) {
+            return {0, after};
+        }
+        if (after - before < bestWidth) {
+            bestWidth = after - before;
+            bestTimer = cycleTimer;
+            bestHost = before + (after - before) / 2;
+        }
+    }
+    return {bestTimer, bestHost};
 }
 
 LocalCSRWriteResult HardwareInterface::WriteLocalIRMResource(uint32_t selectCode, uint32_t value) noexcept {

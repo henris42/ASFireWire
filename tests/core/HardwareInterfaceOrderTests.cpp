@@ -266,6 +266,64 @@ TEST_F(HardwareInterfaceOrderTests, RevokeWaitsForActiveAccessScope) {
     EXPECT_FALSE(hardware_.TryBeginAccess());
 }
 
+// The BeginRead pull reads the cycle timer on AudioDriverKit's real-time IO
+// thread: the read must not wait for the register lock another thread holds.
+TEST_F(HardwareInterfaceOrderTests, CycleTimerReadDoesNotWaitForTheRegisterLock) {
+    ON_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kCycleTimer), _))
+        .WillByDefault([](uint8_t, uint64_t, uint32_t* value) { *value = 0x12345678u; });
+    std::atomic<bool> scopeEntered{false};
+    std::atomic<bool> releaseScope{false};
+    std::thread holder([&] {
+        auto access = hardware_.TryBeginAccess();
+        ASSERT_TRUE(access);
+        scopeEntered.store(true, std::memory_order_release);
+        while (!releaseScope.load(std::memory_order_acquire)) {
+            std::this_thread::yield();
+        }
+    });
+    while (!scopeEntered.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
+
+    auto read = std::async(std::launch::async, [&] { return hardware_.ReadCycleTimeAndUpTime(); });
+    EXPECT_EQ(read.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+    releaseScope.store(true, std::memory_order_release);
+    holder.join();
+    const auto [cycleTimer, hostTicks] = read.get();
+    EXPECT_EQ(cycleTimer, 0x12345678u);
+    EXPECT_NE(hostTicks, 0u);
+}
+
+TEST_F(HardwareInterfaceOrderTests, CycleTimerReadIsRefusedOnceRevoked) {
+    hardware_.RevokeAndDrain();
+    EXPECT_CALL(*mockDevice_, MemoryRead32(_, _, _)).Times(0);
+    EXPECT_EQ(hardware_.ReadCycleTimeAndUpTime().first, 0u);
+}
+
+TEST_F(HardwareInterfaceOrderTests, RevokeWaitsForALockFreeCycleTimerRead) {
+    std::atomic<bool> readEntered{false};
+    std::atomic<bool> releaseRead{false};
+    ON_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kCycleTimer), _))
+        .WillByDefault([&](uint8_t, uint64_t, uint32_t* value) {
+            readEntered.store(true, std::memory_order_release);
+            while (!releaseRead.load(std::memory_order_acquire)) {
+                std::this_thread::yield();
+            }
+            *value = 1u;
+        });
+    std::thread reader([&] { (void)hardware_.ReadCycleTimeAndUpTime(); });
+    while (!readEntered.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
+
+    auto revoke = std::async(std::launch::async, [&] { hardware_.RevokeAndDrain(); });
+    EXPECT_EQ(revoke.wait_for(std::chrono::milliseconds(10)), std::future_status::timeout)
+        << "no BAR read may outlive the revocation";
+    releaseRead.store(true, std::memory_order_release);
+    EXPECT_EQ(revoke.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+    reader.join();
+}
+
 TEST_F(HardwareInterfaceOrderTests, AllOnesPresenceProbeLatchesHardwareGoneAndFencesLaterMmio) {
     EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kHCControl), _))
         .WillOnce([](uint8_t, uint64_t, uint32_t* value) { *value = 0xFFFFFFFFu; });
