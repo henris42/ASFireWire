@@ -23,11 +23,6 @@ namespace {
 // allows about 760 us for the whole cycle, client and driver (b184 report).
 constexpr uint64_t kRxPullMinBudgetNanos = 25'000;
 constexpr uint64_t kRxPullMaxBudgetNanos = 100'000;
-// After the first complete read, CoreAudio's clock for the device still
-// converges on the zero timestamps (one per 24576 frames, 256 ms at 96 kHz):
-// b184 had one short capture read in the first seconds of nearly every start
-// and none in 120 s of steady state. Short reads this soon are start-up.
-constexpr uint64_t kCaptureSettleNanos = 2'000'000'000ULL;
 
 [[nodiscard]] uint64_t RxPullBudgetNanos(uint32_t frames, uint32_t sampleRateHz) noexcept {
     if (sampleRateHz == 0) {
@@ -35,6 +30,48 @@ constexpr uint64_t kCaptureSettleNanos = 2'000'000'000ULL;
     }
     const uint64_t bufferNanos = (static_cast<uint64_t>(frames) * 1'000'000'000ULL) / sampleRateHz;
     return std::clamp(bufferNanos / 8, kRxPullMinBudgetNanos, kRxPullMaxBudgetNanos);
+}
+
+template <typename T>
+void RecordMax(std::atomic<T>& slot, T value) noexcept {
+    if (value > slot.load(std::memory_order_relaxed)) {
+        slot.store(value, std::memory_order_relaxed);
+    }
+}
+
+template <typename T>
+void RecordMin(std::atomic<T>& slot, T value) noexcept {
+    if (value < slot.load(std::memory_order_relaxed)) {
+        slot.store(value, std::memory_order_relaxed);
+    }
+}
+
+// Debug level only ([HalIoTime]): where this read sits on our timeline. The
+// host time of a frame by the last zero timestamp we gave the HAL, at the
+// nominal rate; lead = how long before `nowTicks` the read's last frame
+// arrived, skew = the HAL's host time for its first frame minus ours.
+void RecordInputTiming(ASFWAudioDriver_IVars& ivars, uint64_t sampleTime, uint32_t frames,
+                       uint64_t halHostTime, uint64_t nowTicks) noexcept {
+    auto& runtime = ivars.runtime;
+    const uint64_t ztsHost = runtime.lastHalZeroTimestampHostTicks.load(std::memory_order_relaxed);
+    const uint64_t ztsFrame = runtime.lastHalZeroTimestampSampleFrame.load(std::memory_order_relaxed);
+    const uint32_t rate = runtime.directAudioGraph.sampleRateHz;
+    if (ztsHost == 0 || rate == 0) {
+        return;
+    }
+    const auto ourNanos = [&](uint64_t frame) noexcept {
+        const int64_t framesFromZts = static_cast<int64_t>(frame) - static_cast<int64_t>(ztsFrame);
+        return static_cast<int64_t>(ASFW::Timing::hostTicksToNanos(ztsHost)) +
+               framesFromZts * 1'000'000'000LL / static_cast<int64_t>(rate);
+    };
+    const int64_t nowNanos = static_cast<int64_t>(ASFW::Timing::hostTicksToNanos(nowTicks));
+    RecordMin(runtime.ioInputLeadMinNanos, nowNanos - ourNanos(sampleTime + frames));
+    if (halHostTime != 0) {
+        const int64_t skew = static_cast<int64_t>(ASFW::Timing::hostTicksToNanos(halHostTime)) -
+                             ourNanos(sampleTime);
+        RecordMin(runtime.ioHalSkewMinNanos, skew);
+        RecordMax(runtime.ioHalSkewMaxNanos, skew);
+    }
 }
 
 // What a BeginRead pull drains for: the capture ring's write frame reaching
@@ -48,6 +85,11 @@ struct RxPullTarget {
         return target->writeFrame->load(std::memory_order_acquire) >= target->readEnd;
     }
 };
+// After the first complete read, CoreAudio's clock for the device still
+// converges on the zero timestamps (one per 24576 frames, 256 ms at 96 kHz):
+// b184 had one short capture read in the first seconds of nearly every start
+// and none in 120 s of steady state. Short reads this soon are start-up.
+constexpr uint64_t kCaptureSettleNanos = 2'000'000'000ULL;
 
 void ZeroInputFrameIfMissing(ASFW::Audio::Runtime::AudioGraphBinding& graph,
                              uint64_t absoluteFrame) noexcept {
@@ -188,6 +230,8 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                 return returnError(kIOReturnNotReady);
             }
 
+            const bool timeIo = ASFW_LOG_ENABLED(DirectAudio, Debug);
+            const uint64_t ioStartTicks = timeIo ? mach_absolute_time() : 0;
             if (operation == IOUserAudioIOOperationBeginRead) {
                 // ADK permits operation spans that differ from the nominal IO
                 // size. The stream ring capacity is the actual hard bound.
@@ -221,12 +265,22 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                                                      sampleTime,
                                                      ioBufferFrameSize);
                 control->counters.CountBeginRead();
+                if (timeIo) {
+                    RecordInputTiming(*driverIvars, sampleTime, ioBufferFrameSize, hostTime,
+                                      ioStartTicks);
+                    RecordMax(driverIvars->runtime.ioBeginReadMaxTicks,
+                              mach_absolute_time() - ioStartTicks);
+                }
             } else if (operation == IOUserAudioIOOperationWriteEnd) {
                 // See BeginRead above: CoreAudio may choose a larger span than
                 // kHalIoPeriodFrames while remaining within the stream ring.
                 if (!HandleOutputWriteEnd(*driverIvars, *control, sampleTime, hostTime,
                                           ioBufferFrameSize)) {
                     return returnError(kIOReturnBadArgument);
+                }
+                if (timeIo) {
+                    RecordMax(driverIvars->runtime.ioWriteEndMaxTicks,
+                              mach_absolute_time() - ioStartTicks);
                 }
             } else {
                 return returnError(kIOReturnBadArgument);

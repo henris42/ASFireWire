@@ -261,6 +261,16 @@ struct AudioDriverRuntimeState {
     std::atomic<bool> directAudioSkeletonBound{false};
     std::atomic<uint64_t> ioDebugCallbacks{0};
     std::atomic<uint64_t> ioCallbacksOutsideRun{0};
+    // [HalIoTime], measured only at debug level, reset per heartbeat: the
+    // longest BeginRead and WriteEnd handled here (the driver's own share of
+    // the HAL's IO cycle); for BeginRead, how long before the call the read's
+    // last frame arrived by our zero timestamps (least), and how far the HAL's
+    // host time for the read's first frame lies from ours (least, most).
+    std::atomic<uint64_t> ioBeginReadMaxTicks{0};
+    std::atomic<uint64_t> ioWriteEndMaxTicks{0};
+    std::atomic<int64_t> ioInputLeadMinNanos{INT64_MAX};
+    std::atomic<int64_t> ioHalSkewMinNanos{INT64_MAX};
+    std::atomic<int64_t> ioHalSkewMaxNanos{INT64_MIN};
     std::atomic<bool> txActive{false};
     // [TxPlace] and [TxSyt] log once per stream (TX preparation queue).
     bool txPlacementLogged{false};

@@ -1783,6 +1783,31 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                                directControl->rxPull.pulledPackets.load(std::memory_order_relaxed),
                                directControl->rxPull.busy.load(std::memory_order_relaxed),
                                directControl->rxPull.cut.load(std::memory_order_relaxed));
+                // The driver's share of the HAL's IO cycle, this interval:
+                // the longest BeginRead and WriteEnd here (us); for input, how
+                // long before BeginRead its last frame arrived by our zero
+                // timestamps (least, us; the input safety offset when the HAL
+                // reads where we expect) and the HAL's host time for the read
+                // against ours (least/most, us). See ASFWAudioDriverIO.cpp.
+                if (ASFW_LOG_ENABLED(DirectAudio, Debug)) {
+                    auto& runtime = ivars->runtime;
+                    const int64_t leadNanos =
+                        runtime.ioInputLeadMinNanos.exchange(INT64_MAX, std::memory_order_relaxed);
+                    const int64_t skewMin =
+                        runtime.ioHalSkewMinNanos.exchange(INT64_MAX, std::memory_order_relaxed);
+                    const int64_t skewMax =
+                        runtime.ioHalSkewMaxNanos.exchange(INT64_MIN, std::memory_order_relaxed);
+                    ASFW_LOG_DEBUG(DirectAudio,
+                                   "[HalIoTime] beginReadMaxUs=%llu writeEndMaxUs=%llu inLeadMinUs=%lld "
+                                   "halSkewUs=%lld/%lld",
+                                   ASFW::Timing::hostTicksToNanos(runtime.ioBeginReadMaxTicks.exchange(
+                                       0, std::memory_order_relaxed)) / 1000,
+                                   ASFW::Timing::hostTicksToNanos(runtime.ioWriteEndMaxTicks.exchange(
+                                       0, std::memory_order_relaxed)) / 1000,
+                                   leadNanos == INT64_MAX ? 0LL : static_cast<long long>(leadNanos / 1000),
+                                   skewMin == INT64_MAX ? 0LL : static_cast<long long>(skewMin / 1000),
+                                   skewMax == INT64_MIN ? 0LL : static_cast<long long>(skewMax / 1000));
+                }
             }
             // Cadence per interval: at 48 kHz blocking the device-replayed
             // pattern is 6 DATA : 2 NO-DATA per 8 cycles (6000 data packets/s
