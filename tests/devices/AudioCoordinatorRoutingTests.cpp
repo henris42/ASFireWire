@@ -185,10 +185,18 @@ public:
         callback(ASFW::Async::AsyncStatus::kSuccess, std::span<const uint8_t>(payload, 4));
         return ASFW::Async::AsyncHandle{1};
     }
+    // Writes are recorded, and land in the registers a later read returns.
+    std::vector<uint32_t> writes;
     ASFW::Async::AsyncHandle WriteBlock(ASFW::FW::Generation, ASFW::FW::NodeId,
-                                        ASFW::Async::FWAddress, std::span<const uint8_t>,
+                                        ASFW::Async::FWAddress address, std::span<const uint8_t> data,
                                         ASFW::FW::FwSpeed,
                                         ASFW::Async::InterfaceCompletionCallback callback) override {
+        writes.push_back(address.addressLo);
+        if (data.size() == 4) {
+            readValues[address.addressLo] = (static_cast<uint32_t>(data[0]) << 24) |
+                                            (static_cast<uint32_t>(data[1]) << 16) |
+                                            (static_cast<uint32_t>(data[2]) << 8) | data[3];
+        }
         callback(ASFW::Async::AsyncStatus::kSuccess, {});
         return ASFW::Async::AsyncHandle{1};
     }
@@ -693,7 +701,9 @@ TEST(AudioCoordinatorRoutingTests, MotuAddedIsDescribedFromTheOpticalRegisterAnd
     // config carries the description the host built.
     EXPECT_EQ(PublishOutcomes(h.Host()), 1U);
     EXPECT_EQ(h.Host().OutcomeCount(HostEvent::Publish, HostOutcome::PublishFailed), 1U);
-    ASSERT_EQ(bus.reads.size(), 2U);
+    // Clock and optical for the description, then (a new publication) the
+    // settings for the attach line.
+    ASSERT_GE(bus.reads.size(), 2U);
     EXPECT_EQ(bus.reads[1], kInOutConfLow);
     const auto endpoint = h.runtime.FindEndpointRuntime(kMotuGuid);
     ASSERT_NE(endpoint, nullptr);
@@ -721,6 +731,48 @@ TEST(AudioCoordinatorRoutingTests, MotuAddedIsDescribedFromTheOpticalRegisterAnd
     EXPECT_EQ(committed.clockSourceNames,
               (std::vector<std::string>{"Internal", "ADAT optical", "S/PDIF", "Word clock"}));
     EXPECT_EQ(committed.clockSource, 0U);
+}
+
+// b184: a unit unplugged and plugged back came back at 48 kHz with 22
+// inputs, not the 96 kHz and 18 it left with. The host keeps what the endpoint
+// had when the unit left and the family puts it back before describing it.
+TEST(AudioCoordinatorRoutingTests, AMotuThatComesBackIsPutBackToTheRateItLeftWith) {
+    CoordinatorHarness h;
+    auto device = h.Seed(MakeMotuRom());
+    ASSERT_NE(device, nullptr);
+    MotuRecordingBus bus;
+    h.AttachMotuProtocol(bus, OpticalWord(1U /*ADAT in*/, 1U /*ADAT out*/));
+    const uint32_t clockLow = static_cast<uint32_t>(ASFW::Audio::Motu::kAddrBase) +
+                              static_cast<uint32_t>(ASFW::Audio::Motu::Reg::ClockStatusV2);
+    bus.readValues[clockLow] = 0x18U;  // 96 kHz, internal
+    h.coordinator.OnDeviceAdded(device);
+    {
+        const auto endpoint = h.runtime.FindEndpointRuntime(kMotuGuid);
+        ASSERT_NE(endpoint, nullptr);
+        ASFW::Audio::Model::ASFWAudioDevice config{};
+        ASSERT_TRUE(endpoint->CopyConfig(config));
+        ASSERT_EQ(config.currentSampleRate, 96000U);
+        ASSERT_EQ(config.inputChannelCount, 18U);
+    }
+
+    h.coordinator.OnDeviceRemoved(kMotuGuid);
+    ASSERT_EQ(h.runtime.FindEndpointRuntime(kMotuGuid), nullptr);
+
+    // Back, reset to 48 kHz.
+    device = h.Seed(MakeMotuRom());
+    ASSERT_NE(device, nullptr);
+    h.AttachMotuProtocol(bus, OpticalWord(1U, 1U));
+    bus.readValues[clockLow] = 0x08U;
+    bus.writes.clear();
+    h.coordinator.OnDeviceAdded(device);
+
+    EXPECT_EQ(std::ranges::count(bus.writes, clockLow), 1) << "the rate is written back";
+    const auto endpoint = h.runtime.FindEndpointRuntime(kMotuGuid);
+    ASSERT_NE(endpoint, nullptr);
+    ASFW::Audio::Model::ASFWAudioDevice config{};
+    ASSERT_TRUE(endpoint->CopyConfig(config));
+    EXPECT_EQ(config.currentSampleRate, 96000U);
+    EXPECT_EQ(config.inputChannelCount, 18U);
 }
 
 // StartIO unwinds a failed start with StopStreaming. By then the device owns

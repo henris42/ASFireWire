@@ -132,7 +132,8 @@ public:
     void OnRuntimeFault(uint64_t guid, DuplexRestartReason reason) noexcept;
     /// DeviceEventSink: an adapter's neutral event.
     void OnDeviceEvent(uint64_t guid, DeviceEvent event, uint32_t detail) noexcept override;
-    /// The device is gone: drop its queued work and stored state.
+    /// The device is gone: remember the configuration it had (its endpoint's
+    /// rate, its settings as last read), drop its queued work and stored state.
     void CancelRemoteDeviceWork(uint64_t guid) noexcept;
     /// Close admission, drain the queue. Idempotent; concurrent callers wait.
     void BeginTeardown() noexcept;
@@ -196,6 +197,9 @@ private:
     static constexpr uint32_t kDescribeRetryDelayMs = 2000;
     Scheduling::ITimerScheduler* timer_{nullptr};
     std::unordered_map<uint64_t, uint32_t> describeRetries_{};
+    // Devices that left with a published endpoint: what they had then, offered
+    // to the family when they return (RememberedConfiguration). Under lock_.
+    std::unordered_map<uint64_t, RememberedConfiguration> rememberedByGuid_{};
     void ProbeClock(uint64_t guid, const char* family, uint32_t detail) noexcept;
     [[nodiscard]] bool Stopping() const noexcept { return stopping_.load(std::memory_order_acquire); }
 

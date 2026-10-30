@@ -345,10 +345,16 @@ void AudioDeviceHost::RefreshPublication(uint64_t guid) noexcept {
             if (endpoint->CopyConfig(committed)) input.committed = std::move(committed);
         }
     }
+    const bool newPublication = publisher_.GetNub(guid) == nullptr;
     if (lock_) {
         IOLockLock(lock_);
         if (const auto it = discoveredByGuid_.find(guid); it != discoveredByGuid_.end()) {
             input.discovered = it->second;
+        }
+        if (newPublication) {
+            if (const auto it = rememberedByGuid_.find(guid); it != rememberedByGuid_.end()) {
+                input.remembered = it->second;
+            }
         }
         IOLockUnlock(lock_);
     }
@@ -434,6 +440,9 @@ void AudioDeviceHost::RefreshPublication(uint64_t guid) noexcept {
             if (published && lock_) {
                 IOLockLock(lock_);
                 describeRetries_.erase(guid);
+                // Put back (or found as it was): the live endpoint is the
+                // reference again until the device next leaves.
+                rememberedByGuid_.erase(guid);
                 IOLockUnlock(lock_);
             }
         };
@@ -660,9 +669,22 @@ void AudioDeviceHost::ProbeClock(uint64_t guid, const char* family, uint32_t det
 
 void AudioDeviceHost::CancelRemoteDeviceWork(uint64_t guid) noexcept {
     if (guid == 0 || !lock_) return;
+    // The endpoint and the protocol are still there (the coordinator removes
+    // them after this): the configuration the device leaves with.
+    std::optional<RememberedConfiguration> remembered;
+    if (const auto endpoint = runtime_.FindEndpointRuntime(guid)) {
+        Model::ASFWAudioDevice config;
+        if (endpoint->CopyConfig(config) && config.currentSampleRate != 0) {
+            remembered = RememberedConfiguration{.sampleRateHz = config.currentSampleRate};
+            if (const auto protocol = runtime_.FindShared(guid)) {
+                remembered->settings = protocol->LastDeviceSettings();
+            }
+        }
+    }
     IOLockLock(lock_);
     recoveringGuids_.erase(guid);
     discoveredByGuid_.erase(guid);
+    if (remembered) rememberedByGuid_[guid] = *remembered;
     IOLockUnlock(lock_);
 }
 

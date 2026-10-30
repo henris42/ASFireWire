@@ -42,6 +42,7 @@ using ASFW::Audio::DuplexRestartReason;
 using ASFW::Audio::Host::DescribedWithNote;
 using ASFW::Audio::Host::DescribeInput;
 using ASFW::Audio::Host::DescribeRefusal;
+using ASFW::Audio::Host::RememberedConfiguration;
 using ASFW::Audio::Host::DescribeResult;
 using ASFW::Audio::Host::DeviceEvent;
 using ASFW::Audio::Host::DeviceEventSink;
@@ -122,12 +123,19 @@ public:
     }
 
     AsyncHandle WriteBlock(ASFW::FW::Generation, ASFW::FW::NodeId, FWAddress address,
-                           std::span<const uint8_t>, ASFW::FW::FwSpeed,
+                           std::span<const uint8_t> data, ASFW::FW::FwSpeed,
                            ASFW::Async::InterfaceCompletionCallback callback) override {
         writes.push_back(address.addressLo);
+        // A device whose registers hold what is written to them.
+        if (applyWrites && data.size() == 4) {
+            readValues[address.addressLo] = (static_cast<uint32_t>(data[0]) << 24) |
+                                            (static_cast<uint32_t>(data[1]) << 16) |
+                                            (static_cast<uint32_t>(data[2]) << 8) | data[3];
+        }
         callback(AsyncStatus::kSuccess, {});
         return AsyncHandle{1};
     }
+    bool applyWrites{false};
 
     AsyncHandle Lock(ASFW::FW::Generation, ASFW::FW::NodeId, FWAddress, ASFW::FW::LockOp,
                      std::span<const uint8_t>, uint32_t, ASFW::FW::FwSpeed,
@@ -387,10 +395,82 @@ TEST(MotuFamilyAdapterTests, DescribeRegistersNotificationsThenReadsClockAndOpti
     (void)RunDescribe(adapter, rig.Input());
 
     // Description needs current rate and optical state, not a default 48k guess.
-    ASSERT_EQ(rig.bus.reads.size(), 2U);
+    // A new publication then reads the settings, for its attach line and the
+    // put-back memory: clock and optical again, then the input switches.
+    ASSERT_GE(rig.bus.reads.size(), 4U);
     EXPECT_EQ(rig.bus.reads[0], LowOf(Reg::ClockStatusV2));
     EXPECT_EQ(rig.bus.reads[1], LowOf(Reg::InOutConfV2));
+    EXPECT_EQ(rig.bus.reads[2], LowOf(Reg::ClockStatusV2));
+    EXPECT_EQ(rig.bus.reads[3], LowOf(Reg::InOutConfV2));
     EXPECT_EQ(rig.bus.writes, (std::vector<uint32_t>{LowOf(Reg::AsyncAddrHi), LowOf(Reg::AsyncAddrLo)}));
+}
+
+TEST(MotuFamilyAdapterTests, ARefreshOfALiveEndpointReadsOnlyClockAndOptical) {
+    MotuRig rig;
+    rig.bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptAdat, kOptAdat);
+    MotuFamilyAdapter adapter;
+    auto input = rig.Input();
+    input.committed = ASFWAudioDevice{};
+
+    ASSERT_NE(AsDescription(RunDescribe(adapter, input)), nullptr);
+
+    EXPECT_EQ(rig.bus.reads,
+              (std::vector<uint32_t>{LowOf(Reg::ClockStatusV2), LowOf(Reg::InOutConfV2)}));
+}
+
+// b184: a replugged 828mkII came back at 48 kHz with 22 inputs; the aggregate
+// it belonged to expected 96 kHz and 18. The unit is put back to what it left
+// with before it is described.
+TEST(MotuFamilyAdapterTests, AReturningUnitIsPutBackBeforeItIsDescribed) {
+    MotuRig rig;
+    rig.bus.applyWrites = true;
+    rig.bus.readValues[LowOf(Reg::ClockStatusV2)] = 8U;  // 48 kHz, internal
+    rig.bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptSpdif, kOptSpdif);
+    MotuFamilyAdapter adapter;
+    auto input = rig.Input();
+    ASFW::Audio::DeviceSettingsSnapshot left{};
+    left.supportedSettings = ASFW::Audio::SettingBit(ASFW::Audio::DeviceSetting::ClockSource) |
+                             ASFW::Audio::SettingBit(ASFW::Audio::DeviceSetting::OpticalInputMode) |
+                             ASFW::Audio::SettingBit(ASFW::Audio::DeviceSetting::OpticalOutputMode);
+    left.clockSource = 4U;  // word clock
+    left.opticalInputMode = 1U;  // ADAT
+    left.opticalOutputMode = 1U;
+    input.remembered = RememberedConfiguration{.sampleRateHz = 96000U, .settings = left};
+
+    const auto outcome = RunDescribe(adapter, input);
+
+    const ASFWAudioDevice* dev = AsDescription(outcome);
+    ASSERT_NE(dev, nullptr);
+    EXPECT_EQ(dev->currentSampleRate, 96000U);
+    EXPECT_EQ(dev->inputChannelCount, 18U);  // 14 + ADAT at 2x (4)
+    EXPECT_EQ(dev->clockSource, 4U);
+    const auto written = [&](Reg reg) {
+        return std::ranges::count(rig.bus.writes, LowOf(reg));
+    };
+    EXPECT_EQ(written(Reg::InOutConfV2), 2) << "optical in and out";
+    EXPECT_EQ(written(Reg::ClockStatusV2), 2) << "clock source, then rate";
+}
+
+TEST(MotuFamilyAdapterTests, AUnitThatComesBackAsItLeftIsNotWritten) {
+    MotuRig rig;
+    rig.bus.applyWrites = true;
+    rig.bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptAdat, kOptAdat);
+    MotuFamilyAdapter adapter;
+    const auto first = RunDescribe(adapter, rig.Input());
+    ASSERT_NE(AsDescription(first), nullptr);
+    const auto settings = rig.protocol->LastDeviceSettings();
+    ASSERT_TRUE(settings.has_value()) << "an attach reads the settings";
+    rig.bus.writes.clear();
+
+    auto input = rig.Input();
+    input.remembered = RememberedConfiguration{
+        .sampleRateHz = AsDescription(first)->currentSampleRate, .settings = settings};
+    ASSERT_NE(AsDescription(RunDescribe(adapter, input)), nullptr);
+
+    for (const uint32_t reg : rig.bus.writes) {
+        EXPECT_TRUE(reg == LowOf(Reg::AsyncAddrHi) || reg == LowOf(Reg::AsyncAddrLo))
+            << "wrote 0x" << std::hex << reg;
+    }
 }
 
 TEST(MotuFamilyAdapterTests, DescribeCompletesOnlyAfterTheRegisterReadDoes) {
@@ -427,7 +507,9 @@ TEST(MotuFamilyAdapterTests, ADescribeAfterAnOpticalModeChangeFollowsTheRegister
 
     ASSERT_NE(AsDescription(after), nullptr);
     EXPECT_EQ(AsDescription(after)->inputChannelCount, 22U);
-    EXPECT_EQ(rig.bus.reads.size(), 4U);
+    // Each describe read clock and optical first (then the settings, for a new
+    // publication): the second one saw the new register.
+    EXPECT_GE(rig.bus.reads.size(), 4U);
 }
 
 // What the nub was published with must equal what the first start prepares,

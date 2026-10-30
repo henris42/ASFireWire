@@ -16,6 +16,7 @@
 #pragma once
 
 #include "../Model/ASFWAudioDevice.hpp"
+#include "../Protocols/DeviceSettings.hpp"
 #include "../Protocols/Duplex/DuplexControlTypes.hpp"
 #include "../../Discovery/DiscoveryTypes.hpp"
 #include "../../DeviceProfiles/Audio/ResolvedDevicePolicy.hpp"
@@ -35,6 +36,17 @@ class IDeviceProtocol;
 
 namespace ASFW::Audio::Host {
 
+/// What a device had when it left (AudioDeviceHost keeps it per GUID): its
+/// endpoint's sample rate and its host-settable settings as last read. Offered
+/// to Describe for the device's next new publication, so the family can put
+/// the unit back as it was before describing it (b184: a replugged 828mkII
+/// came back at 48 kHz and 22 inputs, the aggregate it belonged to expected
+/// 96 kHz and 18).
+struct RememberedConfiguration {
+    uint32_t sampleRateHz{0};
+    std::optional<DeviceSettingsSnapshot> settings;
+};
+
 /// Everything a family needs to describe one endpoint, as values.
 struct DescribeInput {
     Discovery::DeviceRecord record;
@@ -46,6 +58,8 @@ struct DescribeInput {
     std::optional<Model::ASFWAudioDevice> committed;
     /// The last description discovery pushed for this device (AV/C), if any.
     std::optional<Model::ASFWAudioDevice> discovered;
+    /// For a new publication of a device that left before: what it had then.
+    std::optional<RememberedConfiguration> remembered;
 };
 
 /// Leave the live endpoint as it is: a confirmed configuration transaction
