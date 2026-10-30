@@ -106,6 +106,12 @@ private:
     MotuPayloadWriterCounters counters_{};
     // Written on the transmit preparation queue, read by the IO thread's fill.
     std::atomic<bool> muted_{false};
+    // One past the packet the last call wrote into, plus one (0: none yet).
+    // The next call's first frame is in that packet or the next DATA packet,
+    // so the timeline walk starts there. Only the fill and the stop's fade
+    // call the writer, never at the same time; atomic so that hand-over needs
+    // no other ordering.
+    std::atomic<uint64_t> packetHint_{0};
 
     // The first kDumpPackets packets this stream fills completely, and the
     // first kDumpPackets it fills with audible PCM, are logged in full once

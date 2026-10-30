@@ -313,9 +313,11 @@ TransmitTailSilence FadeTransmitTailToSilence(ASFWAudioDriver_IVars& ivars) noex
     const auto& timeline = engine.Timeline();
 
     // The last packet that carries a copied frame. Its slot retired means the
-    // stream's end went out long ago.
+    // stream's end went out long ago. Every lookup here walks the timeline
+    // from a nearby packet (SnapshotSlotForAudioFrameNear).
+    const uint64_t projected = ProjectHardwarePacket(*queue, TxHostNow());
     ASFW::Protocols::Audio::AMDTP::PacketSlotSnapshot last{};
-    if (!timeline.SnapshotSlotForAudioFrame(copiedEnd - 1, last)) {
+    if (!timeline.SnapshotSlotForAudioFrameNear(copiedEnd - 1, projected, last)) {
         return result;
     }
     result.audible = true;
@@ -332,9 +334,11 @@ TransmitTailSilence FadeTransmitTailToSilence(ASFWAudioDriver_IVars& ivars) noex
     uint64_t fadeStart = UINT64_MAX;
     uint64_t frame = std::max(copiedEnd > kept ? copiedEnd - kept : 0,
                               ivars.runtime.txClearedFrameEnd);
+    uint64_t hint = reachable;
     while (frame <= copiedEnd) {
         ASFW::Protocols::Audio::AMDTP::PacketSlotSnapshot snap{};
-        if (!timeline.SnapshotSlotForAudioFrame(frame, snap) || snap.framesInPacket == 0) {
+        if (!timeline.SnapshotSlotForAudioFrameNear(frame, hint, snap) ||
+            snap.framesInPacket == 0) {
             ++frame;
             continue;
         }
@@ -343,6 +347,7 @@ TransmitTailSilence FadeTransmitTailToSilence(ASFWAudioDriver_IVars& ivars) noex
             break;
         }
         frame = snap.firstAudioFrame + snap.framesInPacket;
+        hint = snap.packetIndex + 1;
     }
     if (fadeStart == UINT64_MAX) {
         return result;  // CoreAudio's last frame is already on its way out
@@ -401,7 +406,7 @@ TransmitTailSilence FadeTransmitTailToSilence(ASFWAudioDriver_IVars& ivars) noex
         lastAudible = std::max(lastAudible, std::min(fadeStart + result.missedFrames, copiedEnd) - 1);
     }
     ASFW::Protocols::Audio::AMDTP::PacketSlotSnapshot audible{};
-    if (timeline.SnapshotSlotForAudioFrame(lastAudible, audible)) {
+    if (timeline.SnapshotSlotForAudioFrameNear(lastAudible, reachable, audible)) {
         result.lastAudiblePacket = audible.packetIndex;
     } else {
         // No packet owns it yet: one bus cycle per rate / 8000 frames.

@@ -73,9 +73,23 @@ public:
     const PacketTimelineSlot* FindSlotForAudioFrame(uint64_t absoluteFrame) const noexcept;
 
     // RT-safe lookup: seqlock-validated copy of the covering slot. Returns
-    // false on miss or if the slot was being rewritten concurrently.
+    // false on miss or if the slot was being rewritten concurrently. Reads
+    // every slot; the TX fill uses SnapshotSlotForAudioFrameNear instead.
     [[nodiscard]] bool SnapshotSlotForAudioFrame(uint64_t absoluteFrame,
                                                  PacketSlotSnapshot& out) const noexcept;
+
+    // RT-safe lookup that starts at packet `hintPacket` and steps through the
+    // ring by packet index to the DATA packet that carries absoluteFrame.
+    // DATA packets carry consecutive frames in packet order, so a hint at or
+    // next to the frame's packet resolves in one or two slots where the scan
+    // above reads all of them (1512, once per frame: about a fifth of a core
+    // per stream at 96 kHz, b178). A miss is decided at the ring's edges: the
+    // first packet not prepared yet, or the first one already overwritten by
+    // a newer lap. A slot mid-rewrite, or frames out of packet order, fall
+    // back to the scan.
+    [[nodiscard]] bool SnapshotSlotForAudioFrameNear(uint64_t absoluteFrame,
+                                                     uint64_t hintPacket,
+                                                     PacketSlotSnapshot& out) const noexcept;
 
     PacketTimelineSlot* SlotByIndex(uint64_t packetIndex) noexcept;
     const PacketTimelineSlot* SlotByIndex(uint64_t packetIndex) const noexcept;
@@ -85,6 +99,18 @@ public:
     [[nodiscard]] uint64_t ExposedFrameEnd() const noexcept;
 
 private:
+    // What the ring position of one packet index holds, read under the slot's
+    // seqlock.
+    enum class SlotProbe : uint8_t {
+        kData,      // that packet, exposed DATA; the snapshot holds it
+        kNoFrames,  // that packet, carrying no frames (NO-DATA or retracted)
+        kNotYet,    // an older packet or nothing: not prepared yet
+        kGone,      // a newer packet: overwritten a lap ago
+        kBusy,      // being rewritten
+    };
+    [[nodiscard]] SlotProbe ProbeSlot(uint64_t packetIndex,
+                                      PacketSlotSnapshot& out) const noexcept;
+
     static void BeginSlotWrite(PacketTimelineSlot& slot) noexcept;
     static void EndSlotWrite(PacketTimelineSlot& slot) noexcept;
 

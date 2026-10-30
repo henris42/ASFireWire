@@ -34,11 +34,13 @@ void MotuPayloadWriter::Configure(const MotuPayloadStreamConfig& streamConfig) n
     dumpedPackets_ = 0;
     dumpedAudiblePackets_ = 0;
     streamConfig_ = streamConfig;
+    packetHint_.store(0, std::memory_order_relaxed);
 }
 
 void MotuPayloadWriter::BindTimeline(
     Protocols::Audio::AMDTP::AmdtpPacketTimeline* timeline) noexcept {
     timeline_ = timeline;
+    packetHint_.store(0, std::memory_order_relaxed);
 }
 
 const MotuPayloadWriterCounters& MotuPayloadWriter::Counters() const noexcept {
@@ -63,7 +65,6 @@ void MotuPayloadWriter::WriteFloat32Interleaved(
         return; // invalid view or unconfigured geometry: nothing visited, nothing counted
     }
 
-    uint64_t visited = 0;
     uint64_t written = 0;
     uint64_t withoutPacket = 0;
     uint64_t outsidePacket = 0;
@@ -77,85 +78,110 @@ void MotuPayloadWriter::WriteFloat32Interleaved(
     // only trace: neither costs anything below its level.
     const bool meter = ASFW_LOG_ENABLED(DirectAudio, Debug);
     const bool dump = ASFW_LOG_ENABLED(DirectAudio, Trace);
+    // A short block means the configured chunk count disagrees with the packet
+    // geometry; writing anyway would corrupt the next block's SPH.
+    const uint32_t requiredBytes =
+        streamConfig_.pcmByteOffset + streamConfig_.pcmChunks * kBytesPerChunk;
+    const uint32_t srcOffset = streamConfig_.sourceChannelOffset;
 
-    for (uint32_t i = 0; i < hostBuffer.frameCount; ++i) {
-        const uint64_t absoluteFrame = hostBuffer.firstFrame + i;
-        ++visited;
-
+    // Packet by packet: one timeline lookup per packet, starting where the
+    // previous call stopped (or at the finality frontier), then every frame
+    // of the call that packet carries.
+    const uint64_t endFrame = hostBuffer.firstFrame + hostBuffer.frameCount;
+    uint64_t hint = packetHint_.load(std::memory_order_relaxed);
+    bool haveHint = hint != 0;
+    if (haveHint) {
+        --hint;
+    } else if (firstWritablePacket != 0) {
+        hint = firstWritablePacket;
+        haveHint = true;
+    }
+    uint64_t frame = hostBuffer.firstFrame;
+    while (frame < endFrame) {
         PacketSlotSnapshot snap{};
-        if (!timeline_->SnapshotSlotForAudioFrame(absoluteFrame, snap)) {
+        const bool found = haveHint
+                               ? timeline_->SnapshotSlotForAudioFrameNear(frame, hint, snap)
+                               : timeline_->SnapshotSlotForAudioFrame(frame, snap);
+        if (!found) {
             // Past the exposed end means "no packet owns this yet" (normal lead);
             // behind it means the slot was retired or re-used under us.
-            if (absoluteFrame >= timeline_->ExposedFrameEnd()) {
+            if (frame >= timeline_->ExposedFrameEnd()) {
                 ++withoutPacket;
             } else {
                 ++outsidePacket;
             }
+            ++frame;
             continue;
         }
+        // The snapshot's range check guarantees firstAudioFrame <= frame <
+        // firstAudioFrame + framesInPacket, so the run is not empty.
+        const uint64_t packetEnd = snap.firstAudioFrame + snap.framesInPacket;
+        const uint64_t runEnd = packetEnd < endFrame ? packetEnd : endFrame;
+        const uint64_t runFrames = runEnd - frame;
+        hint = snap.packetIndex + 1;
+        haveHint = true;
 
         if (firstWritablePacket != 0 &&
             static_cast<int64_t>(snap.packetIndex - firstWritablePacket) < 0) {
-            ++missedFinality;
+            missedFinality += runFrames;
+            frame = runEnd;
             continue;
         }
-
-        const uint64_t sourceFrame = hostBuffer.frameCapacity != 0
-                                         ? absoluteFrame % hostBuffer.frameCapacity
-                                         : i;
-        const float* const source =
-            hostBuffer.interleavedFloat32 + sourceFrame * hostBuffer.channels;
-
-        // The snapshot's range check guarantees firstAudioFrame <= absoluteFrame <
-        // firstAudioFrame + framesInPacket, so this cannot underflow.
-        const uint32_t frameInPacket = static_cast<uint32_t>(absoluteFrame - snap.firstAudioFrame);
 
         // dbs is the data block size in quadlets, which is exactly what
         // DataBlockQuadlets() produces for this chunk count -- one SPH quadlet plus the
         // message and PCM chunks, padded to quadlet alignment.
         const uint32_t blockBytes = snap.dbs * 4U;
-        uint8_t* const block = snap.packetBytes + kCipHeaderBytes + frameInPacket * blockBytes;
-
-        // Refuse to write past the block. A short block means the configured chunk count
-        // disagrees with the packet geometry; writing anyway would corrupt the next
-        // block's SPH.
-        const uint32_t requiredBytes =
-            streamConfig_.pcmByteOffset + streamConfig_.pcmChunks * kBytesPerChunk;
         if (requiredBytes > blockBytes) {
-            ++truncated;
+            truncated += runFrames;
+            frame = runEnd;
             continue;
         }
 
-        const uint32_t srcOffset = streamConfig_.sourceChannelOffset;
-        // Walk host channels rather than chunks: the port map is a permutation of the
-        // chunk range, so every chunk is still written exactly once.
-        for (uint32_t hostCh = 0; hostCh < streamConfig_.pcmChunks; ++hostCh) {
-            const uint32_t chunk = ChunkForHostChannel(ports, hostCh);
-            const uint32_t srcCh = srcOffset + hostCh;
-            // Chunks beyond the host buffer encode PCM zero -- MOTU's fixed chunk count
-            // always covers every physical port, including ones CoreAudio is not
-            // driving, and those must carry silence rather than stale bytes.
-            const float sample = (!muted && srcCh < hostBuffer.channels) ? source[srcCh] : 0.0f;
-            const int32_t encoded = Float32ToMotuSample(sample);
-            // The 24 significant bits sit in the high bytes; their magnitude is the meter.
-            if (meter) {
-                const uint32_t magnitude =
-                    static_cast<uint32_t>(encoded < 0 ? -(encoded >> 8) : (encoded >> 8));
-                if (magnitude > peakQ24) {
-                    peakQ24 = magnitude;
-                }
+        uint64_t sourceFrame = hostBuffer.frameCapacity != 0
+                                   ? frame % hostBuffer.frameCapacity
+                                   : frame - hostBuffer.firstFrame;
+        for (; frame < runEnd; ++frame) {
+            const float* const source =
+                hostBuffer.interleavedFloat32 + sourceFrame * hostBuffer.channels;
+            if (++sourceFrame == hostBuffer.frameCapacity) {
+                sourceFrame = 0;
             }
-            WritePcmSample(
-                std::span<uint8_t>(block + streamConfig_.pcmByteOffset + chunk * kBytesPerChunk,
-                                   kBytesPerChunk),
-                encoded);
-        }
+            const uint32_t frameInPacket = static_cast<uint32_t>(frame - snap.firstAudioFrame);
+            uint8_t* const block = snap.packetBytes + kCipHeaderBytes + frameInPacket * blockBytes;
 
-        ++written;
-        if (dump && frameInPacket + 1 == snap.framesInPacket &&
+            // Walk host channels rather than chunks: the port map is a permutation of the
+            // chunk range, so every chunk is still written exactly once.
+            for (uint32_t hostCh = 0; hostCh < streamConfig_.pcmChunks; ++hostCh) {
+                const uint32_t chunk = ChunkForHostChannel(ports, hostCh);
+                const uint32_t srcCh = srcOffset + hostCh;
+                // Chunks beyond the host buffer encode PCM zero -- MOTU's fixed chunk count
+                // always covers every physical port, including ones CoreAudio is not
+                // driving, and those must carry silence rather than stale bytes.
+                const float sample = (!muted && srcCh < hostBuffer.channels) ? source[srcCh] : 0.0f;
+                const int32_t encoded = Float32ToMotuSample(sample);
+                // The 24 significant bits sit in the high bytes; their magnitude is the meter.
+                if (meter) {
+                    const uint32_t magnitude =
+                        static_cast<uint32_t>(encoded < 0 ? -(encoded >> 8) : (encoded >> 8));
+                    if (magnitude > peakQ24) {
+                        peakQ24 = magnitude;
+                    }
+                }
+                WritePcmSample(
+                    std::span<uint8_t>(block + streamConfig_.pcmByteOffset + chunk * kBytesPerChunk,
+                                       kBytesPerChunk),
+                    encoded);
+            }
+        }
+        written += runFrames;
+        if (dump && runEnd == packetEnd &&
             (dumpedPackets_ < kDumpPackets || (!muted && dumpedAudiblePackets_ < kDumpPackets))) {
             DumpFilledPacket(snap, muted);
         }
+    }
+    if (haveHint) {
+        packetHint_.store(hint + 1, std::memory_order_relaxed);
     }
 
     if (peakQ24 != 0) {
@@ -165,7 +191,7 @@ void MotuPayloadWriter::WriteFloat32Interleaved(
                                                                        std::memory_order_relaxed)) {
         }
     }
-    counters_.framesVisited.fetch_add(visited, std::memory_order_relaxed);
+    counters_.framesVisited.fetch_add(hostBuffer.frameCount, std::memory_order_relaxed);
     counters_.framesWritten.fetch_add(written, std::memory_order_relaxed);
     counters_.framesWithoutPacket.fetch_add(withoutPacket, std::memory_order_relaxed);
     counters_.framesOutsidePacket.fetch_add(outsidePacket, std::memory_order_relaxed);

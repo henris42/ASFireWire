@@ -42,10 +42,14 @@ namespace ASFW::Protocols::Audio::AMDTP {
 //    atomics -- no per-frame RMW traffic in the fill loop.
 // 8. The fill runs on CoreAudio's IO thread while the producer arms and
 //    recycles slots on the TX preparation queue. Slot fields come from a
-//    PacketSlotSnapshot validated under the generation seqlock. The fill
-//    writes only packets at or beyond the finality frontier, and a slot is
-//    re-armed one shared-slot ring (1512 packets) later, so a reuse during
-//    one frame's write would need a stall of more than 60 ms inside it.
+//    PacketSlotSnapshot validated under the generation seqlock, taken once
+//    per packet. The fill writes only packets at or beyond the finality
+//    frontier, and a slot is re-armed one shared-slot ring (1512 packets)
+//    later, so a reuse while one packet's frames are written would need a
+//    stall of more than 60 ms inside that loop.
+// 9. One timeline lookup per packet, not per frame: the walk starts at the
+//    packet after the one the previous call ended in (or at the finality
+//    frontier) and steps by packet index (SnapshotSlotForAudioFrameNear).
 
 namespace {
 
@@ -64,10 +68,12 @@ void AmdtpPayloadWriter::Configure(const AmdtpStreamConfig& streamConfig,
                                    const AmdtpTxPolicy& txPolicy) noexcept {
     streamConfig_ = streamConfig;
     txPolicy_ = txPolicy;
+    packetHint_.store(0, std::memory_order_relaxed);
 }
 
 void AmdtpPayloadWriter::BindTimeline(AmdtpPacketTimeline* timeline) noexcept {
     timeline_ = timeline;
+    packetHint_.store(0, std::memory_order_relaxed);
 }
 
 void AmdtpPayloadWriter::WriteFloat32Interleaved(
@@ -89,61 +95,59 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
     float peak = 0.0f;
     uint32_t peakWord = 0;
 
-    // Sequential frames share a packet. Avoid a full timeline scan for each
-    // sample on the HAL IO thread (16 identical scans per packet at 96 kHz).
-    // Revalidate generation/state before reuse; a retired or re-armed slot
-    // goes through the normal lookup and miss classification.
-    PacketSlotSnapshot snap{};
-    bool haveSnapshot = false;
-    for (uint32_t i = 0; i < hostBuffer.frameCount; ++i) {
-        const uint64_t absoluteFrame = hostBuffer.firstFrame + i;
+    const uint32_t headerBytes = streamConfig_.packetFraming ==
+                                         AmdtpStreamConfig::PacketFraming::Cip
+                                     ? 8U : 0U;
+    // This stream encodes the host channels [sourceChannelOffset,
+    // sourceChannelOffset + pcmChannels) of the shared interleaved buffer —
+    // the de-interleave that mirrors the RX side's channelOffset. Host
+    // channels outside the buffer encode PCM zero.
+    const uint32_t srcOffset = streamConfig_.sourceChannelOffset;
+    const auto& playbackMap = txPolicy_.playbackChannelMap;
 
-        const bool reuseSnapshot = haveSnapshot &&
-            absoluteFrame >= snap.firstAudioFrame &&
-            absoluteFrame - snap.firstAudioFrame < snap.framesInPacket &&
-            snap.slot->generation.load(std::memory_order_acquire) == snap.generation &&
-            snap.slot->state.load(std::memory_order_acquire) == PacketSlotState::ExposedForAudio;
-        if (!reuseSnapshot) {
-            haveSnapshot = timeline_->SnapshotSlotForAudioFrame(absoluteFrame, snap);
-        }
-        if (!haveSnapshot) {
+    const uint64_t endFrame = hostBuffer.firstFrame + hostBuffer.frameCount;
+    uint64_t hint = packetHint_.load(std::memory_order_relaxed);
+    bool haveHint = hint != 0;
+    if (haveHint) {
+        --hint;
+    } else if (firstWritablePacket != 0) {
+        hint = firstWritablePacket;
+        haveHint = true;
+    }
+    uint64_t absoluteFrame = hostBuffer.firstFrame;
+    while (absoluteFrame < endFrame) {
+        PacketSlotSnapshot snap{};
+        const bool found =
+            haveHint ? timeline_->SnapshotSlotForAudioFrameNear(absoluteFrame, hint, snap)
+                     : timeline_->SnapshotSlotForAudioFrame(absoluteFrame, snap);
+        if (!found) {
             if (absoluteFrame >= timeline_->ExposedFrameEnd()) {
                 ++withoutPacket;
             } else {
                 ++outsidePacket;
             }
+            ++absoluteFrame;
             continue;
         }
+        // The snapshot's range check guarantees firstAudioFrame <=
+        // absoluteFrame < firstAudioFrame + framesInPacket on a consistent
+        // field set, so the run is not empty and frameInPacket cannot underflow.
+        const uint64_t packetEnd = snap.firstAudioFrame + snap.framesInPacket;
+        const uint64_t runEnd = packetEnd < endFrame ? packetEnd : endFrame;
+        hint = snap.packetIndex + 1;
+        haveHint = true;
 
         if (firstWritablePacket != 0) {
             const auto margin = static_cast<int64_t>(snap.packetIndex - firstWritablePacket);
             if (margin < 0) {
-                ++missedFinality;
+                missedFinality += runEnd - absoluteFrame;
+                absoluteFrame = runEnd;
                 continue;
             }
             if (margin < minMarginPackets) {
                 minMarginPackets = margin;
             }
         }
-
-        const uint64_t sourceFrame =
-            hostBuffer.frameCapacity != 0
-                ? absoluteFrame % hostBuffer.frameCapacity
-                : i;
-        const float* source =
-            hostBuffer.interleavedFloat32 +
-            sourceFrame * hostBuffer.channels;
-
-        // The snapshot's range check guarantees firstAudioFrame <=
-        // absoluteFrame < firstAudioFrame + framesInPacket on a consistent
-        // field set, so this cannot underflow.
-        const uint32_t frameInPacket =
-            static_cast<uint32_t>(absoluteFrame - snap.firstAudioFrame);
-        const uint32_t headerBytes = streamConfig_.packetFraming ==
-                                             AmdtpStreamConfig::PacketFraming::Cip
-                                         ? 8U : 0U;
-        uint8_t* dest = snap.packetBytes + headerBytes +
-                        frameInPacket * snap.dbs * kBytesPerSlot;
 
         const uint32_t pcmSlots = (streamConfig_.pcmChannels < snap.dbs)
                                       ? streamConfig_.pcmChannels
@@ -152,31 +156,44 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
         // would write past the data blocks. Fall back to the wire order (identity) instead:
         // writing in device order is recoverable, writing out of bounds into
         // another frame or beyond the packet is not.
-        const bool mapUsable = txPolicy_.playbackChannelMap.FitsWithin(pcmSlots, snap.dbs);
-        const auto& playbackMap = txPolicy_.playbackChannelMap;
+        const bool mapUsable = playbackMap.FitsWithin(pcmSlots, snap.dbs);
 
-        // This stream encodes the host channels [sourceChannelOffset,
-        // sourceChannelOffset + pcmChannels) of the shared interleaved buffer —
-        // the de-interleave that mirrors the RX side's channelOffset. Host
-        // channels outside the buffer encode PCM zero.
-        const uint32_t srcOffset = streamConfig_.sourceChannelOffset;
-        for (uint32_t ch = 0; ch < pcmSlots; ++ch) {
-            const uint32_t srcCh = srcOffset + ch;
-            const float sample =
-                (srcCh < hostBuffer.channels) ? source[srcCh] : 0.0f;
-            const uint32_t slot = mapUsable ? playbackMap.SlotFor(ch) : ch;
-            const uint32_t word =
-                PcmSlotCodec::EncodeFloat32(sample, txPolicy_.hostToDevicePcmEncoding);
-            WriteBE32(dest + slot * kBytesPerSlot, word);
-            if (meter) {
-                const float magnitude = sample < 0.0f ? -sample : sample;
-                if (magnitude > peak) {
-                    peak = magnitude;
-                    peakWord = word;
+        uint64_t sourceFrame =
+            hostBuffer.frameCapacity != 0
+                ? absoluteFrame % hostBuffer.frameCapacity
+                : absoluteFrame - hostBuffer.firstFrame;
+        for (; absoluteFrame < runEnd; ++absoluteFrame) {
+            const float* source =
+                hostBuffer.interleavedFloat32 +
+                sourceFrame * hostBuffer.channels;
+            if (++sourceFrame == hostBuffer.frameCapacity) {
+                sourceFrame = 0;
+            }
+            const uint32_t frameInPacket =
+                static_cast<uint32_t>(absoluteFrame - snap.firstAudioFrame);
+            uint8_t* dest = snap.packetBytes + headerBytes +
+                            frameInPacket * snap.dbs * kBytesPerSlot;
+            for (uint32_t ch = 0; ch < pcmSlots; ++ch) {
+                const uint32_t srcCh = srcOffset + ch;
+                const float sample =
+                    (srcCh < hostBuffer.channels) ? source[srcCh] : 0.0f;
+                const uint32_t slot = mapUsable ? playbackMap.SlotFor(ch) : ch;
+                const uint32_t word =
+                    PcmSlotCodec::EncodeFloat32(sample, txPolicy_.hostToDevicePcmEncoding);
+                WriteBE32(dest + slot * kBytesPerSlot, word);
+                if (meter) {
+                    const float magnitude = sample < 0.0f ? -sample : sample;
+                    if (magnitude > peak) {
+                        peak = magnitude;
+                        peakWord = word;
+                    }
                 }
             }
+            ++written;
         }
-        ++written;
+    }
+    if (haveHint) {
+        packetHint_.store(hint + 1, std::memory_order_relaxed);
     }
 
     counters_.framesVisited.fetch_add(hostBuffer.frameCount,

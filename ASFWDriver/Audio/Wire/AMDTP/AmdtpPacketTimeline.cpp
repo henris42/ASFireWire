@@ -8,6 +8,9 @@ namespace ASFW::Protocols::Audio::AMDTP {
 //    (packetIndex % slotCount_) is internal to the timeline.
 // 2. FindSlotForAudioFrame is a bounded scan: the frame→slot mapping is not
 //    arithmetic in blocking mode (no-data ring positions carry zero frames).
+//    It is monotonic, though: DATA packets carry consecutive frames in packet
+//    order. SnapshotSlotForAudioFrameNear walks from a nearby packet index
+//    instead, which is what the RT fill uses.
 // 3. The generation counter is a per-slot seqlock sequence (odd while a
 //    mutation is in flight, even when stable). It is load-bearing NOW: the
 //    ADK IO handler runs on a real-time thread while the ZTS-timer pump
@@ -219,6 +222,111 @@ bool AmdtpPacketTimeline::SnapshotSlotForAudioFrame(
         return true;
     }
     return false;
+}
+
+AmdtpPacketTimeline::SlotProbe AmdtpPacketTimeline::ProbeSlot(
+    uint64_t packetIndex, PacketSlotSnapshot& out) const noexcept {
+    const PacketTimelineSlot& slot = slots_[packetIndex % slotCount_];
+
+    const uint32_t gen = slot.generation.load(std::memory_order_acquire);
+    if ((gen & 1u) != 0) {
+        return SlotProbe::kBusy;
+    }
+    const PacketSlotState state = slot.state.load(std::memory_order_relaxed);
+    const bool isData = slot.isData;
+    const uint64_t pktIdx = slot.packetIndex;
+    uint8_t* packetBytes = slot.packetBytes;
+    const uint32_t packetSizeBytes = slot.packetSizeBytes;
+    const uint64_t firstAudioFrame = slot.firstAudioFrame;
+    const uint32_t framesInPacket = slot.framesInPacket;
+    const uint32_t dbs = slot.dbs;
+    std::atomic_thread_fence(std::memory_order_acquire);
+    if (slot.generation.load(std::memory_order_relaxed) != gen) {
+        return SlotProbe::kBusy;
+    }
+
+    if (state == PacketSlotState::Empty || pktIdx < packetIndex) {
+        return SlotProbe::kNotYet;
+    }
+    if (pktIdx > packetIndex) {
+        return SlotProbe::kGone;
+    }
+    // The same conditions as the scan: anything it would skip carries no
+    // frames for the fill.
+    if (state != PacketSlotState::ExposedForAudio || !isData || framesInPacket == 0 ||
+        packetBytes == nullptr || dbs == 0) {
+        return SlotProbe::kNoFrames;
+    }
+    out.slot = &slot;
+    out.generation = gen;
+    out.packetIndex = pktIdx;
+    out.packetBytes = packetBytes;
+    out.packetSizeBytes = packetSizeBytes;
+    out.firstAudioFrame = firstAudioFrame;
+    out.framesInPacket = framesInPacket;
+    out.dbs = dbs;
+    return SlotProbe::kData;
+}
+
+bool AmdtpPacketTimeline::SnapshotSlotForAudioFrameNear(
+    uint64_t absoluteFrame, uint64_t hintPacket, PacketSlotSnapshot& out) const noexcept {
+    if (slots_ == nullptr) {
+        return false;
+    }
+    // +1 forward, -1 back; open until a DATA packet or a ring edge says which
+    // side of the hint the frame is on. A NO-DATA packet keeps the direction
+    // (forward while open). Turning back after that means the frames are not
+    // in packet order around here: let the scan decide.
+    int direction = 0;
+    uint64_t packet = hintPacket;
+    for (uint32_t step = 0; step < slotCount_; ++step) {
+        PacketSlotSnapshot probe{};
+        switch (ProbeSlot(packet, probe)) {
+        case SlotProbe::kData:
+            if (absoluteFrame < probe.firstAudioFrame) {
+                if (direction > 0) {
+                    return SnapshotSlotForAudioFrame(absoluteFrame, out);
+                }
+                direction = -1;
+            } else if (absoluteFrame - probe.firstAudioFrame >= probe.framesInPacket) {
+                if (direction < 0) {
+                    return SnapshotSlotForAudioFrame(absoluteFrame, out);
+                }
+                direction = 1;
+            } else {
+                out = probe;
+                return true;
+            }
+            break;
+        case SlotProbe::kNoFrames:
+            break;
+        case SlotProbe::kNotYet:
+            // This packet and every later one are still to be prepared.
+            if (direction > 0) {
+                return false;
+            }
+            direction = -1;
+            break;
+        case SlotProbe::kGone:
+            // This packet and every earlier one were overwritten.
+            if (direction < 0) {
+                return false;
+            }
+            direction = 1;
+            break;
+        case SlotProbe::kBusy:
+            return SnapshotSlotForAudioFrame(absoluteFrame, out);
+        }
+        if (direction < 0) {
+            if (packet == 0) {
+                return false;
+            }
+            --packet;
+        } else {
+            ++packet;
+        }
+    }
+    return SnapshotSlotForAudioFrame(absoluteFrame, out);
 }
 
 const PacketTimelineSlot*

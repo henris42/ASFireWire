@@ -60,6 +60,10 @@ private:
 
     AmdtpPacketTimeline* timeline_{nullptr};
     AmdtpPayloadWriterCounters counters_{};
+    // One past the packet the last call wrote into, plus one (0: none yet):
+    // where the next call's timeline walk starts (MotuPayloadWriter keeps the
+    // same hint).
+    std::atomic<uint64_t> packetHint_{0};
 };
 
 } // namespace ASFW::Protocols::Audio::AMDTP
