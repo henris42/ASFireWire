@@ -461,6 +461,20 @@ kern_return_t IMPL(ASFWDriver, Start) {
         // The controller is ours (IOKit matched us, so Apple's driver stays
         // off it) and untouched: no PCI open, no register, no DMA, no
         // interrupt. asfw-config-agent --bring-up runs StartRuntime.
+        // The agent and the app map the shared status block as soon as they
+        // open a user client and give up on the connection when it is missing
+        // (b196 on the B760: --bring-up found "no controller"); the block, a
+        // plain buffer that StartRuntime would otherwise create, exists from
+        // here on and reads as "no controller" until the bring-up publishes.
+        ArmStartWatchdog();
+        const kern_return_t statusKr = ivars->context->statusPublisher.Prepare();
+        DisarmStartWatchdog();
+        if (statusKr != kIOReturnSuccess) {
+            ASFW_LOG_ERROR(Controller, "[StartStep] manual start: status block prepare failed: 0x%08x",
+                           statusKr);
+            return statusKr;
+        }
+        ivars->context->statusPublisher.Publish(nullptr, nullptr, SharedStatusReason::Boot);
         ASFW_LOG_MILESTONE(Controller,
                            "[StartStep] manual start: the controller is claimed and left alone; run "
                            "asfw-config-agent --bring-up to bring it up");
