@@ -259,7 +259,9 @@ void LogGlitchEvents(ASFWAudioDriver_IVars& ivars, uint64_t now) noexcept {
             continue;
         }
         if (event.kind == GlitchEventKind::ReadAhead) {
-            ASFW_LOG_WARNING(DirectAudio,
+            // Debug: b193 showed these reads are of the output region (two
+            // clients on a unit; the recording is clean at their positions).
+            ASFW_LOG_DEBUG(DirectAudio,
                              "[GlitchEvent] 0x%016llx @%llu (%llu.%03llu s, %llu ms ago): read ahead of the "
                              "arrivals: %u frames, the first %d past the write position; lead %d us, skew "
                              "%d us, prev %d fr/%d us, zts %u ms, thr %04x",
@@ -336,13 +338,27 @@ void ReportTransportGlitches(ASFWAudioDriver_IVars& ivars,
         control.captureRingStartupStarvations.load(std::memory_order_relaxed);
     const uint64_t starved = starvedAll >= starvedStartup ? starvedAll - starvedStartup : 0;
     const uint64_t ahead = control.captureRingAheadReads.load(std::memory_order_relaxed);
-    if (missed <= runtime.glitchReportedMissed && starved <= runtime.glitchReportedStarved &&
-        ahead <= runtime.glitchReportedAhead) {
+    const bool lost = missed > runtime.glitchReportedMissed || starved > runtime.glitchReportedStarved;
+    if (!lost && ahead <= runtime.glitchReportedAhead) {
         return;
     }
     const uint64_t last = runtime.glitchLastReportTicks;
     if (last != 0 && now > last &&
         ASFW::Timing::hostTicksToNanos(now - last) < kGlitchReportIntervalNanos) {
+        return;
+    }
+    if (!lost) {
+        // Only reads ahead of the arrivals since the last report: no loss, so
+        // no warning. Their events print at debug; otherwise they are dropped
+        // here, so they cannot fill the ring (GlitchEventLog) while nothing
+        // else is reported.
+        runtime.glitchReportedAhead = ahead;
+        runtime.glitchLastReportTicks = now;
+        if (ASFW_LOG_ENABLED(DirectAudio, Debug)) {
+            LogGlitchEvents(ivars, now);
+        } else {
+            runtime.glitchEvents.Reset();
+        }
         return;
     }
     const uint64_t pulls = control.rxPull.pulls.load(std::memory_order_relaxed);
