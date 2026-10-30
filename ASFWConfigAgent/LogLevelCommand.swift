@@ -17,7 +17,7 @@ enum LogLevelCommand {
     static func run(_ spec: String?) -> Int32 {
         let connectors = CardRegistry.enumerate().map { card -> (ControllerCard, ASFWDriverConnector) in
             let connector = ASFWDriverConnector(registryEntryID: card.registryEntryID, pollsStatus: false)
-            connector.connect(forceAttempt: true)
+            _ = connector.connect(forceAttempt: true)
             return (card, connector)
         }
         // The connection opens on the connector's queue and reports on the main one.
@@ -33,6 +33,9 @@ enum LogLevelCommand {
             print("Saved log level: \(saved ?? "none (the driver's default, warn)")")
             if running.isEmpty {
                 print("No controller is running the driver.")
+                for (card, connector) in connectors {
+                    print("\(card.displayName): \(connector.lastError ?? "no connection within 3 s")")
+                }
             }
             for (card, connector) in running {
                 if let level = connector.logLevel() {

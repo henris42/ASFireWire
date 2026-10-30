@@ -27,6 +27,9 @@ enum BringUpCommand {
         let running = connectors.filter { $0.1.isConnected }
         if running.isEmpty {
             print("No controller is running the driver (is it armed, and did its Start return?).")
+            for (card, connector) in connectors {
+                print("\(card.displayName): \(connector.lastError ?? "no connection within 3 s")")
+            }
             return 65
         }
         var failed = false

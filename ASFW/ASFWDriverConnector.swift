@@ -135,6 +135,9 @@ final class ASFWDriverConnector: ObservableObject {
     var sharedMemoryAddress: mach_vm_address_t = 0
     var sharedMemoryLength: mach_vm_size_t = 0
     var sharedMemoryPointer: UnsafeMutableRawPointer?
+    /// The poll retries the status mapping while it is missing; only the first
+    /// refusal is logged.
+    var statusMapFailureLogged = false
     var lastDeliveredSequence: UInt64 = 0
     /// The last status handed on, and when the live counters may next reach
     /// `latestStatus` without a state change (DriverConnector+Lifecycle).

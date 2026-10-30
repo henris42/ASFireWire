@@ -113,9 +113,12 @@ extension ASFWDriverConnector {
         connection = newConnection
         lastError = nil
 
+        // The block appears when the runtime starts (a controller claimed with
+        // asfw-start = manual has none until --bring-up, and loses it again
+        // after a failed start); the connection stays open without it, with no
+        // status to show, and the poll maps it once it exists.
         if !mapSharedStatusMemoryLocked() {
-            closeConnectionLocked(reason: "Failed to map shared status memory")
-            return
+            log("Shared status block not available yet; connected without status", level: .warning)
         }
 
         if pollsStatus {
@@ -174,9 +177,13 @@ extension ASFWDriverConnector {
                                       &length,
                                       options)
         guard kr == KERN_SUCCESS, let pointer = UnsafeMutableRawPointer(bitPattern: UInt(address)) else {
-            log("IOConnectMapMemory64 failed: \(interpretIOReturn(kr))", level: .error)
+            if kr != kIOReturnNotReady || !statusMapFailureLogged {
+                log("IOConnectMapMemory64 failed: \(interpretIOReturn(kr))", level: .error)
+            }
+            statusMapFailureLogged = true
             return false
         }
+        statusMapFailureLogged = false
 
         sharedMemoryAddress = address
         sharedMemoryLength = length
@@ -220,6 +227,9 @@ extension ASFWDriverConnector {
     /// `latestStatus` once a second (b187: the app at 47–67 % CPU, refreshing
     /// every view four times a second).
     func pollStatusLocked() {
+        if sharedMemoryPointer == nil, connection != 0 {
+            guard mapSharedStatusMemoryLocked() else { return }
+        }
         guard let status = readSharedStatusLocked() else { return }
         guard status.sequence != lastDeliveredSequence else { return }
         let changed = !(lastDeliveredStatus?.hasSameState(as: status) ?? false)
