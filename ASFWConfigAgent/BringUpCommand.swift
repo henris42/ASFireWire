@@ -16,7 +16,7 @@ enum BringUpCommand {
     static func run(up: Bool) -> Int32 {
         let connectors = CardRegistry.enumerate().map { card -> (ControllerCard, ASFWDriverConnector) in
             let connector = ASFWDriverConnector(registryEntryID: card.registryEntryID, pollsStatus: false)
-            connector.connect(forceAttempt: true)
+            _ = connector.connect(forceAttempt: true)
             return (card, connector)
         }
         let deadline = Date().addingTimeInterval(3)
