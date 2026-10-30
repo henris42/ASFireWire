@@ -45,8 +45,13 @@ kern_return_t ATManager<ContextT, RingT, RoleTag>::Submit(DescriptorChain&& chai
 
     // PATH decision using software state only (Apple's pattern)
     // From decompilation @ 0xDBBE line 109: if (*((_BYTE *)this + 28))
-    // Apple checks ONLY software flag, never reads hardware registers
-    bool canP2;
+    // Apple checks ONLY software flag, never reads hardware registers.
+    //
+    // The decision and the hot-append are one critical section, under the
+    // lock the context's completion scan takes too (ShareRingLock): the
+    // previous packet can neither complete and be cleared nor let the scan
+    // stop the drained context between the check, the link and the WAKE.
+    bool triedP2 = false;
     {
         IOLockWrapper lockWrapper(lock());
         ScopedLock guard(lockWrapper);
@@ -55,23 +60,16 @@ kern_return_t ATManager<ContextT, RingT, RoleTag>::Submit(DescriptorChain&& chai
         // Additional safety: Ring must still have descriptors we can link to
         const bool hasPrevLast = ring().PrevLastBlocks() > 0;
         const bool ringHasData = !ring().IsEmpty();
-        canP2 = (this->state_ == State::RUNNING) && hasPrevLast && ringHasData;
+        if ((this->state_ == State::RUNNING) && hasPrevLast && ringHasData) {
+            // PATH 2: Hot-append to running context (fire-and-forget)
+            triedP2 = true;
+            if (SubmitPath2Locked_(chain, txid) == kIOReturnSuccess) {
+                return kIOReturnSuccess;
+            }
+        }
     }  // Lock automatically released here (RAII)
 
-    if (canP2) {
-        // PATH 2: Hot-append to running context (fire-and-forget)
-        kern_return_t kr = SubmitPath2_(chain, txid, opts);
-        if (kr == kIOReturnSuccess) {
-            // FIX: Removed duplicate requestStop_ call - was being called twice!
-            // Also removed to prevent deadlock (same reason as PATH 1/2 inline fixes)
-            // if (opts.needsFlush) {
-            //     // Re-acquire lock only for requestStop_
-            //     IOLockWrapper lockWrapper(lock());
-            //     ScopedLock guard(lockWrapper);
-            //     requestStop_(txid, "needsFlush");
-            // }
-            return kIOReturnSuccess;
-        }
+    if (triedP2) {
         // Fall through to PATH 1 fallback on failure
         ASFW_LOG_V2(Async, "[%{public}s] PATH 2 failed, falling back to PATH 1", RoleTag::kContextName);
     }
@@ -79,17 +77,17 @@ kern_return_t ATManager<ContextT, RingT, RoleTag>::Submit(DescriptorChain&& chai
     // V1: Compact AT transmit one-liner for packet flow visibility
     const uint8_t totalBlocks = chain.TotalBlocks();
     ASFW_LOG_V2(Async, "📤 AT/TX: txid=%u blocks=%u (%{public}s)",
-               txid, totalBlocks, canP2 ? "PATH2" : "PATH1");
+               txid, totalBlocks, triedP2 ? "PATH2" : "PATH1");
 
     // PATH 1: First submission or re-arm
-    // Lock held only during FSM state updates, NOT during hardware operations
     return SubmitPath1_(chain, txid, opts);
 }
 
 template<typename ContextT, typename RingT, typename RoleTag>
 kern_return_t ATManager<ContextT, RingT, RoleTag>::SubmitPath1_(const DescriptorChain& chain, uint32_t txid, const AsyncCmdOptions& opts) {
-    // Phase 1.2: Fine-grained locking for PATH 1
-    // Lock held only for FSM transitions and ring updates, NOT for hardware operations
+    (void)opts;
+    // Lock held for FSM transitions, and for programming the context with the
+    // ring update, NOT while waiting for a previous packet to leave.
 
     // FSM transition under lock
     {
@@ -98,7 +96,6 @@ kern_return_t ATManager<ContextT, RingT, RoleTag>::SubmitPath1_(const Descriptor
         Base::Transition(State::ARMING, txid, "path1_start");
     }
 
-    // Hardware operations WITHOUT lock
     // Z nibble must be total blocks per OHCI; use TotalBlocks() not firstBlocks
     const uint8_t z = ATSubmitPolicy::ComputeZ(chain.TotalBlocks());
     PublishChain_(chain);
@@ -142,48 +139,32 @@ kern_return_t ATManager<ContextT, RingT, RoleTag>::SubmitPath1_(const Descriptor
         return kIOReturnBadArgument;
     }
 
-    // Program hardware WITHOUT holding lock
-    ctx().WriteCommandPtr(cmdPtr);
-    ctx().WriteControlSet(kContextControlRunBit);
-
-    ASFW_LOG_V3(Async, "ctx=%{public}s txid=%u gen=%u P1_ARM head=%lu tail=%lu z=%u cmdPtr=0x%08x", RoleTag::kContextName, txid, generation_, (unsigned long)ring().Head(), (unsigned long)ring().Tail(), z, cmdPtr);
-
-    trace_.push({NowNs(), txid, generation_, ATEvent::P1_ARM, cmdPtr, z});
-
-    // FSM transition and ring update under lock
+    // Program the context and update the ring in one section with the
+    // completion scan, so it sees either the ring before this packet (and may
+    // stop the drained context first) or the armed packet in it.
     {
         IOLockWrapper lockWrapper(lock());
         ScopedLock guard(lockWrapper);
+        ctx().WriteCommandPtr(cmdPtr);
+        ctx().WriteControlSet(kContextControlRunBit);
+
+        ASFW_LOG_V3(Async, "ctx=%{public}s txid=%u gen=%u P1_ARM head=%lu tail=%lu z=%u cmdPtr=0x%08x", RoleTag::kContextName, txid, generation_, (unsigned long)ring().Head(), (unsigned long)ring().Tail(), z, cmdPtr);
+
+        trace_.push({NowNs(), txid, generation_, ATEvent::P1_ARM, cmdPtr, z});
+
         Base::Transition(State::RUNNING, txid, "path1_armed");
         UpdateRingTail_(chain);
-
-        // FIX: Don't call requestStop_ with lock held - causes deadlock!
-        // Same fix as PATH 2 - let interrupt handler stop context when appropriate
-        // if (opts.needsFlush) {
-        //     requestStop_(txid, "needsFlush");
-        // }
     }
 
     return kIOReturnSuccess;
 }
 
 template<typename ContextT, typename RingT, typename RoleTag>
-kern_return_t ATManager<ContextT, RingT, RoleTag>::SubmitPath2_(const DescriptorChain& chain, uint32_t txid, const AsyncCmdOptions& opts) {
-    // PATH 2: Hot-append to running context (Apple's fire-and-forget pattern)
-    // Lock held only for ring updates, NOT during hardware operations
-    // WAKE is pulsed without polling, allowing immediate return
-
-    // Ring updates under lock
-    kern_return_t linkResult = kIOReturnSuccess;
-    {
-        IOLockWrapper lockWrapper(lock());
-        ScopedLock guard(lockWrapper);
-        linkResult = LinkTailTo_(chain);
-        if (linkResult == kIOReturnSuccess) {
-            PublishPrevLast_(chain);
-        }
-    }  // Lock released before hardware operations
-
+kern_return_t ATManager<ContextT, RingT, RoleTag>::SubmitPath2Locked_(const DescriptorChain& chain, uint32_t txid) {
+    // PATH 2: Hot-append to running context (Apple's fire-and-forget pattern).
+    // The caller holds the lock: link, WAKE and tail update are one step for
+    // the completion scan. WAKE is pulsed without polling.
+    const kern_return_t linkResult = LinkTailTo_(chain);
     if (linkResult != kIOReturnSuccess) {
         ASFW_LOG_V2(Async,
                     "ctx=%{public}s txid=%u gen=%u P2_FALLBACK cause=%{public}s",
@@ -194,8 +175,7 @@ kern_return_t ATManager<ContextT, RingT, RoleTag>::SubmitPath2_(const Descriptor
         trace_.push({NowNs(), txid, generation_, ATEvent::P2_FALLBACK, 0, 0});
         return linkResult;
     }
-
-    // Hardware operations WITHOUT holding lock
+    PublishPrevLast_(chain);
     this->IoWriteFence();
 
     // WAKE guard: Check RUN==1 && DEAD==0 before pulsing WAKE
@@ -222,20 +202,9 @@ kern_return_t ATManager<ContextT, RingT, RoleTag>::SubmitPath2_(const Descriptor
     ASFW_LOG_V3(Async, "ctx=%{public}s txid=%u gen=%u P2_WAKE pulsed", RoleTag::kContextName, txid, generation_);
     trace_.push({NowNs(), txid, generation_, ATEvent::P2_WAKE, 0, 0});
 
-    // Ring update under lock
-    {
-        IOLockWrapper lockWrapper(lock());
-        ScopedLock guard(lockWrapper);
-        UpdateRingTail_(chain);
-
-        // FIX: Don't call requestStop_ with lock held - causes deadlock!
-        // Apple's pattern: Let interrupt handler (ScanCompletion) stop context when ring drains
-        // The interrupt handler already has correct stop logic at ATContextBase.hpp:886-903
-        // if (opts.needsFlush) {
-        //     requestStop_(txid, "needsFlush");
-        // }
-    }
-
+    // Let the interrupt handler (ScanCompletion) stop the context when the
+    // ring drains: it takes this same lock.
+    UpdateRingTail_(chain);
     return kIOReturnSuccess;
 }
 

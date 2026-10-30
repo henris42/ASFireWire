@@ -270,6 +270,18 @@ public:
     void DumpAdmissionFailure(const char* reason) noexcept;
 
     /**
+     * \brief Use another lock for the ring: the ATManager that submits to this
+     * context hands it its own (nullptr gives the context's back).
+     *
+     * The completion scan clears completed packets and stops the drained
+     * context; the manager links new packets to the last one and advances the
+     * tail. They must exclude each other: with separate locks a hot-append
+     * linked to a packet that the scan then cleared, and the context idled
+     * with the rest of the ring unreachable (b184, two units starting at once).
+     */
+    void ShareRingLock(IOLock* lock) noexcept { externalRingLock_ = lock; }
+
+    /**
      * \brief Get descriptor ring for diagnostics.
      *
      * \return Reference to descriptor ring (const access)
@@ -331,6 +343,11 @@ private:
 
     /// Lock for serializing SubmitChain() operations (tail patch + tail update)
     IOLock* submitLock_{nullptr};
+    /// The submitting ATManager's lock, used instead of submitLock_ when set.
+    IOLock* externalRingLock_{nullptr};
+    [[nodiscard]] IOLock* RingLock() const noexcept {
+        return externalRingLock_ ? externalRingLock_ : submitLock_;
+    }
 
     /// Diagnostics: RUN cleared by StopIfRingDrained() (completion side), count + last time.
     std::atomic<size_t> lastFailureHead_{std::numeric_limits<size_t>::max()};
@@ -590,14 +607,15 @@ std::optional<TxCompletion> ATContextBase<Derived, Tag>::ScanCompletion() noexce
         return std::nullopt;
     }
 
+    IOLock* const ringLock = RingLock();
     bool lockHeld = false;
-    if (submitLock_) {
-        IOLockLock(submitLock_);
+    if (ringLock) {
+        IOLockLock(ringLock);
         lockHeld = true;
     }
     auto unlock = [&]() {
         if (lockHeld) {
-            IOLockUnlock(submitLock_);
+            IOLockUnlock(ringLock);
             lockHeld = false;
         }
     };
@@ -646,15 +664,15 @@ std::optional<TxCompletion> ATContextBase<Derived, Tag>::ScanCompletion() noexce
 
 template<typename Derived, ContextRole Tag>
 void ATContextBase<Derived, Tag>::LockSubmit() noexcept {
-    if (submitLock_) {
-        IOLockLock(submitLock_);
+    if (IOLock* const ringLock = RingLock()) {
+        IOLockLock(ringLock);
     }
 }
 
 template<typename Derived, ContextRole Tag>
 void ATContextBase<Derived, Tag>::UnlockSubmit() noexcept {
-    if (submitLock_) {
-        IOLockUnlock(submitLock_);
+    if (IOLock* const ringLock = RingLock()) {
+        IOLockUnlock(ringLock);
     }
 }
 
@@ -923,11 +941,12 @@ size_t ATContextBase<Derived, Tag>::NextPacketHead(const ScanState& state) const
 template<typename Derived, ContextRole Tag>
 void ATContextBase<Derived, Tag>::DumpAdmissionFailure(const char* reason) noexcept {
     if (!ring_ || !hw_ || ring_->Capacity() == 0) return;
-    if (submitLock_) IOLockLock(submitLock_);
+    IOLock* const ringLock = RingLock();
+    if (ringLock) IOLockLock(ringLock);
     const size_t head = ring_->Head();
     // One bounded snapshot per stuck head, re-enabled by successful completion.
     if (lastFailureHead_.exchange(head, std::memory_order_relaxed) == head) {
-        if (submitLock_) IOLockUnlock(submitLock_);
+        if (ringLock) IOLockUnlock(ringLock);
         return;
     }
     const size_t capacity = ring_->Capacity();
@@ -953,7 +972,7 @@ void ATContextBase<Derived, Tag>::DumpAdmissionFailure(const char* reason) noexc
     if (const auto index = ring_->IndexFromIOVA(commandPtr)) {
         dump("cmdPtr", *index);
     }
-    if (submitLock_) IOLockUnlock(submitLock_);
+    if (ringLock) IOLockUnlock(ringLock);
 }
 
 template<typename Derived, ContextRole Tag>
@@ -1065,7 +1084,11 @@ TxCompletion ATContextBase<Derived, Tag>::MakeCompletion(const ScanState& state,
 
 template<typename Derived, ContextRole Tag>
 void ATContextBase<Derived, Tag>::ClearDescriptorStatus(HW::OHCIDescriptor& desc) noexcept {
-    desc.branchWord = 0;
+    // The status only. The branch of a completed packet's OUTPUT_LAST is what
+    // an idle context resumes from on WAKE, and the manager may have just
+    // linked the next packet there: zeroing it erased that link, so the
+    // context never left the packet (b184 AT stall). Linux leaves completed
+    // descriptors' branches alone too; a reused slot is rebuilt whole.
     desc.statusWord = 0;
 }
 

@@ -324,5 +324,28 @@ TEST_F(ATCompletionScanTest, StoppedContextSkipsAWholeUnsentPacketAndKeepsScanni
     EXPECT_EQ(ring_.Head(), ring_.Tail()) << "header and payload of the unsent packet are both released";
 }
 
+
+// b184: the context finished a packet and idled; the manager linked the next
+// packet to it and pulsed WAKE, which makes an idle context resume from the
+// branch of the last descriptor it processed. The scan, clearing the finished
+// packet, zeroed that branch, so the context never left it and every request
+// timed out until a bus reset. Only the status may be cleared.
+TEST_F(ATCompletionScanTest, CompletedPacketKeepsTheBranchAnIdleContextResumesFrom) {
+    const Packet finished = SubmitBlockWrite(1);
+    SetContext(kContextControlRunBit, finished);
+    const Packet appended = SubmitQuadletWrite(2);  // PATH2: links finished -> appended
+    const uint32_t link = finished.last->branchWord;
+    ASSERT_EQ(link, appended.startIOVA | appended.blocks);
+
+    Retire(finished);
+    SetContext(kContextControlRunBit, finished);  // idle on the finished packet (Table 3-4)
+    const auto completions = Drain();
+    ASSERT_EQ(completions.size(), 1u);
+    EXPECT_EQ(completions[0].tLabel, 1u);
+    EXPECT_EQ(finished.last->branchWord, link) << "the WAKE resume link must survive the completion";
+    EXPECT_EQ(finished.last->xferStatus, 0u);
+    EXPECT_EQ(ring_.Head(), appended.startIndex);
+}
+
 } // namespace
 } // namespace ASFW::Testing

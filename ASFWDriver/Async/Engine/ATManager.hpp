@@ -89,7 +89,15 @@ public:
 
     ATManager(ContextT& ctx, RingT& ring, DescriptorBuilder& builder)
         : Base(ctx, ring), builder_(builder), generation_(0)
-    {}
+    {
+        // One lock for submits and the context's completion scan.
+        ctx.ShareRingLock(this->lock_);
+    }
+
+    ~ATManager() { this->ctx_.ShareRingLock(nullptr); }
+
+    ATManager(const ATManager&) = delete;
+    ATManager& operator=(const ATManager&) = delete;
 
     /**
      * Submit descriptor chain with Apple-mirrored command options
@@ -125,8 +133,8 @@ private:
     // PATH 1: First submission or re-arm after stop
     kern_return_t SubmitPath1_(const DescriptorChain& chain, uint32_t txid, const AsyncCmdOptions& opts);
     
-    // PATH 2: Chain to running context (branch patch + WAKE)
-    kern_return_t SubmitPath2_(const DescriptorChain& chain, uint32_t txid, const AsyncCmdOptions& opts);
+    // PATH 2: Chain to running context (branch patch + WAKE), lock held
+    kern_return_t SubmitPath2Locked_(const DescriptorChain& chain, uint32_t txid);
 
     // Internal stop implementation
     void requestStop_(uint32_t txid, const char* why) noexcept;
