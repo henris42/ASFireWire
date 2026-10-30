@@ -30,10 +30,12 @@ struct RxPullHook final {
     std::atomic<::ASFW::Isoch::IIsochReceivePollSource*> source{nullptr};
     std::atomic<uint32_t> inFlight{0};
     // Since the hook was built: reads that pulled, the packets they drained,
-    // and pulls that gave up waiting for a poll already in progress.
+    // pulls that gave up waiting for a poll already in progress, and pulls
+    // whose own drain stopped at the deadline with the read not covered.
     std::atomic<uint64_t> pulls{0};
     std::atomic<uint64_t> pulledPackets{0};
     std::atomic<uint64_t> busy{0};
+    std::atomic<uint64_t> cut{0};
 
     void Publish(::ASFW::Isoch::IIsochReceivePollSource* pollSource) noexcept {
         source.store(pollSource, std::memory_order_seq_cst);
@@ -55,25 +57,28 @@ struct RxPullHook final {
         }
     }
 
-    // On the IO thread. When another poll holds the context's gate (the
-    // interrupt is draining the same ring), spin for up to `budgetTicks`
-    // (mach_absolute_time units) for it to finish rather than read a short ring.
-    uint32_t Pull(uint64_t budgetTicks) noexcept {
+    // On the IO thread: drain until `limit` says the read is covered, or its
+    // deadline. When another poll holds the context's gate (the interrupt is
+    // draining the same ring), spin until that poll has covered the read or
+    // the deadline passes, rather than read a short ring. Without a deadline
+    // the pull tries once.
+    uint32_t Pull(const ::ASFW::Isoch::IsochReceiveDrainLimit& limit) noexcept {
         inFlight.fetch_add(1, std::memory_order_seq_cst);
         uint32_t drained = 0;
         if (auto* pollSource = source.load(std::memory_order_seq_cst)) {
-            bool polled = pollSource->TryPoll(drained);
-            if (!polled) {
-                const uint64_t start = mach_absolute_time();
-                do {
-                    CpuRelax();
-                    polled = pollSource->TryPoll(drained);
-                } while (!polled && mach_absolute_time() - start < budgetTicks);
+            bool polled = pollSource->TryPoll(drained, limit);
+            while (!polled && limit.deadlineTicks != 0 && !limit.Reached(mach_absolute_time())) {
+                CpuRelax();
+                polled = pollSource->TryPoll(drained, limit);
             }
             pulls.fetch_add(1, std::memory_order_relaxed);
             if (polled) {
                 pulledPackets.fetch_add(drained, std::memory_order_relaxed);
-            } else {
+                if (limit.deadlineTicks != 0 && !limit.Enough() &&
+                    mach_absolute_time() >= limit.deadlineTicks) {
+                    cut.fetch_add(1, std::memory_order_relaxed);
+                }
+            } else if (!limit.Enough()) {
                 busy.fetch_add(1, std::memory_order_relaxed);
             }
         }

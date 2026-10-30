@@ -11,19 +11,43 @@
 
 #include <DriverKit/DriverKit.h>
 
+#include <algorithm>
 #include <cstring>
 
 namespace ASFW::Audio::DriverKit {
 namespace {
 
-// How long a BeginRead pull waits for a poll already in progress (the
-// interrupt draining the same ring) before it reads what is there.
-constexpr uint64_t kRxPullBusyBudgetNanos = 100'000;
+// The BeginRead pull's time budget, for waiting out a poll in progress (the
+// interrupt draining the same ring) and for its own drain together: an eighth
+// of the IO buffer, within these bounds. At 64 frames and 96 kHz the HAL
+// allows about 760 us for the whole cycle, client and driver (b184 report).
+constexpr uint64_t kRxPullMinBudgetNanos = 25'000;
+constexpr uint64_t kRxPullMaxBudgetNanos = 100'000;
 // After the first complete read, CoreAudio's clock for the device still
 // converges on the zero timestamps (one per 24576 frames, 256 ms at 96 kHz):
 // b184 had one short capture read in the first seconds of nearly every start
 // and none in 120 s of steady state. Short reads this soon are start-up.
 constexpr uint64_t kCaptureSettleNanos = 2'000'000'000ULL;
+
+[[nodiscard]] uint64_t RxPullBudgetNanos(uint32_t frames, uint32_t sampleRateHz) noexcept {
+    if (sampleRateHz == 0) {
+        return kRxPullMinBudgetNanos;
+    }
+    const uint64_t bufferNanos = (static_cast<uint64_t>(frames) * 1'000'000'000ULL) / sampleRateHz;
+    return std::clamp(bufferNanos / 8, kRxPullMinBudgetNanos, kRxPullMaxBudgetNanos);
+}
+
+// What a BeginRead pull drains for: the capture ring's write frame reaching
+// the end of the read.
+struct RxPullTarget {
+    const std::atomic<uint64_t>* writeFrame{nullptr};
+    uint64_t readEnd{0};
+
+    static bool Covered(const void* context) noexcept {
+        const auto* target = static_cast<const RxPullTarget*>(context);
+        return target->writeFrame->load(std::memory_order_acquire) >= target->readEnd;
+    }
+};
 
 void ZeroInputFrameIfMissing(ASFW::Audio::Runtime::AudioGraphBinding& graph,
                              uint64_t absoluteFrame) noexcept {
@@ -176,11 +200,21 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                 // The frames this read needs are not all in the capture ring:
                 // drain the receive ring here rather than wait for the
                 // interrupt, which a real-time load can hold off for
-                // milliseconds (RxPullHook.hpp).
-                if (control->captureRingWriteFrame.load(std::memory_order_acquire) <
-                    sampleTime + ioBufferFrameSize) {
-                    (void)control->rxPull.Pull(
-                        ASFW::Timing::nanosToHostTicks(kRxPullBusyBudgetNanos));
+                // milliseconds (RxPullHook.hpp); only up to this read's end,
+                // within a budget, leaving any backlog to the interrupt.
+                const RxPullTarget pullTarget{
+                    .writeFrame = &control->captureRingWriteFrame,
+                    .readEnd = sampleTime + ioBufferFrameSize,
+                };
+                if (!RxPullTarget::Covered(&pullTarget)) {
+                    const uint64_t budgetNanos = RxPullBudgetNanos(
+                        ioBufferFrameSize, driverIvars->runtime.directAudioGraph.sampleRateHz);
+                    (void)control->rxPull.Pull({
+                        .enough = &RxPullTarget::Covered,
+                        .context = &pullTarget,
+                        .deadlineTicks = mach_absolute_time() +
+                                         ASFW::Timing::nanosToHostTicks(budgetNanos),
+                    });
                 }
                 (void)PrepareCaptureRingForBeginRead(driverIvars->runtime.directAudioGraph,
                                                      *control,

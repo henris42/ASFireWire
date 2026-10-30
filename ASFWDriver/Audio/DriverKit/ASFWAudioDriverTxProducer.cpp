@@ -1766,10 +1766,12 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                 const uint64_t ztsHost =
                     ivars->runtime.lastHalZeroTimestampHostTicks.load(std::memory_order_relaxed);
                 // pulls: BeginRead pulls since the hook was built, the packets
-                // they drained, and those that gave up (RxPullHook.hpp).
+                // they drained, those that gave up waiting for a poll in
+                // progress (busy) and those cut short at their deadline (cut)
+                // (RxPullHook.hpp).
                 ASFW_LOG_DEBUG(DirectAudio,
                                "[HalIo] callbacks=%llu outsideRun=%llu zts=%llu ztsFrame=%llu ztsAgeMs=%llu "
-                               "pulls=%llu/%llu busy=%llu",
+                               "pulls=%llu/%llu busy=%llu cut=%llu",
                                ivars->runtime.ioDebugCallbacks.load(std::memory_order_relaxed),
                                ivars->runtime.ioCallbacksOutsideRun.load(std::memory_order_relaxed),
                                directControl->hostClockAnchor.mirrorPublications.load(std::memory_order_relaxed),
@@ -1779,7 +1781,8 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                              : 0ULL,
                                directControl->rxPull.pulls.load(std::memory_order_relaxed),
                                directControl->rxPull.pulledPackets.load(std::memory_order_relaxed),
-                               directControl->rxPull.busy.load(std::memory_order_relaxed));
+                               directControl->rxPull.busy.load(std::memory_order_relaxed),
+                               directControl->rxPull.cut.load(std::memory_order_relaxed));
             }
             // Cadence per interval: at 48 kHz blocking the device-replayed
             // pattern is 6 DATA : 2 NO-DATA per 8 cycles (6000 data packets/s

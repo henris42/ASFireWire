@@ -83,7 +83,8 @@ class IsochReceiveContext final
     uint32_t Poll();
     // Poll from any thread: the interrupt, the watchdog, or the audio side's
     // BeginRead pull on the IO thread. The gate serializes them.
-    [[nodiscard]] bool TryPoll(uint32_t& processed) noexcept override;
+    [[nodiscard]] bool TryPoll(uint32_t& processed,
+                               const IsochReceiveDrainLimit& limit) noexcept override;
 
     void SetCallback(IsochReceiveCallback callback);
     // Content-neutral synchronous seam. The consumer owns all payload
@@ -125,7 +126,7 @@ class IsochReceiveContext final
     std::atomic_flag rxLock_ = ATOMIC_FLAG_INIT;
 
     Registers GetRegisters(uint8_t index) const;
-    bool PollOnce(uint32_t& processed, bool readerPull) noexcept;
+    bool PollOnce(uint32_t& processed, const IsochReceiveDrainLimit* readerLimit) noexcept;
 };
 
 } // namespace ASFW::Isoch

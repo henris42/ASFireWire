@@ -36,6 +36,14 @@ public:
     template <typename Handler>
     [[nodiscard]] uint32_t DrainCompleted(Memory::IIsochDMAMemory& dma,
                                           Handler&& onPacket) noexcept {
+        return DrainCompleted(dma, static_cast<Handler&&>(onPacket), [] { return false; });
+    }
+
+    // As above, stopping early once `stopAfter()` is true after a packet.
+    template <typename Handler, typename StopAfter>
+    [[nodiscard]] uint32_t DrainCompleted(Memory::IIsochDMAMemory& dma,
+                                          Handler&& onPacket,
+                                          StopAfter&& stopAfter) noexcept {
         const uint32_t capacity = static_cast<uint32_t>(bufferRing_.Capacity());
         if (capacity == 0 || maxPacketSizeBytes_ == 0) {
             return 0;
@@ -83,6 +91,9 @@ public:
             idx = (idx + 1) % capacity;
             lastProcessedIndex_ = idx;
             ++processed;
+            if (stopAfter()) {
+                break;
+            }
         }
 
         if (processed > 0) {

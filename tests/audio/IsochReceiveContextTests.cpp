@@ -227,14 +227,14 @@ TEST_F(IsochReceiveContextTest, TheConsumerHoldsThePollSourceForTheRun) {
     ASSERT_EQ(consumer.pollSource, static_cast<IIsochReceivePollSource*>(context_.get()));
 
     uint32_t processed = 99;
-    EXPECT_TRUE(consumer.pollSource->TryPoll(processed));
+    EXPECT_TRUE(consumer.pollSource->TryPoll(processed, {}));
     EXPECT_EQ(processed, 0U);
     EXPECT_TRUE(consumer.lastBatch.readerPull);
     EXPECT_EQ(context_->Poll(), 0U);
     EXPECT_FALSE(consumer.lastBatch.readerPull);
 
     ASSERT_TRUE(context_->AcquirePollGateForTesting());
-    EXPECT_FALSE(consumer.pollSource->TryPoll(processed));
+    EXPECT_FALSE(consumer.pollSource->TryPoll(processed, {}));
     context_->ReleasePollGateForTesting();
 
     const auto controlSet = static_cast<::ASFW::Driver::Register32>(

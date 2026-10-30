@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <vector>
+
 #include "Isoch/Receive/IsochRxDmaRing.hpp"
 #include "Isoch/Memory/IsochDMAMemoryManager.hpp"
 #include "Hardware/HardwareInterface.hpp"
@@ -85,6 +87,35 @@ TEST(IsochRxDmaRingTests, DrainCompleted_ProcessesOneDescriptorAndRearms) {
     mem->FetchFromDevice(d0, sizeof(*d0));
     EXPECT_EQ(ASFW::Async::HW::AR_xferStatus(*d0), 0u);
     EXPECT_EQ(ASFW::Async::HW::AR_resCount(*d0), reqCount);
+}
+
+// A reader's drain (the BeginRead pull) stops once it has what it needs; the
+// next drain goes on from the next completed packet.
+TEST(IsochRxDmaRingTests, DrainCompleted_StopsWhenAskedAndResumesWhereItStopped) {
+    ::ASFW::Driver::HardwareInterface hw;
+    auto mem = MakeTestIsochMemory(hw, 8, 64);
+    ASSERT_TRUE(mem);
+
+    IsochRxDmaRing ring;
+    ASSERT_EQ(ring.SetupRings(*mem, 8, 64), kIOReturnSuccess);
+
+    constexpr uint16_t reqCount = 64;
+    constexpr uint16_t actualLength = 16;
+    for (size_t index = 0; index < 3; ++index) {
+        auto* descriptor = ring.DescriptorAt(index);
+        ASSERT_NE(descriptor, nullptr);
+        descriptor->statusWord = static_cast<uint16_t>(reqCount - actualLength);
+    }
+
+    std::vector<uint32_t> seen;
+    const auto record = [&seen](const IsochRxDmaRing::CompletedPacket& pkt) {
+        seen.push_back(pkt.descriptorIndex);
+    };
+    EXPECT_EQ(ring.DrainCompleted(*mem, record, [&seen] { return seen.size() >= 2; }), 2u);
+    EXPECT_EQ(seen, (std::vector<uint32_t>{0, 1}));
+
+    EXPECT_EQ(ring.DrainCompleted(*mem, record), 1u);
+    EXPECT_EQ(seen, (std::vector<uint32_t>{0, 1, 2}));
 }
 
 namespace {

@@ -236,15 +236,21 @@ kern_return_t IsochReceiveContext::Stop() {
 
 uint32_t IsochReceiveContext::Poll() {
     uint32_t processed = 0;
-    (void)PollOnce(processed, /*readerPull=*/false);
+    (void)PollOnce(processed, nullptr);
     return processed;
 }
 
-bool IsochReceiveContext::TryPoll(uint32_t& processed) noexcept {
-    return PollOnce(processed, /*readerPull=*/true);
+bool IsochReceiveContext::TryPoll(uint32_t& processed,
+                                  const IsochReceiveDrainLimit& limit) noexcept {
+    return PollOnce(processed, &limit);
 }
 
-bool IsochReceiveContext::PollOnce(uint32_t& processed, bool readerPull) noexcept {
+// readerLimit: a reader's pull (TryPoll), which stops once the reader has
+// what it needs or its deadline passed; nullptr for the interrupt and the
+// watchdog, which drain everything completed.
+bool IsochReceiveContext::PollOnce(uint32_t& processed,
+                                   const IsochReceiveDrainLimit* readerLimit) noexcept {
+    const bool readerPull = readerLimit != nullptr;
     processed = 0;
     if (rxLock_.test_and_set(std::memory_order_acquire)) {
         return false;
@@ -270,9 +276,7 @@ bool IsochReceiveContext::PollOnce(uint32_t& processed, bool readerPull) noexcep
         receiveConsumer_->BeginReceiveBatch(receiveBatch);
     }
 
-    processed = rxRing_.DrainCompleted(
-        *dmaMemory_,
-        [this, drainHostTicks, drainCycleTimer, receiveBatch](
+    const auto onPacket = [this, drainHostTicks, drainCycleTimer, receiveBatch](
             const Rx::IsochRxDmaRing::CompletedPacket& pkt) {
         uint64_t callbackTimestamp = 0;
         if (receiveConsumer_) {
@@ -293,7 +297,11 @@ bool IsochReceiveContext::PollOnce(uint32_t& processed, bool readerPull) noexcep
                       static_cast<uint32_t>(pkt.xferStatus),
                       callbackTimestamp);
         }
-    });
+    };
+    processed = readerLimit
+        ? rxRing_.DrainCompleted(*dmaMemory_, onPacket,
+                                 [readerLimit] { return readerLimit->Reached(mach_absolute_time()); })
+        : rxRing_.DrainCompleted(*dmaMemory_, onPacket);
 
     rxLock_.clear(std::memory_order_release);
     return true;
