@@ -1,6 +1,6 @@
-// Unit tests for InterruptDispatcher::ShouldPublishStatus: isochronous
-// completions republish the shared status at most every 250 ms, every other
-// interrupt at once.
+// Unit tests for InterruptDispatcher::PublishesStatusAtOnce: the app polls
+// the shared status block and the watchdog rewrites it every 250 ms, so an
+// interrupt writes it only for a bus reset or an unrecoverable error.
 
 #include <gtest/gtest.h>
 
@@ -12,26 +12,17 @@ namespace {
 using ASFW::Driver::IntEventBits;
 using ASFW::Driver::InterruptDispatcher;
 
-constexpr uint64_t kMs = 1'000'000ULL;
-
-TEST(InterruptStatusPublishTests, IsochronousCompletionsPublishAtMostEvery250ms) {
-    InterruptDispatcher dispatcher;
-    const uint32_t isoch = IntEventBits::kIsochTx | IntEventBits::kIsochRx;
-    EXPECT_TRUE(dispatcher.ShouldPublishStatus(isoch, 1000 * kMs));
-    EXPECT_FALSE(dispatcher.ShouldPublishStatus(IntEventBits::kIsochTx, 1001 * kMs));
-    EXPECT_FALSE(dispatcher.ShouldPublishStatus(IntEventBits::kIsochRx, 1249 * kMs));
-    EXPECT_TRUE(dispatcher.ShouldPublishStatus(isoch, 1250 * kMs));
-    EXPECT_FALSE(dispatcher.ShouldPublishStatus(isoch, 1300 * kMs));
+TEST(InterruptStatusPublishTests, BusResetAndUnrecoverableErrorPublishAtOnce) {
+    EXPECT_TRUE(InterruptDispatcher::PublishesStatusAtOnce(IntEventBits::kBusReset));
+    EXPECT_TRUE(InterruptDispatcher::PublishesStatusAtOnce(IntEventBits::kIsochTx | IntEventBits::kBusReset));
+    EXPECT_TRUE(InterruptDispatcher::PublishesStatusAtOnce(IntEventBits::kUnrecoverableError));
 }
 
-TEST(InterruptStatusPublishTests, AnyOtherEventPublishesAtOnce) {
-    InterruptDispatcher dispatcher;
-    EXPECT_TRUE(dispatcher.ShouldPublishStatus(IntEventBits::kIsochTx, 1000 * kMs));
-    EXPECT_TRUE(dispatcher.ShouldPublishStatus(IntEventBits::kIsochTx | IntEventBits::kBusReset,
-                                               1001 * kMs));
-    EXPECT_TRUE(dispatcher.ShouldPublishStatus(IntEventBits::kRespTxComplete, 1002 * kMs));
-    // And they do not hold back the next isochronous refresh.
-    EXPECT_FALSE(dispatcher.ShouldPublishStatus(IntEventBits::kIsochRx, 1003 * kMs));
+TEST(InterruptStatusPublishTests, IsochronousAndAsyncCompletionsLeaveItToTheWatchdog) {
+    EXPECT_FALSE(InterruptDispatcher::PublishesStatusAtOnce(IntEventBits::kIsochTx | IntEventBits::kIsochRx));
+    EXPECT_FALSE(InterruptDispatcher::PublishesStatusAtOnce(IntEventBits::kRespTxComplete));
+    EXPECT_FALSE(InterruptDispatcher::PublishesStatusAtOnce(IntEventBits::kReqTxComplete | IntEventBits::kRQPkt |
+                                                            IntEventBits::kRSPkt));
 }
 
 } // namespace

@@ -130,36 +130,6 @@ kern_return_t StatusHandler::GetControllerStatus(IOUserClientMethodArguments* ar
     return kIOReturnSuccess;
 }
 
-kern_return_t StatusHandler::RegisterStatusListener(IOUserClientMethodArguments* args,
-                                                    ASFWDriverUserClient* userClient) {
-    if (!args || !args->completion) {
-        return kIOReturnBadArgument;
-    }
-
-    if (!userClient || !userClient->ivars || !userClient->ivars->driver) {
-        return kIOReturnNotReady;
-    }
-
-    if (!userClient->ivars->actionLock) {
-        return kIOReturnNotReady;
-    }
-
-    IOLockLock(userClient->ivars->actionLock);
-    if (userClient->ivars->statusAction) {
-        userClient->ivars->statusAction->release();
-        userClient->ivars->statusAction = nullptr;
-    }
-
-    args->completion->retain();
-    userClient->ivars->statusAction = args->completion;
-    userClient->ivars->statusRegistered = true;
-    userClient->ivars->stopping = false;
-    IOLockUnlock(userClient->ivars->actionLock);
-
-    userClient->ivars->driver->RegisterStatusListener(userClient);
-    return kIOReturnSuccess;
-}
-
 kern_return_t StatusHandler::CopyStatusSnapshot(IOUserClientMethodArguments* args) {
     if (!args) {
         return kIOReturnBadArgument;

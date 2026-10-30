@@ -99,8 +99,6 @@ public:
     virtual void ProviderNotificationReady(OSAction* action)
         TYPE(IOServiceNotificationDispatchSource::ServiceNotificationReady);
 
-    void RegisterStatusListener(const OSObject* client) LOCALONLY;
-    void UnregisterStatusListener(const OSObject* client) LOCALONLY;
     kern_return_t CopySharedStatusMemory(uint64_t* options,
                                          IOMemoryDescriptor** memory) const LOCALONLY;
 

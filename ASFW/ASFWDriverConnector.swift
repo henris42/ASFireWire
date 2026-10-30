@@ -19,7 +19,7 @@ final class ASFWDriverConnector: ObservableObject {
         // Selector 7 retired (GUI health check).
         case asyncRead = 8
         case asyncWrite = 9
-        case registerStatusListener = 10
+        // 10 retired (status listener): the shared status block is polled.
         case getTransactionResult = 12
         case exportConfigROM = 14
         case triggerROMRead = 15
@@ -105,9 +105,9 @@ final class ASFWDriverConnector: ObservableObject {
     let connectionQueue = DispatchQueue(label: "net.asfw.app.DriverConnector.connection")
 
     /// Marks `connectionQueue` so `deinit` can tell whether it is already running on
-    /// it. The async-notification event handler takes a temporary strong `self` for the
-    /// duration of the callback (`[weak self]` cannot prevent that), so when the last
-    /// other reference is dropped while a notification is in flight, `deinit` runs on
+    /// it. The status poll and IOKit notification handlers take a temporary strong `self`
+    /// for the duration of the callback (`[weak self]` cannot prevent that), so when the
+    /// last other reference is dropped while one is in flight, `deinit` runs on
     /// `connectionQueue` itself. A `sync` there is a self-deadlock and traps with
     /// "dispatch_sync called on queue already owned by current thread".
     private static let connectionQueueKey = DispatchSpecificKey<UInt8>()
@@ -117,6 +117,7 @@ final class ASFWDriverConnector: ObservableObject {
     /// ignores the others' match and termination notifications; unbound, it
     /// follows whichever service matches, as before.
     let boundRegistryEntryID: UInt64?
+    let pollsStatus: Bool
 
     var notificationPort: IONotificationPortRef?
     var matchedIterator: io_iterator_t = 0
@@ -124,8 +125,9 @@ final class ASFWDriverConnector: ObservableObject {
     var currentService: io_object_t = 0
     var monitoringActive = false
 
-    var asyncPort: mach_port_t = mach_port_t(MACH_PORT_NULL)
-    var asyncSource: DispatchSourceMachReceive?
+    /// Reads the driver's shared status block four times a second; the driver
+    /// writes it without notifying anyone.
+    var statusPollTimer: DispatchSourceTimer?
 
     var sharedMemoryAddress: mach_vm_address_t = 0
     var sharedMemoryLength: mach_vm_size_t = 0
@@ -147,8 +149,11 @@ final class ASFWDriverConnector: ObservableObject {
 
     // MARK: - Initialisation
 
-    init(registryEntryID: UInt64? = nil) {
+    /// `pollsStatus: false` for connectors that never show the controller status
+    /// (the config agent, settings appliers): they do not read the shared block.
+    init(registryEntryID: UInt64? = nil, pollsStatus: Bool = true) {
         boundRegistryEntryID = registryEntryID
+        self.pollsStatus = pollsStatus
         connectionQueue.setSpecific(key: Self.connectionQueueKey, value: 1)
         startMonitoring()
     }

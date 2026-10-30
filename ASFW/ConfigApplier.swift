@@ -94,7 +94,7 @@ final class ConfigApplier {
             Self.say("Controller \(id) gone.")
         }
         for card in cards where connectors[card.registryEntryID] == nil {
-            let connector = ASFWDriverConnector(registryEntryID: card.registryEntryID)
+            let connector = ASFWDriverConnector(registryEntryID: card.registryEntryID, pollsStatus: false)
             connector.connect(forceAttempt: true)
             connectors[card.registryEntryID] = connector
             Self.say("Watching \(card.displayName).")

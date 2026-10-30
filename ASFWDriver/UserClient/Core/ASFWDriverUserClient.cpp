@@ -32,7 +32,7 @@ enum {
     // Selector 7 retired (GUI health check).
     kMethodAsyncRead = 8,
     kMethodAsyncWrite = 9,
-    kMethodRegisterStatusListener = 10,
+    // 10 retired (status listener): the app polls the shared status block.
     kMethodCopyStatusSnapshot = 11,
     kMethodGetTransactionResult = 12,
     kMethodRegisterTransactionListener = 13,
@@ -150,14 +150,11 @@ MethodDispatchResult DispatchTopologyMethods(ASFW::UserClient::UserClientRuntime
 }
 
 MethodDispatchResult DispatchStatusMethods(ASFW::UserClient::UserClientRuntimeState& runtimeState,
-                                           ASFWDriverUserClient& userClient,
                                            IOUserClientMethodArguments* arguments,
                                            uint64_t selector) {
     switch (selector) {
     case kMethodGetControllerStatus:
         return runtimeState.Status().GetControllerStatus(arguments);
-    case kMethodRegisterStatusListener:
-        return runtimeState.Status().RegisterStatusListener(arguments, &userClient);
     case kMethodCopyStatusSnapshot:
         return runtimeState.Status().CopyStatusSnapshot(arguments);
     default:
@@ -402,8 +399,6 @@ bool ASFWDriverUserClient::init() {
         return false;
     }
 
-    ivars->statusRegistered = false;
-    ivars->statusAction = nullptr;
     ivars->transactionListenerRegistered = false;
     ivars->transactionAction = nullptr;
     ivars->actionLock = IOLockAlloc();
@@ -433,16 +428,9 @@ bool ASFWDriverUserClient::init() {
 void ASFWDriverUserClient::free() {
     ASFW_LOG(UserClient, "[Teardown] ASFWDriverUserClient free() client=%p", this);
     if (ivars) {
-        if (ivars->driver && ivars->statusRegistered) {
-            ivars->driver->UnregisterStatusListener(this);
-        }
         if (ivars->actionLock) {
             IOLockLock(ivars->actionLock);
             ivars->stopping = true;
-            if (ivars->statusAction) {
-                ivars->statusAction->release();
-                ivars->statusAction = nullptr;
-            }
             if (ivars->transactionAction) {
                 ivars->transactionAction->release();
                 ivars->transactionAction = nullptr;
@@ -483,12 +471,6 @@ kern_return_t IMPL(ASFWDriverUserClient, Start) {
         IOLockUnlock(ivars->actionLock);
     }
 
-    ivars->statusRegistered = false;
-    if (ivars->statusAction) {
-        ivars->statusAction->release();
-        ivars->statusAction = nullptr;
-    }
-
     auto* runtimeState = ASFW::UserClient::GetRuntimeState(this);
     if (!runtimeState || !runtimeState->BindDriver(ivars->driver, this)) {
         ASFW_LOG_ERROR(UserClient, "Start() failed to initialize runtime state");
@@ -508,12 +490,7 @@ kern_return_t IMPL(ASFWDriverUserClient, Stop) {
     if (ivars && ivars->actionLock) {
         IOLockLock(ivars->actionLock);
         ivars->stopping = true;
-        ivars->statusRegistered = false;
         ivars->transactionListenerRegistered = false;
-        if (ivars->statusAction) {
-            ivars->statusAction->release();
-            ivars->statusAction = nullptr;
-        }
         if (ivars->transactionAction) {
             ivars->transactionAction->release();
             ivars->transactionAction = nullptr;
@@ -522,7 +499,6 @@ kern_return_t IMPL(ASFWDriverUserClient, Stop) {
     }
 
     if (ivars && ivars->driver) {
-        ivars->driver->UnregisterStatusListener(this);
         ivars->driver = nullptr;
     }
     if (auto* runtimeState = ASFW::UserClient::GetRuntimeState(this); runtimeState != nullptr) {
@@ -559,7 +535,7 @@ kern_return_t DispatchExternal(ASFWDriverUserClient* self, ASFWDriverUserClient_
     if (auto result = DispatchTopologyMethods(*runtimeState, arguments, selector)) {
         return *result;
     }
-    if (auto result = DispatchStatusMethods(*runtimeState, *self, arguments, selector)) {
+    if (auto result = DispatchStatusMethods(*runtimeState, arguments, selector)) {
         return *result;
     }
     if (auto result = DispatchTransactionMethods(*runtimeState, *self, arguments, selector)) {
@@ -751,31 +727,6 @@ kern_return_t ASFWDriverUserClient::AsyncCompareSwap(uint16_t destinationID, uin
         *locked = 0;
     }
     return kIOReturnUnsupported;
-}
-
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-void ASFWDriverUserClient::NotifyStatus(uint64_t sequence, uint32_t reason) {
-    if (!ivars || !ivars->actionLock) {
-        return;
-    }
-
-    OSAction* action = nullptr;
-    IOLockLock(ivars->actionLock);
-    if (!ivars->stopping && ivars->statusRegistered && ivars->statusAction) {
-        action = ivars->statusAction;
-        action->retain();
-    }
-    IOLockUnlock(ivars->actionLock);
-
-    if (!action) {
-        return;
-    }
-
-    IOUserClientAsyncArgumentsArray data{};
-    data[0] = sequence;
-    data[1] = reason;
-    AsyncCompletion(action, kIOReturnSuccess, data, 2);
-    action->release();
 }
 
 void ASFWDriverUserClient::NotifyTransactionComplete(uint16_t handle, uint32_t status) {

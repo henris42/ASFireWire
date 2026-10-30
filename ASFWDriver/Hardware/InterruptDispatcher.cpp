@@ -72,23 +72,16 @@ void InterruptDispatcher::HandleSnapshot(const InterruptSnapshot& snap, Controll
         }
     }
 
-    if (snap.intEvent != 0 && ShouldPublishStatus(snap.intEvent, snap.timestamp)) {
-        const uint32_t asyncMask = IntEventBits::kReqTxComplete | IntEventBits::kRespTxComplete |
-                                   IntEventBits::kARRQ | IntEventBits::kARRS |
-                                   IntEventBits::kRQPkt | IntEventBits::kRSPkt;
-        if (snap.intEvent & asyncMask) {
-            statusPublisher.SetLastAsyncCompletion(mach_absolute_time());
-        }
-
-        SharedStatusReason reason = SharedStatusReason::Interrupt;
-        if (snap.intEvent & IntEventBits::kBusReset) {
-            reason = SharedStatusReason::BusReset;
-        } else if (snap.intEvent & asyncMask) {
-            reason = SharedStatusReason::AsyncActivity;
-        } else if (snap.intEvent & IntEventBits::kUnrecoverableError) {
-            reason = SharedStatusReason::Interrupt;
-        }
-
+    constexpr uint32_t kAsyncMask = IntEventBits::kReqTxComplete | IntEventBits::kRespTxComplete |
+                                    IntEventBits::kARRQ | IntEventBits::kARRS |
+                                    IntEventBits::kRQPkt | IntEventBits::kRSPkt;
+    if (snap.intEvent & kAsyncMask) {
+        statusPublisher.SetLastAsyncCompletion(mach_absolute_time());
+    }
+    if (PublishesStatusAtOnce(snap.intEvent)) {
+        const SharedStatusReason reason = (snap.intEvent & IntEventBits::kBusReset)
+                                              ? SharedStatusReason::BusReset
+                                              : SharedStatusReason::Interrupt;
         statusPublisher.Publish(&controller, asyncSubsystem, reason, snap.intEvent);
     }
 }

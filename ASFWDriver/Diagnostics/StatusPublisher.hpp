@@ -22,8 +22,6 @@ class IAsyncSubsystemPort;
 }
 } // namespace ASFW
 
-class ASFWDriverUserClient;
-
 namespace ASFW::Driver {
 
 class ControllerCore;
@@ -36,11 +34,11 @@ class StatusPublisher {
     kern_return_t Prepare();
     void Reset();
 
+    // Writes the shared status block, which the app maps and polls; nobody
+    // is notified. The block's sequence is odd while it is written (a
+    // seqlock); a publish that finds another in progress is skipped.
     void Publish(ControllerCore* controller, const ASFW::Async::IAsyncSubsystemPort* asyncSubsystem,
                  SharedStatusReason reason, uint32_t detailMask = 0);
-
-    void BindListener(::ASFWDriverUserClient* client);
-    void UnbindListener(::ASFWDriverUserClient* client);
 
     kern_return_t CopySharedMemory(uint64_t* options, IOMemoryDescriptor** memory) const;
 
@@ -56,7 +54,7 @@ class StatusPublisher {
     OSSharedPtr<IOMemoryMap> statusMap_;
     SharedStatusBlock* statusBlock_{nullptr};
     std::atomic<uint64_t> statusSequence_{0};
-    OSSharedPtr<OSObject> statusListener_;
+    std::atomic<bool> publishing_{false};
     std::atomic<uint64_t> lastAsyncCompletionMach_{0};
     std::atomic<uint32_t> asyncTimeoutCount_{0};
     std::atomic<uint64_t> watchdogTickCount_{0};

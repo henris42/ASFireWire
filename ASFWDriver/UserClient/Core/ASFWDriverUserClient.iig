@@ -32,7 +32,7 @@ public:
     // Selector 7 retired (GUI health check).
         kMethodAsyncRead               = 8,
         kMethodAsyncWrite              = 9,
-        kMethodRegisterStatusListener  = 10,
+        // 10 retired (status listener): the app polls the shared status block.
         kMethodCopyStatusSnapshot      = 11,
         kMethodGetTransactionResult    = 12,
         kMethodRegisterTransactionListener = 13,
@@ -155,9 +155,6 @@ public:
                         uint8_t* data,
                         uint32_t maxDataLength) LOCALONLY;
 
-    void NotifyStatus(uint64_t sequence,
-                      uint32_t reason) LOCALONLY;
-
     void NotifyTransactionComplete(uint16_t handle,
                                    uint32_t status) LOCALONLY;
 
@@ -167,8 +164,6 @@ public:
 
 struct ASFWDriverUserClient_IVars {
     ASFWDriver* driver;  // Typed pointer back to ASFWDriver
-    OSAction* statusAction;
-    bool statusRegistered;
     OSAction* transactionAction;
     bool transactionListenerRegistered;
     void* runtimeState;

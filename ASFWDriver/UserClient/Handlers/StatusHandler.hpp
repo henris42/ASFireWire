@@ -30,10 +30,6 @@ public:
 
     // Method 3: Get metrics snapshot (currently unsupported)
 
-    // Method 10: Register for status change notifications
-    kern_return_t RegisterStatusListener(IOUserClientMethodArguments* args,
-                                         ASFWDriverUserClient* userClient);
-
     // Method 11: Copy controller snapshot via ASFWDriver
     kern_return_t CopyStatusSnapshot(IOUserClientMethodArguments* args);
 

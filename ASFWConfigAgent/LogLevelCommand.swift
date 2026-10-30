@@ -16,7 +16,7 @@ import Foundation
 enum LogLevelCommand {
     static func run(_ spec: String?) -> Int32 {
         let connectors = CardRegistry.enumerate().map { card -> (ControllerCard, ASFWDriverConnector) in
-            let connector = ASFWDriverConnector(registryEntryID: card.registryEntryID)
+            let connector = ASFWDriverConnector(registryEntryID: card.registryEntryID, pollsStatus: false)
             connector.connect(forceAttempt: true)
             return (card, connector)
         }

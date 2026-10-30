@@ -1,19 +1,20 @@
 #include "StatusPublisher.hpp"
 #include "../Logging/Logging.hpp"
 
-#include <string>
+#include <algorithm>
+#include <string_view>
 
 #ifdef ASFW_HOST_TEST
 #include <mach/mach_time.h>
 #else
 #include <DriverKit/IOLib.h>
+#include <DriverKit/IOUserClient.h>
 #endif
 
 #include "../Async/Interfaces/IAsyncSubsystemPort.hpp"
 #include "../Controller/ControllerCore.hpp"
 #include "../Controller/ControllerStateMachine.hpp"
 #include "MetricsSink.hpp"
-#include <net.asfw.driver/ASFWDriverUserClient.h>
 
 namespace ASFW::Driver {
 
@@ -57,8 +58,6 @@ kern_return_t StatusPublisher::Prepare() {
 }
 
 void StatusPublisher::Reset() {
-    ASFW_LOG(UserClient, "[Lifecycle] status publisher reset releasing client=%p", statusListener_.get());
-    statusListener_.reset();
     statusBlock_ = nullptr;
     statusMemory_.reset();
     statusMap_.reset();
@@ -82,14 +81,13 @@ void StatusPublisher::Publish(ControllerCore* controller,
     snapshot.reason = static_cast<uint32_t>(reason);
     snapshot.detailMask = detailMask;
     snapshot.updateTimestamp = mach_absolute_time();
-    snapshot.sequence = statusSequence_.fetch_add(1, std::memory_order_acq_rel) + 1;
 
     if (controller) {
         const auto state = controller->StateMachine().CurrentState();
         snapshot.controllerState = static_cast<uint32_t>(state);
-        auto stateName = std::string(ToString(state));
-        strlcpy(snapshot.controllerStateName, stateName.c_str(),
-                sizeof(snapshot.controllerStateName));
+        const std::string_view stateName = ToString(state);
+        const size_t nameLength = std::min(stateName.size(), sizeof(snapshot.controllerStateName) - 1);
+        std::memcpy(snapshot.controllerStateName, stateName.data(), nameLength);
 
         const auto& busMetrics = controller->Metrics().BusReset();
         snapshot.busResetCount = busMetrics.resetCount;
@@ -129,31 +127,22 @@ void StatusPublisher::Publish(ControllerCore* controller,
         snapshot.flags |= SharedStatusBlock::kFlagLinkActive;
     }
 
+    // Seqlock for the polling reader: odd while the block is written, the
+    // next even value once it is whole. Writers come from the interrupt, the
+    // watchdog and start/stop; one that finds another writing skips (the next
+    // publish carries the same state).
+    if (publishing_.exchange(true, std::memory_order_acquire)) {
+        return;
+    }
+    const uint64_t sequence = statusSequence_.load(std::memory_order_relaxed) + 2;
+    auto* sharedSequence = reinterpret_cast<std::atomic<uint64_t>*>(&statusBlock_->sequence);
+    snapshot.sequence = sequence - 1;
+    sharedSequence->store(sequence - 1, std::memory_order_relaxed);
     std::atomic_thread_fence(std::memory_order_release);
     std::memcpy(statusBlock_, &snapshot, sizeof(SharedStatusBlock));
-    std::atomic_thread_fence(std::memory_order_release);
-
-    if (statusListener_) {
-        if (auto* client = OSDynamicCast(ASFWDriverUserClient, statusListener_.get())) {
-            client->NotifyStatus(snapshot.sequence, snapshot.reason);
-        }
-    }
-}
-
-void StatusPublisher::BindListener(::ASFWDriverUserClient* client) {
-    ASFW_LOG(UserClient, "[Lifecycle] status listener bind client=%p replacing=%p", client, statusListener_.get());
-    if (client) {
-        statusListener_.reset(static_cast<OSObject*>(client), OSRetain);
-    } else {
-        statusListener_.reset();
-    }
-}
-
-void StatusPublisher::UnbindListener(::ASFWDriverUserClient* client) {
-    if (statusListener_ && statusListener_.get() == static_cast<OSObject*>(client)) {
-        ASFW_LOG(UserClient, "[Lifecycle] status listener unbind releasing client=%p", client);
-        statusListener_.reset();
-    }
+    sharedSequence->store(sequence, std::memory_order_release);
+    statusSequence_.store(sequence, std::memory_order_relaxed);
+    publishing_.store(false, std::memory_order_release);
 }
 
 kern_return_t StatusPublisher::CopySharedMemory(uint64_t* options,

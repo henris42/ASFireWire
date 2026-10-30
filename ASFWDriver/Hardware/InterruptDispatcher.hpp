@@ -34,28 +34,13 @@ class InterruptDispatcher {
                         IsochLanes& lanes, StatusPublisher& statusPublisher,
                         ASFW::Async::IAsyncSubsystemPort* asyncSubsystem);
 
-    // Whether an interrupt with these events republishes the shared status:
-    // always for anything but isochronous completions, which change nothing
-    // the status block shows; for those at most once per kIsochOnlyStatusNanos.
-    // A publish wakes every status listener (the app redraws on each), and the
-    // isochronous contexts interrupt about 2000 times a second with two units
-    // streaming.
-    [[nodiscard]] bool ShouldPublishStatus(uint32_t intEvent, uint64_t nowNanos) noexcept {
-        constexpr uint32_t kIsochOnly = IntEventBits::kIsochTx | IntEventBits::kIsochRx;
-        if ((intEvent & ~kIsochOnly) != 0) {
-            return true;
-        }
-        if (lastIsochOnlyStatusNanos_ != 0 && nowNanos >= lastIsochOnlyStatusNanos_ &&
-            nowNanos - lastIsochOnlyStatusNanos_ < kIsochOnlyStatusNanos) {
-            return false;
-        }
-        lastIsochOnlyStatusNanos_ = nowNanos;
-        return true;
+    // Whether an interrupt writes the shared status block at once. The app
+    // polls the block and the watchdog rewrites it every 250 ms, so only a
+    // bus reset or an unrecoverable error is written from the interrupt;
+    // async activity only stamps its time.
+    [[nodiscard]] static constexpr bool PublishesStatusAtOnce(uint32_t intEvent) noexcept {
+        return (intEvent & (IntEventBits::kBusReset | IntEventBits::kUnrecoverableError)) != 0;
     }
-    static constexpr uint64_t kIsochOnlyStatusNanos = 250'000'000ULL;
-
-  private:
-    uint64_t lastIsochOnlyStatusNanos_{0};
 };
 
 } // namespace ASFW::Driver

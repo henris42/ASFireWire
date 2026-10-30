@@ -238,7 +238,6 @@ void ExecuteRuntimeTeardown(ServiceContext& ctx, const QuiescePlan& plan) {
         (void)ctx.isochLanes.StopAll();
     }
 
-    ctx.statusPublisher.BindListener(nullptr);
     ctx.statusPublisher.Publish(ctx.controller.get(), ctx.deps.asyncController.get(),
                                 SharedStatusReason::Disconnect);
 
@@ -1303,27 +1302,6 @@ void ASFWDriver::ProviderNotificationReady_Impl(ASFWDriver_ProviderNotificationR
     }
     RequestRuntimeQuiesce(static_cast<uint32_t>(QuiesceReason::kProviderRevoked));
 #endif
-}
-
-void ASFWDriver::RegisterStatusListener(const OSObject* client) {
-    auto* clientObj = OSDynamicCast(ASFWDriverUserClient, const_cast<OSObject*>(client));
-    if (!clientObj || !ivars || !ivars->context) {
-        return;
-    }
-
-    auto& ctx = *ivars->context;
-    ctx.statusPublisher.BindListener(clientObj);
-    ctx.statusPublisher.Publish(ctx.controller.get(), ctx.deps.asyncController.get(),
-                                SharedStatusReason::Manual);
-}
-
-void ASFWDriver::UnregisterStatusListener(const OSObject* client) {
-    auto* clientObj = OSDynamicCast(ASFWDriverUserClient, const_cast<OSObject*>(client));
-    if (!clientObj || !ivars || !ivars->context) {
-        return;
-    }
-
-    ivars->context->statusPublisher.UnbindListener(clientObj);
 }
 
 kern_return_t ASFWDriver::CopySharedStatusMemory(uint64_t* options,

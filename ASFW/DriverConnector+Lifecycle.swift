@@ -118,9 +118,8 @@ extension ASFWDriverConnector {
             return
         }
 
-        if !registerStatusNotificationsLocked() {
-            closeConnectionLocked(reason: "Failed to register status notifications")
-            return
+        if pollsStatus {
+            startStatusPollingLocked()
         }
 
         DispatchQueue.main.async { [weak self] in
@@ -130,13 +129,8 @@ extension ASFWDriverConnector {
     }
 
     func closeConnectionLocked(reason: String) {
-        if let source = asyncSource {
-            source.cancel()
-            asyncSource = nil
-        } else if asyncPort != mach_port_t(MACH_PORT_NULL) {
-            mach_port_deallocate(mach_task_self_, asyncPort)
-        }
-        asyncPort = mach_port_t(MACH_PORT_NULL)
+        statusPollTimer?.cancel()
+        statusPollTimer = nil
 
         if sharedMemoryPointer != nil {
             IOConnectUnmapMemory64(connection,
@@ -189,109 +183,47 @@ extension ASFWDriverConnector {
         return true
     }
 
-    func registerStatusNotificationsLocked() -> Bool {
-        guard asyncPort == mach_port_t(MACH_PORT_NULL) else { return true }
-
-        var port: mach_port_t = mach_port_t(MACH_PORT_NULL)
-        var kr = mach_port_allocate(mach_task_self_, MACH_PORT_RIGHT_RECEIVE, &port)
-        guard kr == KERN_SUCCESS else {
-            log("mach_port_allocate failed: \(kernResultString(kr))", level: .error)
-            return false
+    /// The driver writes the shared status block without notifying anyone (a
+    /// notification per write woke the app up to a thousand times a second); the
+    /// app reads it four times a second and publishes what changed.
+    func startStatusPollingLocked() {
+        guard statusPollTimer == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: connectionQueue)
+        timer.schedule(deadline: .now() + .milliseconds(250),
+                       repeating: .milliseconds(250),
+                       leeway: .milliseconds(50))
+        timer.setEventHandler { [weak self] in
+            self?.pollStatusLocked()
         }
-
-        kr = mach_port_insert_right(mach_task_self_, port, port, mach_msg_type_name_t(MACH_MSG_TYPE_MAKE_SEND))
-        guard kr == KERN_SUCCESS else {
-            mach_port_deallocate(mach_task_self_, port)
-            log("mach_port_insert_right failed: \(kernResultString(kr))", level: .error)
-            return false
-        }
-
-        let token = UInt64(UInt(bitPattern: Unmanaged.passUnretained(self).toOpaque()))
-        var asyncRef: [UInt64] = [token]
-        kr = IOConnectCallAsyncScalarMethod(connection,
-                                            Method.registerStatusListener.rawValue,
-                                            port,
-                                            &asyncRef,
-                                            UInt32(asyncRef.count),
-                                            nil,
-                                            0,
-                                            nil,
-                                            nil)
-        guard kr == KERN_SUCCESS else {
-            mach_port_deallocate(mach_task_self_, port)
-            log("IOConnectCallAsyncScalarMethod failed: \(interpretIOReturn(kr))", level: .error)
-            return false
-        }
-
-        asyncPort = port
-        let source = DispatchSource.makeMachReceiveSource(port: port, queue: connectionQueue)
-        source.setEventHandler { [weak self] in
-            self?.handleAsyncMessages()
-        }
-        source.setCancelHandler { [port] in
-            mach_port_deallocate(mach_task_self_, port)
-        }
-        asyncSource = source
-        source.resume()
-        emitCurrentStatus()
-        return true
+        statusPollTimer = timer
+        timer.resume()
     }
 
-    func handleAsyncMessages() {
-        guard asyncPort != mach_port_t(MACH_PORT_NULL) else { return }
-        var buffer = [UInt8](repeating: 0, count: 512)
-        let messageSize = mach_msg_size_t(buffer.count)
-
-        while true {
-            let result = buffer.withUnsafeMutableBytes { rawPtr -> kern_return_t in
-                let headerPtr = rawPtr.bindMemory(to: mach_msg_header_t.self).baseAddress!
-                return mach_msg(headerPtr,
-                                mach_msg_option_t(MACH_RCV_MSG | MACH_RCV_TIMEOUT),
-                                0,
-                                messageSize,
-                                asyncPort,
-                                0,
-                                mach_port_name_t(MACH_PORT_NULL))
-            }
-
-            if result == MACH_RCV_TIMED_OUT {
-                break
-            } else if result != KERN_SUCCESS {
-                log("mach_msg receive failed: \(kernResultString(result))", level: .error)
-                break
-            }
-
-            buffer.withUnsafeBytes { rawPtr in
-                let base = rawPtr.baseAddress!
-                let scalarCountOffset = MemoryLayout<mach_msg_header_t>.size + MemoryLayout<mach_msg_body_t>.size + MemoryLayout<mach_msg_port_descriptor_t>.size
-                let count = base.load(fromByteOffset: scalarCountOffset, as: UInt32.self).littleEndian
-                guard count >= 2 else { return }
-                let scalarsOffset = scalarCountOffset + MemoryLayout<UInt32>.size
-                let scalarsPtr = base.advanced(by: scalarsOffset).assumingMemoryBound(to: UInt64.self)
-                let sequence = scalarsPtr.pointee
-                let reasonRaw = scalarsPtr.advanced(by: 1).pointee
-                handleStatusNotification(sequence: sequence, reason: UInt32(truncatingIfNeeded: reasonRaw))
-            }
+    /// A whole copy of the shared status block, or nil while the driver writes it.
+    func readSharedStatusLocked() -> DriverStatus? {
+        guard let pointer = sharedMemoryPointer, sharedMemoryLength >= 256 else { return nil }
+        var copy = [UInt8](repeating: 0, count: 256)
+        let sequence = copy.withUnsafeMutableBytes { buffer in
+            ASFWCopySeqlockedBlock(UnsafeRawPointer(pointer), buffer.baseAddress, 256, 8)
+        }
+        guard sequence != 0 else { return nil }
+        return copy.withUnsafeBytes { buffer in
+            DriverStatus(rawPointer: buffer.baseAddress!, length: buffer.count)
         }
     }
 
-    func handleStatusNotification(sequence: UInt64, reason: UInt32) {
-        guard let pointer = sharedMemoryPointer else { return }
-        guard let status = DriverStatus(rawPointer: UnsafeRawPointer(pointer), length: Int(sharedMemoryLength)) else { return }
-        guard status.sequence != 0 else { return }
+    func pollStatusLocked() {
+        guard let status = readSharedStatusLocked() else { return }
         guard status.sequence != lastDeliveredSequence else { return }
-        lastDeliveredSequence = status.sequence
-
-        DispatchQueue.main.async { [weak self] in
-            self?.latestStatus = status
-        }
-        statusSubject.send(status)
+        deliverStatusLocked(status)
     }
 
     func emitCurrentStatus() {
-        guard let pointer = sharedMemoryPointer else { return }
-        guard let status = DriverStatus(rawPointer: UnsafeRawPointer(pointer), length: Int(sharedMemoryLength)) else { return }
-        guard status.sequence != 0 else { return }
+        guard let status = readSharedStatusLocked() else { return }
+        deliverStatusLocked(status)
+    }
+
+    private func deliverStatusLocked(_ status: DriverStatus) {
         lastDeliveredSequence = status.sequence
         DispatchQueue.main.async { [weak self] in
             self?.latestStatus = status
