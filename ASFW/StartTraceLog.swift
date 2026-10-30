@@ -18,7 +18,11 @@ nonisolated enum StartTraceLog {
     static let directory = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Logs/ASFW")
     private static let keep = 10
-    private static let predicate = #"eventMessage CONTAINS "[StartStep]" OR eventMessage CONTAINS "[Log]""#
+    // The dext's lines reach the log as the kernel's. `log` logs its own
+    // invocation, predicate and all ("log run noninteractively, args: ..."),
+    // which would match the tags too.
+    private static let predicate =
+        #"process == "kernel" AND (eventMessage CONTAINS "[StartStep]" OR eventMessage CONTAINS "[Log]")"#
     private static let queue = DispatchQueue(label: "net.asfw.start-trace", qos: .utility)
 
     /// At login: this boot's start steps so far. Skipped when this boot's
