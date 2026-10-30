@@ -466,9 +466,15 @@ struct TxPlacementSample final {
 // The TX fill (ASFWAudioDriverOutputWrite.cpp, documentation/TX_OWNERSHIP.md):
 // copies frames CoreAudio has written to the HAL output ring into the armed
 // packets that carry them, once each, unless the packet is at or behind the
-// finality frontier (projected hardware position + guard). Runs inside
-// WriteEnd on CoreAudio's IO thread, its only owner; RT-safe.
+// finality frontier (the packet on the wire + guard). Runs inside WriteEnd on
+// CoreAudio's IO thread, its only owner; RT-safe.
 void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars) noexcept;
+// The packet the hardware is sending now. Exact from the newest completion
+// stamp (which packet went out in which bus cycle) and the clock pair (which
+// cycle it is now); while the stream has no completion yet, projected from
+// the completion cursor, rounded up.
+[[nodiscard]] uint64_t TransmitPacketOnTheWire(const ASFW::Isoch::IsochTxQueueControl& queue,
+                                               uint64_t nowHost) noexcept;
 // Zeroes CoreAudio's whole output ring. Every start, before CoreAudio's first
 // write: the ring still holds the previous session's output.
 void ClearPlaybackRing(ASFWAudioDriver_IVars& ivars) noexcept;

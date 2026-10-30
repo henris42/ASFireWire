@@ -1731,6 +1731,71 @@ TEST(TxFrameCursorProjection, KeepsTheProjectedFrameInsteadOfAPacketBoundary) {
     EXPECT_EQ(ASFW::Audio::DriverKit::ProjectTxFrameCursor(5, kTicksPerSecond, 44100), 44105u);
 }
 
+// The fill's finality frontier stands on the packet on the wire, exactly
+// (b190 report §3: the rounded projection stood 3-4 packets past it and lost
+// the head of writes the HAL finished close to its deadline). The newest
+// completion stamp gives a packet and its cycle; the clock pair gives the
+// cycle at the last refill and its host time; the wire is the stamped packet
+// plus the whole cycles since.
+TEST(TxWirePacket, TheExactWirePacketFollowsTheStampAndTheClockPair) {
+    (void)ASFW::Timing::initializeHostTimebase();  // host ticks are nanoseconds
+    IsochTxQueueControl queue{};
+    constexpr uint64_t kHost = 5'000'000'000ULL;  // host mocks: ticks are nanoseconds
+    constexpr uint32_t kCycle = 1000;
+    // Packets 0..499 completed; packet 499 went out in cycle 999; the refill
+    // ran 40 us into cycle 1000 (offset 983 of 3072) and found all 500 done.
+    queue.completionCursor.store(500);
+    queue.PushCompletionStamp(498, ASFW::Timing::encodeCycleTimer(0, kCycle - 2, 0));
+    queue.PushCompletionStamp(499, ASFW::Timing::encodeCycleTimer(0, kCycle - 1, 0));
+    queue.clockPair.Publish({.hostTimeMid = kHost, .cycleTimer32 = ASFW::Timing::encodeCycleTimer(0, kCycle, 983)});
+
+    using ASFW::Audio::DriverKit::TransmitPacketOnTheWire;
+    // At the refill the wire holds the packet of cycle 1000: 499 + 1.
+    EXPECT_EQ(TransmitPacketOnTheWire(queue, kHost), 500U);
+    // 60 us later, still cycle 1000 (offset 983 + 60 us = 2458 of 3072).
+    EXPECT_EQ(TransmitPacketOnTheWire(queue, kHost + 60'000), 500U);
+    // 100 us later the cycle has turned: packet 501 is on the wire.
+    EXPECT_EQ(TransmitPacketOnTheWire(queue, kHost + 100'000), 501U);
+    // 2.6 ms later: from offset 983 that crosses 21 cycle boundaries.
+    EXPECT_EQ(TransmitPacketOnTheWire(queue, kHost + 2'600'000), 500U + 21U);
+}
+
+// The stamp's cycle has three seconds bits; the pair's has seven. Both sides
+// of an eight-second boundary give the same packet.
+TEST(TxWirePacket, TheWirePacketCrossesTheStampsEightSecondWindow) {
+    (void)ASFW::Timing::initializeHostTimebase();  // host ticks are nanoseconds
+    IsochTxQueueControl queue{};
+    constexpr uint64_t kHost = 7'000'000'000ULL;
+    // Packet 8000 went out in the last cycle of second 15 (stamp seconds 7);
+    // the refill reads the timer early in second 16 (seconds bits 16).
+    queue.completionCursor.store(8001);
+    queue.PushCompletionStamp(8000, ASFW::Timing::encodeCycleTimer(7, 7999, 0));
+    queue.clockPair.Publish({.hostTimeMid = kHost, .cycleTimer32 = ASFW::Timing::encodeCycleTimer(16, 0, 500)});
+    using ASFW::Audio::DriverKit::TransmitPacketOnTheWire;
+    EXPECT_EQ(TransmitPacketOnTheWire(queue, kHost), 8001U);
+    EXPECT_EQ(TransmitPacketOnTheWire(queue, kHost + 125'000), 8002U);
+}
+
+// Without a completion stamp (the stream's first refill has not run), or with
+// a clock pair older than the stamp window, the rounded projection stands in.
+TEST(TxWirePacket, WithoutAStampTheProjectionStandsIn) {
+    (void)ASFW::Timing::initializeHostTimebase();  // host ticks are nanoseconds
+    IsochTxQueueControl queue{};
+    constexpr uint64_t kHost = 5'000'000'000ULL;
+    queue.completionCursor.store(40);
+    queue.clockPair.Publish({.hostTimeMid = kHost, .cycleTimer32 = ASFW::Timing::encodeCycleTimer(0, 100, 0)});
+    using ASFW::Audio::DriverKit::TransmitPacketOnTheWire;
+    // The projection: completion + the elapsed cycles, rounded up.
+    EXPECT_EQ(TransmitPacketOnTheWire(queue, kHost), 40U);
+    EXPECT_EQ(TransmitPacketOnTheWire(queue, kHost + 60'000), 41U);
+    EXPECT_EQ(TransmitPacketOnTheWire(queue, kHost + 250'000), 42U);
+    // A stamp makes it exact: 60 us into the cycle after packet 39's is still packet 40.
+    queue.PushCompletionStamp(39, ASFW::Timing::encodeCycleTimer(0, 99, 0));
+    EXPECT_EQ(TransmitPacketOnTheWire(queue, kHost + 60'000), 40U);
+    // A pair older than four seconds falls back to the projection.
+    EXPECT_EQ(TransmitPacketOnTheWire(queue, kHost + 5'000'000'000ULL), 40U + 40'000U);
+}
+
 // T6: a restart resets every piece of per-stream TX state together. StartIO
 // re-arms the producer on fresh TX memory; nothing from the previous stream --
 // fill position, frame-cursor alignment, replay reader, the per-stream

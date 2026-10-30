@@ -24,6 +24,7 @@
 
 #include "ASFWAudioDriverPrivate.hpp"
 #include "../Runtime/PlaybackRingRange.hpp"
+#include "../Wire/AMDTP/AmdtpTiming.hpp"
 #include "../../Common/TimingUtils.hpp"
 
 #include <algorithm>
@@ -114,6 +115,9 @@ namespace {
 // completionCursor was recorded with the clock pair of that refill, and IT
 // sends one packet per bus cycle, so the packets since then are the elapsed
 // cycles. Rounded up, so the fill errs toward treating a packet as taken.
+// With the cursor usually one past the packet on the wire (a packet's status
+// is written early in its cycle) and the rounding, this lands 1-2 packets
+// past the wire: TransmitPacketOnTheWire is exact and the fill uses that.
 [[nodiscard]] uint64_t ProjectHardwarePacket(const ASFW::Isoch::IsochTxQueueControl& queue,
                                              uint64_t nowHost) noexcept {
     const uint64_t completion = queue.completionCursor.load(std::memory_order_acquire);
@@ -185,6 +189,44 @@ void ClearCopiedFrames(const ASFW::Audio::Runtime::AudioStreamMemory& memory,
 
 } // namespace
 
+// The newest completion stamp says which packet went out in which bus cycle
+// (the OHCI writes the cycle into the descriptor when the packet has gone),
+// the clock pair says which cycle it was at the last refill and when: the
+// cycle now is that plus the host time since, and one packet leaves per
+// cycle, so the stamped packet plus the cycles since its stamp is the one on
+// the wire. Both come from refills, which a real-time load holds off; that
+// makes them old, not wrong, and the extrapolation over their age costs only
+// the bus-to-host clock difference (parts per million). b190: the fill stood
+// 3-4 packets past the wire through the rounded projection and lost the head
+// of every write the HAL finished close to its deadline (500 us before the
+// first frame's presentation); the exact packet gives those 125-250 us back.
+uint64_t TransmitPacketOnTheWire(const ASFW::Isoch::IsochTxQueueControl& queue,
+                                 uint64_t nowHost) noexcept {
+    constexpr uint64_t kPairAgeLimitNanos = 4'000'000'000ULL;  // the stamp's 8 s window, halved
+    const uint64_t stamps = queue.completionStampCount.load(std::memory_order_acquire);
+    uint64_t stampedPacket = 0;
+    uint32_t stampCycleTimer = 0;
+    ASFW::Isoch::IsochTxClockPairSample pair{};
+    if (stamps == 0 || !queue.ReadCompletionStamp(stamps - 1, stampedPacket, stampCycleTimer) ||
+        !queue.clockPair.TryRead(pair) || pair.hostTimeMid == 0 || nowHost < pair.hostTimeMid) {
+        return ProjectHardwarePacket(queue, nowHost);
+    }
+    const uint64_t sinceRefillNanos = ASFW::Timing::hostTicksToNanos(nowHost - pair.hostTimeMid);
+    if (sinceRefillNanos > kPairAgeLimitNanos) {
+        return ProjectHardwarePacket(queue, nowHost);
+    }
+    const int64_t nowBusTicks =
+        ASFW::Timing::encodedTstampToOffsets(pair.cycleTimer32) +
+        static_cast<int64_t>(sinceRefillNanos * ASFW::Timing::kTicksPerSecond / 1'000'000'000ULL);
+    // The stamped packet went out at its cycle's start; a reading a few
+    // microseconds early (the pair's host time is taken after its register
+    // read) cannot put the wire before it.
+    const int64_t sinceStampTicks = std::max<int64_t>(
+        0, ASFW::Timing::extOffsetDiff(nowBusTicks,
+                                       ASFW::Timing::encodedTstampToOffsets(stampCycleTimer)));
+    return stampedPacket + static_cast<uint64_t>(sinceStampTicks) / ASFW::Timing::kTicksPerCycle;
+}
+
 void ClearPlaybackRing(ASFWAudioDriver_IVars& ivars) noexcept {
     const auto& memory = ivars.runtime.directAudioGraph.memory;
     ClearRingFrames(memory, 0, memory.outputFrameCapacity);
@@ -243,9 +285,12 @@ void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars) noexcept {
         return;
     }
 
+    // The finality frontier: the packet on the wire and the one the OHCI may
+    // be fetching stay as they are (kTxFillFinalityGuardPackets).
+    const uint64_t fillStarted = TxHostNow();
+    const uint64_t onTheWire = TransmitPacketOnTheWire(*queue, fillStarted);
     const uint64_t firstWritable =
-        ProjectHardwarePacket(*queue, TxHostNow()) +
-        ASFW::IsochTransport::AudioTimingGeometry::kTxFillFinalityGuardPackets;
+        onTheWire + ASFW::IsochTransport::AudioTimingGeometry::kTxFillFinalityGuardPackets;
 
     const uint64_t frames = end - filled;
     ASFW::Protocols::Audio::AMDTP::HostAudioBufferView hostBuffer{};
@@ -256,7 +301,6 @@ void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars) noexcept {
     hostBuffer.channels = memory.outputChannels;
 
     const uint64_t missedBefore = MissedFinalityFrames(ivars);
-    const uint64_t fillStarted = TxHostNow();
     ivars.runtime.txStreamEngine.FillFromHostOutput(hostBuffer, firstWritable);
     // The secondary stream carries host channels [16, 32) of the same frames
     // (its writer's sourceChannelOffset), so both streams take one decision.
