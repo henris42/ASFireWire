@@ -1113,11 +1113,52 @@ uint32_t MotuProtocol::V2OpticalModeOptions() const noexcept {
     return bit(DeviceOpticalMode::Off) | bit(DeviceOpticalMode::Adat) | bit(DeviceOpticalMode::Spdif);
 }
 
+void MotuProtocol::StoreLastSettings(const DeviceSettingsSnapshot& snapshot) noexcept {
+    while (lastSettingsBusy_.test_and_set(std::memory_order_acquire)) {
+    }
+    lastSettings_ = snapshot;
+    lastSettingsBusy_.clear(std::memory_order_release);
+}
+
+void MotuProtocol::PatchLastSettings(DeviceSetting setting, uint32_t value) noexcept {
+    while (lastSettingsBusy_.test_and_set(std::memory_order_acquire)) {
+    }
+    if (lastSettings_) {
+        auto& last = *lastSettings_;
+        switch (setting) {
+        case DeviceSetting::ClockSource: last.clockSource = value; break;
+        case DeviceSetting::OpticalInputMode: last.opticalInputMode = value; break;
+        case DeviceSetting::OpticalOutputMode: last.opticalOutputMode = value; break;
+        case DeviceSetting::InputLevels:
+            last.inputLevelRaw = (last.inputLevelRaw & ~last.analogInputSwitches) | value;
+            break;
+        case DeviceSetting::InputBoosts:
+            last.inputBoostRaw = (last.inputBoostRaw & ~last.analogInputSwitches) | value;
+            break;
+        }
+    }
+    lastSettingsBusy_.clear(std::memory_order_release);
+}
+
+std::optional<DeviceSettingsSnapshot> MotuProtocol::LastDeviceSettings() const {
+    while (lastSettingsBusy_.test_and_set(std::memory_order_acquire)) {
+    }
+    const auto copy = lastSettings_;
+    lastSettingsBusy_.clear(std::memory_order_release);
+    return copy;
+}
+
 void MotuProtocol::ReadDeviceSettings(std::function<void(IOReturn, DeviceSettingsSnapshot)> callback) {
     if (!IsV2()) {
         if (callback) callback(kIOReturnUnsupported, DeviceSettingsSnapshot{});
         return;
     }
+    // Every complete read refreshes LastDeviceSettings.
+    callback = [this, callback = std::move(callback)](IOReturn status,
+                                                      DeviceSettingsSnapshot snapshot) {
+        if (status == kIOReturnSuccess) StoreLastSettings(snapshot);
+        if (callback) callback(status, snapshot);
+    };
     ReadClockStatus([this, callback = std::move(callback)](IOReturn status, ClockStatus clock) mutable {
         if (status != kIOReturnSuccess) {
             if (callback) callback(status, DeviceSettingsSnapshot{});
@@ -1197,6 +1238,10 @@ void MotuProtocol::ApplyDeviceSetting(DeviceSetting setting, uint32_t value,
         if (callback) callback(kIOReturnUnsupported);
         return;
     }
+    callback = [this, setting, value, callback = std::move(callback)](IOReturn status) {
+        if (status == kIOReturnSuccess) PatchLastSettings(setting, value);
+        if (callback) callback(status);
+    };
     switch (setting) {
     case DeviceSetting::ClockSource:
         if (value > 7 || (V2ClockSourceOptions() & (1u << value)) == 0) {

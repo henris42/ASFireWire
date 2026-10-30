@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -180,6 +181,21 @@ public:
                                     std::function<void(IOReturn)> callback) {
         (void)setting;
         (void)value;
+        if (callback) callback(kIOReturnUnsupported);
+    }
+
+    /// The settings as the device last reported them (ReadDeviceSettings),
+    /// with any change applied since; empty before the first read. The host
+    /// keeps them when the device leaves, to put them back when it returns.
+    [[nodiscard]] virtual std::optional<DeviceSettingsSnapshot> LastDeviceSettings() const {
+        return std::nullopt;
+    }
+
+    /// Set the device's sample rate while nothing streams (the host puts a
+    /// returning device back to the rate it had). Completes once the write
+    /// was acknowledged; the caller re-reads the geometry.
+    virtual void ApplySampleRate(uint32_t rateHz, std::function<void(IOReturn)> callback) {
+        (void)rateHz;
         if (callback) callback(kIOReturnUnsupported);
     }
 };

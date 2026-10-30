@@ -149,6 +149,10 @@ public:
     void ReadDeviceSettings(std::function<void(IOReturn, DeviceSettingsSnapshot)> callback) override;
     void ApplyDeviceSetting(DeviceSetting setting, uint32_t value,
                             std::function<void(IOReturn)> callback) override;
+    [[nodiscard]] std::optional<DeviceSettingsSnapshot> LastDeviceSettings() const override;
+    void ApplySampleRate(uint32_t rateHz, std::function<void(IOReturn)> callback) override {
+        SetSampleRate(rateHz, std::move(callback));
+    }
 
     /// Read-modify-write the sample rate, preserving the clock source and all other bits.
     /// Fails with kIOReturnUnsupported for a rate the device does not implement.
@@ -238,6 +242,12 @@ private:
     static constexpr uint32_t kNoClockSource = 0xFFFFFFFFu;
     std::atomic<uint32_t> cachedClockSource_{kNoClockSource};
     std::atomic<bool> asyncAddressRegistered_{false};
+    // LastDeviceSettings: the last settings read, patched by each change
+    // written since. The flag guards the copy (rare and short: no lock).
+    void StoreLastSettings(const DeviceSettingsSnapshot& snapshot) noexcept;
+    void PatchLastSettings(DeviceSetting setting, uint32_t value) noexcept;
+    mutable std::atomic_flag lastSettingsBusy_ = ATOMIC_FLAG_INIT;
+    std::optional<DeviceSettingsSnapshot> lastSettings_;
     bool initialized_{false};
     std::atomic<bool> shuttingDown_{false};
 
