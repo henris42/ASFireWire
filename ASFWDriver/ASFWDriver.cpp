@@ -1143,8 +1143,10 @@ void ASFWDriver::InterruptOccurred_Impl(ASFWDriver_InterruptOccurred_Args) {
         [&] { return hardware.CaptureInterruptSnapshot(timestampNs); },
         [&] { return interrupts != nullptr ? interrupts->EnabledMask() : 0U; },
         [&](const ASFW::Driver::InterruptSnapshot& snap) {
-            ASFW_LOG_V2(Controller, "InterruptOccurred: captured snapshot intEvent=0x%08x",
-                        snap.intEvent);
+            // One line per interrupt (about 1700/s with two units streaming,
+            // b178): trace only.
+            ASFW_LOG_TRACE(Controller, "InterruptOccurred: captured snapshot intEvent=0x%08x",
+                           snap.intEvent);
             if (irqEntry <= kTracedInterrupts && !irqTraced) {
                 irqTraced = true;
                 hardware.BringUpTrace().Step("interrupt %llu (count %llu): IntEvent 0x%08x",
