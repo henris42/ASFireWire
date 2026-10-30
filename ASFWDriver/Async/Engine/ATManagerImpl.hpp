@@ -209,6 +209,85 @@ kern_return_t ATManager<ContextT, RingT, RoleTag>::SubmitPath2Locked_(const Desc
 }
 
 template<typename ContextT, typename RingT, typename RoleTag>
+uint64_t ATManager<ContextT, RingT, RoleTag>::HeadStalledNs(uint64_t nowNs) noexcept {
+    IOLockWrapper lockWrapper(lock());
+    ScopedLock guard(lockWrapper);
+    const bool observedRecently = stallLastCallNs_ != 0 && nowNs >= stallLastCallNs_ &&
+                                  nowNs - stallLastCallNs_ <= kStallObservationGapNs;
+    stallLastCallNs_ = nowNs;
+    if (ring().IsEmpty()) {
+        stallSinceNs_ = 0;
+        stallRecoveredWithoutProgress_ = false;
+        return 0;
+    }
+    const size_t head = ring().Head();
+    if (stallSinceNs_ == 0 || head != stallHead_ || !observedRecently) {
+        if (head != stallHead_) {
+            stallRecoveredWithoutProgress_ = false;
+        }
+        stallHead_ = head;
+        stallSinceNs_ = nowNs;
+        return 0;
+    }
+    return nowNs - stallSinceNs_;
+}
+
+template<typename ContextT, typename RingT, typename RoleTag>
+bool ATManager<ContextT, RingT, RoleTag>::StopStalledContext(uint64_t stalledNs) noexcept {
+    const uint32_t ctrl = ctx().ReadControl();
+    const uint32_t cmdPtrReg = ctx().ReadCommandPtr();
+    bool firstForThisHead = false;
+    {
+        IOLockWrapper lockWrapper(lock());
+        ScopedLock guard(lockWrapper);
+        firstForThisHead = !stallRecoveredWithoutProgress_;
+        if (firstForThisHead) {
+            ASFW_LOG_WARNING(Async,
+                             "[ATStall] ctx=%{public}s no packet completed for %llu ms with head=%zu tail=%zu "
+                             "prevLast=%u state=%{public}s ctrl=0x%08x cmdPtr=0x%08x: restarting the context",
+                             RoleTag::kContextName, stalledNs / 1'000'000ULL, ring().Head(), ring().Tail(),
+                             ring().PrevLastBlocks(), ToString(this->state_), ctrl, cmdPtrReg);
+        } else {
+            ASFW_LOG_DEBUG(Async,
+                           "[ATStall] ctx=%{public}s still no progress at head=%zu after a restart (%llu ms)",
+                           RoleTag::kContextName, ring().Head(), stalledNs / 1'000'000ULL);
+        }
+        Base::Transition(State::STOPPING, 0, "stall");
+    }
+    if (!wedgeDumped_) {
+        wedgeDumped_ = true;
+        logWedgeSnapshot_(0, cmdPtrReg);
+    }
+    clearRunAndPoll_();
+    if (!ctx().IsActive()) {
+        return true;
+    }
+    if (firstForThisHead) {
+        ASFW_LOG_WARNING(Async, "[ATStall] ctx=%{public}s stayed ACTIVE after RUN was cleared (ctrl=0x%08x)",
+                         RoleTag::kContextName, ctx().ReadControl());
+    }
+    return false;
+}
+
+template<typename ContextT, typename RingT, typename RoleTag>
+void ATManager<ContextT, RingT, RoleTag>::FinishStallRecovery() noexcept {
+    IOLockWrapper lockWrapper(lock());
+    ScopedLock guard(lockWrapper);
+    stallSinceNs_ = 0;
+    // A ring still not empty is the same episode: its next restart logs at
+    // debug, without another snapshot.
+    const bool drained = ring().IsEmpty();
+    stallRecoveredWithoutProgress_ = !drained;
+    if (drained) {
+        wedgeDumped_ = false;
+    }
+    // What the stopped context never sent was released by the drain; the next
+    // submit arms it afresh (PATH 1).
+    ring().SetPrevLastBlocks(0);
+    Base::Transition(State::IDLE, 0, "stall_recovered");
+}
+
+template<typename ContextT, typename RingT, typename RoleTag>
 void ATManager<ContextT, RingT, RoleTag>::RequestStop(uint32_t txid, const char* why) noexcept {
     // Phase 1.2: Use ScopedLock for automatic RAII
     IOLockWrapper lockWrapper(lock());

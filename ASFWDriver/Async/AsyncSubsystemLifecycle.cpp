@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "AsyncSubsystem.hpp"
 #include "../Shared/Memory/DMACacheMode.hpp"
+#include "Engine/ATManager.hpp"
 #include "Engine/ContextManager.hpp"
 
 // Command architecture
@@ -659,6 +660,48 @@ std::optional<TransactionContext> AsyncSubsystem::PrepareTransactionContext() {
 
 uint64_t AsyncSubsystem::GetCurrentTimeUsec() const { return GetCurrentMonotonicTimeUsec(); }
 
+void AsyncSubsystem::RecoverStalledATContexts(uint64_t nowUsec) {
+    // AT packets are acked or fail within the ATRetries limits (25 ms); a
+    // head that stands still this long with packets queued will not move.
+    constexpr uint64_t kATStallRecoverNs = 500'000'000ULL;
+    if (!contextManager_ || !tracking_) {
+        return;
+    }
+    const auto recover = [this, nowUsec](auto* manager, auto* context, DescriptorBuilder* builder) {
+        if (!manager || !context || !builder ||
+            manager->HeadStalledNs(nowUsec * 1000) < kATStallRecoverNs) {
+            return;
+        }
+        size_t found = 0;
+        {
+            // Submitters hold the builder's allocation lock from building a
+            // chain until it is queued: none runs during the restart.
+            DescriptorBuilder::AllocationGuard allocation(*builder);
+            const uint64_t stalledNs = manager->HeadStalledNs(GetCurrentMonotonicTimeUsec() * 1000);
+            if (stalledNs < kATStallRecoverNs) {
+                return;
+            }
+            // Once the context is stopped, the scan releases the packets it
+            // never sent (their transactions time out and are retried) and
+            // returns those it completed.
+            (void)manager->StopStalledContext(stalledNs);
+            while (found < stallCompletions_.size()) {
+                const auto completion = context->ScanCompletion();
+                if (!completion) {
+                    break;
+                }
+                stallCompletions_[found++] = *completion;
+            }
+            manager->FinishStallRecovery();
+        }
+        for (size_t i = 0; i < found; ++i) {
+            tracking_->OnTxCompletion(stallCompletions_[i]);
+        }
+    };
+    recover(contextManager_->GetATRequestManager(), ResolveAtRequestContext(), descriptorBuilder_);
+    recover(contextManager_->GetATResponseManager(), ResolveAtResponseContext(), descriptorBuilderResponse_);
+}
+
 void AsyncSubsystem::OnTimeoutTick() {
     if (!isRunning_) {
         return;
@@ -675,6 +718,7 @@ void AsyncSubsystem::OnTimeoutTick() {
     }
 
     const uint32_t drainedByWatchdog = DrainTxCompletions("watchdog");
+    RecoverStalledATContexts(nowUsec);
     const bool contextsRearmed = EnsureATContextsRunning("timeout-watchdog");
 
     watchdogTickCount_.fetch_add(1, std::memory_order_relaxed);

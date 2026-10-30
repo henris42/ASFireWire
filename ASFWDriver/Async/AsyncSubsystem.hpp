@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <deque>
@@ -279,6 +280,10 @@ class AsyncSubsystem : public IAsyncControllerPort {
 
     [[nodiscard]] bool EnsureATContextsRunning(const char* reason);
 
+    // Restarts an AT context whose ring head has not moved for 500 ms with
+    // packets queued (b184: one idled for good after two concurrent submits).
+    void RecoverStalledATContexts(uint64_t nowUsec);
+
     uint32_t DrainTxCompletions(const char* reason);
 
     ATRequestContext* ResolveAtRequestContext() noexcept;
@@ -291,6 +296,11 @@ class AsyncSubsystem : public IAsyncControllerPort {
     std::atomic<uint64_t> watchdogDrainedCompletions_{0};
     std::atomic<uint64_t> watchdogContextsRearmed_{0};
     std::atomic<uint64_t> watchdogLastTickUsec_{0};
+
+    // Completions found while RecoverStalledATContexts restarts a context,
+    // delivered after it releases the builder (a completion handler may
+    // submit). Watchdog queue only; one per packet of the larger AT ring.
+    std::array<TxCompletion, 128> stallCompletions_{};
 
     struct PendingCommandState {
         ReadParams params{};

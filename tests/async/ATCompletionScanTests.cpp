@@ -41,6 +41,7 @@ using ASFW::Async::DescriptorBuilder;
 using ASFW::Async::OHCIEventCode;
 using ASFW::Async::TxCompletion;
 using ASFW::Async::Engine::ATManager;
+using ASFW::Async::Engine::ATState;
 using ASFW::Driver::HardwareInterface;
 using ASFW::Driver::kContextControlActiveBit;
 using ASFW::Driver::kContextControlRunBit;
@@ -327,7 +328,6 @@ TEST_F(ATCompletionScanTest, StoppedContextSkipsAWholeUnsentPacketAndKeepsScanni
     EXPECT_EQ(ring_.Head(), ring_.Tail()) << "header and payload of the unsent packet are both released";
 }
 
-
 // b184: the context finished a packet and idled; the manager linked the next
 // packet to it and pulsed WAKE, which makes an idle context resume from the
 // branch of the last descriptor it processed. The scan, clearing the finished
@@ -348,6 +348,61 @@ TEST_F(ATCompletionScanTest, CompletedPacketKeepsTheBranchAnIdleContextResumesFr
     EXPECT_EQ(finished.last->branchWord, link) << "the WAKE resume link must survive the completion";
     EXPECT_EQ(finished.last->xferStatus, 0u);
     EXPECT_EQ(ring_.Head(), appended.startIndex);
+}
+
+TEST_F(ATCompletionScanTest, StalledContextIsRestartedAndTheNextSubmitRearmsIt) {
+    const Packet stuck = SubmitBlockWrite(1);
+    SetContext(kContextControlRunBit, stuck);  // running and idle, never sends it
+
+    uint64_t now = 1'000'000'000;
+    EXPECT_EQ(manager_.HeadStalledNs(now), 0u);
+    for (int i = 0; i < 6; ++i) {
+        now += 99'000'000;  // the watchdog keeps looking
+        (void)manager_.HeadStalledNs(now);
+    }
+    const uint64_t stalledNs = manager_.HeadStalledNs(now);
+    EXPECT_EQ(stalledNs, 594'000'000u);
+    EXPECT_TRUE(Drain().empty()) << "a running context's zero-status head is in flight";
+
+    EXPECT_TRUE(manager_.StopStalledContext(stalledNs));
+    hw_.SetTestRegister(ATRequestTag::kControlSetReg, 0);  // the controller cleared RUN
+    EXPECT_TRUE(Drain().empty()) << "the unsent packet is released, not completed";
+    EXPECT_EQ(ring_.Head(), ring_.Tail());
+    manager_.FinishStallRecovery();
+    EXPECT_EQ(manager_.GetState(), ATState::IDLE);
+    EXPECT_EQ(ring_.PrevLastBlocks(), 0u);
+
+    const Packet next = SubmitQuadletWrite(2);
+    EXPECT_EQ(hw_.GetTestRegister(ATRequestTag::kCommandPtrReg), next.startIOVA | next.blocks)
+        << "PATH1 arms the context at the new packet";
+    EXPECT_EQ(manager_.GetState(), ATState::RUNNING);
+    EXPECT_EQ(manager_.HeadStalledNs(now + 1'000'000), 0u) << "the new packet starts a new watch";
+}
+
+TEST_F(ATCompletionScanTest, StallClockRestartsOnProgressAfterAGapAndOnAnEmptyRing) {
+    const Packet a = SubmitBlockWrite(1);
+    SetContext(kContextControlRunBit, a);
+    uint64_t now = 1'000'000'000;
+    EXPECT_EQ(manager_.HeadStalledNs(now), 0u);
+    now += 50'000'000;
+    EXPECT_EQ(manager_.HeadStalledNs(now), 50'000'000u);
+    now += 150'000'000;  // no look for longer than the gap: a bus reset, a suspended driver
+    EXPECT_EQ(manager_.HeadStalledNs(now), 0u);
+    now += 50'000'000;
+    EXPECT_EQ(manager_.HeadStalledNs(now), 50'000'000u);
+
+    const Packet b = SubmitQuadletWrite(2);
+    SetContext(kContextControlRunBit, a);
+    Retire(a);
+    ASSERT_EQ(Drain().size(), 1u);
+    now += 1'000'000;
+    EXPECT_EQ(manager_.HeadStalledNs(now), 0u) << "the head moved";
+
+    Retire(b);
+    SetContext(kContextControlRunBit, b);
+    ASSERT_EQ(Drain().size(), 1u);
+    now += 1'000'000;
+    EXPECT_EQ(manager_.HeadStalledNs(now), 0u) << "an empty ring is never stalled";
 }
 
 // b184: two units started at once and two threads built requests in the same

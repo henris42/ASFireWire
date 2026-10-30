@@ -129,6 +129,30 @@ public:
      */
     void DumpTrace() const noexcept { trace_.dump(); }
 
+    /**
+     * Stall watchdog (b184: the context idled with packets queued, and every
+     * request timed out until a bus reset). How long the ring's head has not
+     * moved while packets are queued; 0 when the ring is empty or the head
+     * moved since the last call. A gap of more than kStallObservationGapNs
+     * between calls (a bus reset, a suspended driver) restarts the clock.
+     * AT packets are acked or fail within the ATRetries limits (25 ms).
+     */
+    [[nodiscard]] uint64_t HeadStalledNs(uint64_t nowNs) noexcept;
+
+    /**
+     * Recovery, called with the descriptor builder's allocation lock held so
+     * no submit runs in between: StopStalledContext logs at warn (the first
+     * time without progress) and stops the context; false if it stayed
+     * ACTIVE. The caller then scans the ring, which releases what the stopped
+     * context never sent (those transactions time out and are retried by
+     * their callers); FinishStallRecovery leaves the context IDLE, so the
+     * next submit arms it with a fresh CommandPtr.
+     */
+    [[nodiscard]] bool StopStalledContext(uint64_t stalledNs) noexcept;
+    void FinishStallRecovery() noexcept;
+
+    static constexpr uint64_t kStallObservationGapNs = 100'000'000ULL;
+
 private:
     // PATH 1: First submission or re-arm after stop
     kern_return_t SubmitPath1_(const DescriptorChain& chain, uint32_t txid, const AsyncCmdOptions& opts);
@@ -171,6 +195,13 @@ private:
 
     // One-shot: full wedge snapshot (trace ring + descriptors) logged once per wedge
     bool wedgeDumped_{false};
+
+    // HeadStalledNs: the head index last seen, since when (0: not waiting),
+    // the last call, and whether a recovery already ran without progress
+    size_t stallHead_{0};
+    uint64_t stallSinceNs_{0};
+    uint64_t stallLastCallNs_{0};
+    bool stallRecoveredWithoutProgress_{false};
     void logWedgeSnapshot_(uint32_t txid, uint32_t cmdPtrReg) noexcept;
 
     // Accessor helpers (avoid repeating this->)
