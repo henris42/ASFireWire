@@ -682,8 +682,9 @@ kern_return_t ASFWDriverUserClient::ExternalMethod(uint64_t selector,
         ASFW_LOG(UserClient, "ExternalMethod selector=%llu -> 0x%08x (%{public}s)", selector,
                  static_cast<uint32_t>(kr), ASFW::Logging::IOReturnName(kr));
     } else {
-        ASFW_LOG_V2(UserClient, "ExternalMethod selector=%llu -> 0x%08x", selector,
-                    static_cast<uint32_t>(kr));
+        // Every call (the app's views poll): trace (b187 report, 2/3 of a debug log).
+        ASFW_LOG_TRACE(UserClient, "ExternalMethod selector=%llu -> 0x%08x", selector,
+                       static_cast<uint32_t>(kr));
     }
     return kr;
 }
