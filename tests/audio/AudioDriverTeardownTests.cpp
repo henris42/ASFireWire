@@ -79,11 +79,11 @@ TEST(AudioDriverTeardownTests, TeardownDetachesAndReleasesTheWholeGraph) {
 
     TearDownAudioGraph(*driver, *ivars);
 
-    // Detached in ADK first: both streams off the device, the device off the
-    // driver, and the device no longer pointing at these ivars.
-    EXPECT_EQ(device->removedStreams.size(), 2U);
-    ASSERT_EQ(driver->removedObjects.size(), 1U);
-    EXPECT_EQ(driver->removedObjects[0], device.get());
+    // The graph stays registered with ADK, whose own Stop takes it off (a
+    // RemoveStream here deadlocked against CoreAudio's disconnect, b178); the
+    // device no longer points at these ivars.
+    EXPECT_TRUE(device->removedStreams.empty());
+    EXPECT_TRUE(driver->removedObjects.empty());
     EXPECT_EQ(device->driverIvars, nullptr);
     EXPECT_EQ(device->driverIvarsWrites, 1U);
 
@@ -178,10 +178,10 @@ TEST(AudioDriverTeardownTests, StopReleasesAKeptWire) {
 
 // Unplugged while CoreAudio plays: IO is still running when Stop() comes.
 // Stop it first, while the device is attached, then release the wire (the
-// stop keeps it) and only then remove the device. CoreAudio's own StopIO
-// arrives after removal and no longer reaches the device: ADK's IO loop then
-// spun at 62% CPU and nothing was freed (Pro 24 DSP, 2026-10-09).
-TEST(AudioDriverTeardownTests, StopWithIoRunningStopsTheDeviceBeforeRemovingIt) {
+// stop keeps it) and only then let go of the device. CoreAudio's own StopIO
+// arrives after the device is gone and no longer reaches it: ADK's IO loop
+// then spun at 62% CPU and nothing was freed (Pro 24 DSP, 2026-10-09).
+TEST(AudioDriverTeardownTests, StopWithIoRunningStopsTheDeviceBeforeReleasingIt) {
     TeardownSequence() = 0;
     OSSharedPtr<ASFWAudioDriver> driver{new ASFWAudioDriver(), OSNoRetain};
     auto ivars = std::make_unique<ASFWAudioDriver_IVars>();
@@ -196,7 +196,7 @@ TEST(AudioDriverTeardownTests, StopWithIoRunningStopsTheDeviceBeforeRemovingIt) 
     ASSERT_EQ(driver->stoppedDevices.size(), 1U);
     EXPECT_EQ(driver->stoppedDevices[0], 7U);
     EXPECT_LT(driver->stopDeviceAt, device->keptWireReleaseAt);
-    EXPECT_LT(device->keptWireReleaseAt, driver->removedAt);
+    EXPECT_TRUE(driver->removedObjects.empty());  // ADK's own Stop does that
     EXPECT_EQ(ivars->audioDevice.get(), nullptr);
 }
 
@@ -215,7 +215,7 @@ TEST(AudioDriverTeardownTests, StopWithIoStoppedDoesNotStopTheDevice) {
 }
 
 // free() runs the same teardown after Stop already did; the second pass finds
-// nothing attached and detaches nothing twice.
+// nothing left to release.
 TEST(AudioDriverTeardownTests, ASecondTeardownDetachesNothing) {
     OSSharedPtr<ASFWAudioDriver> driver{new ASFWAudioDriver(), OSNoRetain};
     auto ivars = std::make_unique<ASFWAudioDriver_IVars>();
@@ -226,8 +226,9 @@ TEST(AudioDriverTeardownTests, ASecondTeardownDetachesNothing) {
     TearDownAudioGraph(*driver, *ivars);
     TearDownAudioGraph(*driver, *ivars);
 
-    EXPECT_EQ(driver->removedObjects.size(), 1U);
-    EXPECT_EQ(device->removedStreams.size(), 2U);
+    EXPECT_TRUE(driver->removedObjects.empty());
+    EXPECT_TRUE(device->removedStreams.empty());
+    EXPECT_EQ(device->driverIvarsWrites, 1U);
     EXPECT_EQ(device->GetRetainCount(), 1);
 }
 

@@ -28,16 +28,17 @@ void TearDownAudioGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars) n
     if (auto* stream = OSDynamicCast(ASFWAvcAudioStream, ivars.inputStream.get())) stream->Bind(nullptr);
     if (auto* stream = OSDynamicCast(ASFWAvcAudioStream, ivars.outputStream.get())) stream->Bind(nullptr);
     auto& state = ivars.graphState;
+    // The streams and the device stay registered with AudioDriverKit: its own
+    // Stop (IOUserAudioDriver::Stop_Impl, which ours calls next) disconnects
+    // CoreAudio's user client, stops and unregisters the device, and calls
+    // _DriverServiceStopped on every object, which drops each object's
+    // reference to this driver (DK21 and DK25 disassembly). Removing them here
+    // deadlocked when CoreAudio's user client went at the same time (b178
+    // hotplug): RemoveStream takes the device's queue and then, to tell
+    // CoreAudio, the user client's lock; the client's teardown holds that lock,
+    // then the driver's work queue, then waits for the device's queue.
+    (void)driver;
     if (ivars.audioDevice) {
-        if (state.outputStreamAdded && ivars.outputStream) {
-            (void)ivars.audioDevice->RemoveStream(ivars.outputStream.get());
-        }
-        if (state.inputStreamAdded && ivars.inputStream) {
-            (void)ivars.audioDevice->RemoveStream(ivars.inputStream.get());
-        }
-        if (state.audioDeviceAdded) {
-            (void)driver.RemoveObject(ivars.audioDevice.get());
-        }
         // ADK may keep the device past this driver; it must not reach these
         // ivars after they are gone.
         ivars.audioDevice->SetDriverIvars(nullptr);
@@ -108,10 +109,10 @@ void StopAudioDriverGraph(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars)
     ivars.ioRestartRequiredAction.reset();
     ivars.ztsAnchorAction.reset();
     ivars.ztsQueue.reset();
-    // Detach and drop the whole ADK graph here, not in free(). The device is
-    // created with this driver (ASFWAudioDevice::init(&driver)), so a device
-    // still held by the ivars can keep the driver from ever being freed, and
-    // with it the dext process alive after an unplug (2026-10-02).
+    // Drop the whole ADK graph here, not in free(). The device is created with
+    // this driver (ASFWAudioDevice::init(&driver) retains it until ADK's Stop),
+    // so a device still held by the ivars can keep the driver from ever being
+    // freed, and with it the dext process alive after an unplug (2026-10-02).
     TearDownAudioGraph(driver, ivars);
 }
 
