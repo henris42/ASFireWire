@@ -88,7 +88,8 @@ struct SpectrogramTests {
         let hz = 32.0 * 48000 / Double(size)
         let row = Int((1 - log(hz / 20) / log(20000.0 / 20)) * 64)
         #expect(pixels[(row * 64) * 4 + 1] < 15) // unfilled past
-        #expect((max(0, row - 1)...min(63, row + 1)).map { pixels[($0 * 64 + 63) * 4] }.max()! > 200) // latest tone on the right
+        let latestColumn: [UInt8] = (max(0, row - 1)...min(63, row + 1)).map { pixels[($0 * 64 + 63) * 4] }
+        #expect((latestColumn.max() ?? 0) > 200) // latest tone on the right
         #expect(pixels[(63 * 64 + 63) * 4 + 1] < 15) // low frequencies remain dark
 
     }

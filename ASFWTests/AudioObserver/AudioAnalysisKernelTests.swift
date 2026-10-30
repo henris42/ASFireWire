@@ -458,8 +458,12 @@ struct AudioAnalysisKernelTests {
         let state = try #require(device.makeBuffer(length: 49 * 4, options: .storageModeShared))
         state.contents().initializeMemory(as: UInt8.self, repeating: 0, count: state.length)
         let output = try #require(device.makeBuffer(length: AudioAnalysisLayout.outputWords * 4, options: .storageModeShared))
-        var samples: [Float] = (0..<960).flatMap { i in
-            [0.99 * Float(sin(Double(i) * 1.31)), 0.7 * Float(cos(Double(i) * 0.91))]
+        var samples: [Float] = []
+        samples.reserveCapacity(1920)
+        for i in 0..<960 {
+            let phase = Double(i)
+            samples.append(0.99 * Float(sin(phase * 1.31)))
+            samples.append(0.7 * Float(cos(phase * 0.91)))
         }
         samples[420] = .nan; samples[731] = .infinity
         let sanitized = samples.map { $0.isFinite ? $0 : 0 }
