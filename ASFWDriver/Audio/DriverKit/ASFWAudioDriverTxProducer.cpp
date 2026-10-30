@@ -250,6 +250,17 @@ void LogGlitchEvents(ASFWAudioDriver_IVars& ivars, uint64_t now) noexcept {
                              agoMs, event.frames, event.thread);
             continue;
         }
+        if (event.kind == GlitchEventKind::ReadAhead) {
+            ASFW_LOG_WARNING(DirectAudio,
+                             "[GlitchEvent] 0x%016llx @%llu (%llu.%03llu s, %llu ms ago): read ahead of the "
+                             "arrivals: %u frames, the first %d past the write position; lead %d us, skew "
+                             "%d us, prev %d fr/%d us, zts %u ms, thr %04x",
+                             ivars.device.guid, event.sampleFrame, positionMs / 1000, positionMs % 1000,
+                             agoMs, event.frames, event.gapBefore - static_cast<int32_t>(event.frames),
+                             event.leadUs, event.skewUs, event.prevFrames, event.prevUs,
+                             event.ztsAgeUs / 1000, event.thread);
+            continue;
+        }
         ASFW_LOG_WARNING(DirectAudio,
                          "[GlitchEvent] 0x%016llx @%llu (%llu.%03llu s, %llu ms ago): short read %u, %u "
                          "missing (%d before pull, %{public}s, %u pk); lead %d us, skew %d us, prev %d "
@@ -284,7 +295,9 @@ void ReportTransportGlitches(ASFWAudioDriver_IVars& ivars,
     const uint64_t starvedStartup =
         control.captureRingStartupStarvations.load(std::memory_order_relaxed);
     const uint64_t starved = starvedAll >= starvedStartup ? starvedAll - starvedStartup : 0;
-    if (missed <= runtime.glitchReportedMissed && starved <= runtime.glitchReportedStarved) {
+    const uint64_t ahead = control.captureRingAheadReads.load(std::memory_order_relaxed);
+    if (missed <= runtime.glitchReportedMissed && starved <= runtime.glitchReportedStarved &&
+        ahead <= runtime.glitchReportedAhead) {
         return;
     }
     const uint64_t last = runtime.glitchLastReportTicks;
@@ -300,10 +313,11 @@ void ReportTransportGlitches(ASFWAudioDriver_IVars& ivars,
     ASFW_LOG_WARNING(
         DirectAudio,
         "[Glitch] unit 0x%016llx: %llu output frames missed their packet, %llu capture reads "
-        "came up short; fill max %llu us, producer wake max %llu us, BeginRead pulls %llu "
-        "(%llu gave up, %llu cut)",
+        "came up short, %llu read ahead of the arrivals; fill max %llu us, producer wake max %llu us, "
+        "BeginRead pulls %llu (%llu gave up, %llu cut)",
         ivars.device.guid, missed - std::min(missed, runtime.glitchReportedMissed),
         starved - std::min(starved, runtime.glitchReportedStarved),
+        ahead - std::min(ahead, runtime.glitchReportedAhead),
         ASFW::Timing::hostTicksToNanos(
             runtime.glitchFillMaxTicks.exchange(0, std::memory_order_relaxed)) / 1000,
         ASFW::Timing::hostTicksToNanos(
@@ -313,6 +327,7 @@ void ReportTransportGlitches(ASFWAudioDriver_IVars& ivars,
         pullCut - std::min(pullCut, runtime.glitchReportedPullCut));
     runtime.glitchReportedMissed = missed;
     runtime.glitchReportedStarved = starved;
+    runtime.glitchReportedAhead = ahead;
     runtime.glitchReportedPulls = pulls;
     runtime.glitchReportedPullBusy = pullBusy;
     runtime.glitchReportedPullCut = pullCut;
@@ -1211,6 +1226,7 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
             std::memory_order_relaxed);
     ivars.runtime.glitchReportedMissed = 0;
     ivars.runtime.glitchReportedStarved = 0;
+    ivars.runtime.glitchReportedAhead = 0;
     ivars.runtime.glitchReportedPulls = control->rxPull.pulls.load(std::memory_order_relaxed);
     ivars.runtime.glitchReportedPullBusy = control->rxPull.busy.load(std::memory_order_relaxed);
     ivars.runtime.glitchLastReportTicks = 0;
@@ -1875,11 +1891,13 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                     const int64_t jumpMax =
                         runtime.ztsJumpMaxNanos.exchange(INT64_MIN, std::memory_order_relaxed);
                     // inLeadUs least/most and inLeadNeg (reads whose last frame
-                    // had not arrived by our zero timestamps); ztsJumpUs = the
-                    // steps between zero timestamps against the nominal rate.
+                    // had not arrived by our zero timestamps); ahead = reads
+                    // ahead of the arrivals (kept out of the lead figures);
+                    // ztsJumpUs = the steps between zero timestamps against
+                    // the nominal rate.
                     ASFW_LOG_DEBUG(DirectAudio,
                                    "[HalIoTime] beginReadMaxUs=%llu writeEndMaxUs=%llu inLeadUs=%lld/%lld "
-                                   "inLeadNeg=%llu halSkewUs=%lld/%lld ztsJumpUs=%lld/%lld",
+                                   "inLeadNeg=%llu ahead=%llu halSkewUs=%lld/%lld ztsJumpUs=%lld/%lld",
                                    ASFW::Timing::hostTicksToNanos(runtime.ioBeginReadMaxTicks.exchange(
                                        0, std::memory_order_relaxed)) / 1000,
                                    ASFW::Timing::hostTicksToNanos(runtime.ioWriteEndMaxTicks.exchange(
@@ -1887,6 +1905,7 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                                    leadNanos == INT64_MAX ? 0LL : static_cast<long long>(leadNanos / 1000),
                                    leadMaxNanos == INT64_MIN ? 0LL : static_cast<long long>(leadMaxNanos / 1000),
                                    runtime.ioInputLeadNegative.exchange(0, std::memory_order_relaxed),
+                                   runtime.ioAheadReads.exchange(0, std::memory_order_relaxed),
                                    skewMin == INT64_MAX ? 0LL : static_cast<long long>(skewMin / 1000),
                                    skewMax == INT64_MIN ? 0LL : static_cast<long long>(skewMax / 1000),
                                    jumpMin == INT64_MAX ? 0LL : static_cast<long long>(jumpMin / 1000),

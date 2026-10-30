@@ -282,6 +282,9 @@ struct AudioDriverRuntimeState {
     std::atomic<uint64_t> ioInputLeadNegative{0};
     std::atomic<int64_t> ioHalSkewMinNanos{INT64_MAX};
     std::atomic<int64_t> ioHalSkewMaxNanos{INT64_MIN};
+    // Reads ahead of the arrivals (GlitchEventKind::ReadAhead) this heartbeat;
+    // they are kept out of the lead figures above.
+    std::atomic<uint64_t> ioAheadReads{0};
     // Lost audio with its sample position (GlitchEventLog.hpp), printed by
     // the [Glitch] report; and the previous BeginRead on this device (any IO
     // thread), for an event's "prev" deltas.
@@ -312,6 +315,7 @@ struct AudioDriverRuntimeState {
     // only; reset when the TX producer is armed.
     uint64_t glitchReportedMissed{0};
     uint64_t glitchReportedStarved{0};
+    uint64_t glitchReportedAhead{0};
     uint64_t glitchReportedPulls{0};
     uint64_t glitchReportedPullBusy{0};
     uint64_t glitchReportedPullCut{0};

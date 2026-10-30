@@ -25,6 +25,13 @@ namespace ASFW::Audio::Runtime {
 enum class GlitchEventKind : uint8_t {
     ShortCaptureRead = 1,    // a BeginRead found frames missing
     MissedOutputFrames = 2,  // output frames reached their packet too late
+    // A BeginRead whose first frame lies at or past the capture ring's write
+    // position after start-up: none of it has arrived, so no pull can serve
+    // it. b190 saw these only with two clients on a unit, at the output
+    // write's position (2 x buffer + the safety offsets past the input read),
+    // microseconds after a complete input read. Kept apart from short reads:
+    // they are not S_in headroom, and the frames read are not input.
+    ReadAhead = 3,
 };
 
 // What a BeginRead pull found (RxPullHook::Pull).
@@ -53,11 +60,13 @@ struct GlitchEvent {
     uint32_t ztsAgeUs{0};     // since the latest zero timestamp went to CoreAudio
 };
 
-// A tag for the calling thread: its stack region (the frame address over
-// 1 MiB). The IO threads of two client connections have stacks far apart, so
-// their tags differ; enough to tell which one recorded an event.
+// A tag for the calling thread: the page of its stack frame. Taken once per
+// IO operation at the top of the IO handler, where every operation on a thread
+// has the same frame address, so a thread's tag is stable across BeginRead and
+// WriteEnd. Thread stacks are 512 KiB apart, so two IO threads' pages differ
+// (b190 used the 1 MiB region, which two adjacent stacks shared).
 [[nodiscard]] inline uint16_t CurrentThreadTag() noexcept {
-    return static_cast<uint16_t>(reinterpret_cast<uintptr_t>(__builtin_frame_address(0)) >> 20);
+    return static_cast<uint16_t>(reinterpret_cast<uintptr_t>(__builtin_frame_address(0)) >> 12);
 }
 
 class GlitchEventLog {

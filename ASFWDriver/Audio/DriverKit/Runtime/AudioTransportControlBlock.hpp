@@ -667,6 +667,9 @@ struct AudioTransportControlBlock final {
     // Host time from which a short read is no longer start-up; 0 until the
     // first complete read. IO thread only.
     std::atomic<uint64_t> captureRingSettledHostTicks{0};
+    // Reads after start-up whose first frame lay at or past the write
+    // position (GlitchEventKind::ReadAhead): no pull, not a starvation.
+    std::atomic<uint64_t> captureRingAheadReads{0};
     RxCaptureBufferTelemetry rxCaptureBufferTelemetry{};
     // The BeginRead pull (RxPullHook.hpp). Not reset per start: the receive
     // consumer publishes and withdraws it around its context's run.
@@ -785,6 +788,7 @@ struct AudioTransportControlBlock final {
         captureRingStarvations.store(0, std::memory_order_relaxed);
         captureRingStartupStarvations.store(0, std::memory_order_relaxed);
         captureRingSettledHostTicks.store(0, std::memory_order_relaxed);
+        captureRingAheadReads.store(0, std::memory_order_relaxed);
         rxCaptureBufferTelemetry.Reset();
 
         const uint64_t armedGeneration =

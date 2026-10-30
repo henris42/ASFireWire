@@ -115,25 +115,27 @@ struct BeginReadContext {
     uint64_t previousFrame{0};
     uint64_t previousTicks{0};
     uint64_t writeBefore{0};
+    uint16_t thread{0};
 };
 
-// A read that came up short after start-up goes into the [Glitch] event log
-// with everything that tells an early read from a late packet.
-void RecordShortRead(ASFWAudioDriver_IVars& ivars, const BeginReadContext& read,
-                     const ASFW::Audio::Runtime::RxPullResult& pull, uint64_t writeAfter) noexcept {
+// A read that came up short after start-up, or lay ahead of the arrivals,
+// goes into the [Glitch] event log with everything that tells an early read
+// from a late packet.
+void RecordReadEvent(ASFWAudioDriver_IVars& ivars, const BeginReadContext& read,
+                     const ASFW::Audio::Runtime::RxPullResult& pull, uint64_t writeAfter,
+                     ASFW::Audio::Runtime::GlitchEventKind kind) noexcept {
     using ASFW::Audio::Runtime::GlitchEvent;
-    using ASFW::Audio::Runtime::GlitchEventKind;
     const uint64_t readEnd = read.sampleTime + read.frames;
     GlitchEvent event{};
     event.sampleFrame = read.sampleTime;
     event.hostTicks = read.entryTicks;
-    event.kind = GlitchEventKind::ShortCaptureRead;
+    event.kind = kind;
     event.pull = pull.outcome;
     event.frames = static_cast<uint16_t>(std::min<uint32_t>(read.frames, UINT16_MAX));
     event.missing = static_cast<uint16_t>(
         std::min<uint64_t>(writeAfter < readEnd ? readEnd - writeAfter : 0, UINT16_MAX));
     event.drained = static_cast<uint16_t>(std::min<uint32_t>(pull.drained, UINT16_MAX));
-    event.thread = ASFW::Audio::Runtime::CurrentThreadTag();
+    event.thread = read.thread;
     event.gapBefore = ClampToInt32(static_cast<int64_t>(readEnd) - static_cast<int64_t>(read.writeBefore));
     const InputTiming timing =
         MeasureInputTiming(ivars, read.sampleTime, read.frames, read.halHostTime, read.entryTicks);
@@ -183,6 +185,19 @@ void ZeroInputFrameIfMissing(ASFW::Audio::Runtime::AudioGraphBinding& graph,
     std::memset(frame,
                 0,
                 static_cast<size_t>(graph.memory.inputChannels) * sizeof(int32_t));
+}
+
+// A read ahead of the arrivals (GlitchEventKind::ReadAhead) gets silence for
+// every frame: none has arrived, and the ring there still holds the frames of
+// a lap ago. The receive side overwrites the slots when the frames do arrive.
+void ZeroInputFrames(ASFW::Audio::Runtime::AudioGraphBinding& graph, uint64_t sampleTime,
+                     uint32_t frameCount) noexcept {
+    if (!graph.HasInput()) {
+        return;
+    }
+    for (uint32_t i = 0; i < frameCount; ++i) {
+        ZeroInputFrameIfMissing(graph, sampleTime + i);
+    }
 }
 
 // What a BeginRead found in the capture ring: the write position it read
@@ -319,6 +334,9 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
 
             const bool timeIo = ASFW_LOG_ENABLED(DirectAudio, Debug);
             const uint64_t ioStartTicks = timeIo ? mach_absolute_time() : 0;
+            // The IO thread's tag, taken here where every operation on a
+            // thread has the same frame (GlitchEventLog.hpp).
+            const uint16_t threadTag = ASFW::Audio::Runtime::CurrentThreadTag();
             if (operation == IOUserAudioIOOperationBeginRead) {
                 // ADK permits operation spans that differ from the nominal IO
                 // size. The stream ring capacity is the actual hard bound.
@@ -326,8 +344,6 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                     driverIvars->runtime.directAudioGraph.memory.inputFrameCapacity) {
                     return returnError(kIOReturnBadArgument);
                 }
-                control->client.PublishBeginRead(sampleTime, hostTime, ioBufferFrameSize);
-                control->rxCaptureBufferTelemetry.RecordReaderBeginRead();
                 auto& runtime = driverIvars->runtime;
                 const uint64_t entryTicks = timeIo ? ioStartTicks : mach_absolute_time();
                 const BeginReadContext readContext{
@@ -340,7 +356,31 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                     .previousTicks =
                         runtime.lastBeginReadTicks.exchange(entryTicks, std::memory_order_relaxed),
                     .writeBefore = control->captureRingWriteFrame.load(std::memory_order_acquire),
+                    .thread = threadTag,
                 };
+                // A read whose first frame lies at or past the write position,
+                // after start-up: nothing of it has arrived, so a pull cannot
+                // serve it and it is not S_in headroom. It reads silence and
+                // leaves the read position and the telemetry alone. b190 saw
+                // these only with two clients on a unit, at the output write's
+                // position; the event shows where the read sat.
+                const uint64_t settledFrom =
+                    control->captureRingSettledHostTicks.load(std::memory_order_relaxed);
+                if (settledFrom != 0 && entryTicks >= settledFrom &&
+                    sampleTime >= readContext.writeBefore) {
+                    ZeroInputFrames(runtime.directAudioGraph, sampleTime, ioBufferFrameSize);
+                    control->captureRingAheadReads.fetch_add(1, std::memory_order_relaxed);
+                    RecordReadEvent(*driverIvars, readContext, {}, readContext.writeBefore,
+                                    ASFW::Audio::Runtime::GlitchEventKind::ReadAhead);
+                    control->counters.CountBeginRead();
+                    if (timeIo) {
+                        runtime.ioAheadReads.fetch_add(1, std::memory_order_relaxed);
+                        RecordMax(runtime.ioBeginReadMaxTicks, mach_absolute_time() - ioStartTicks);
+                    }
+                    return kIOReturnSuccess;
+                }
+                control->client.PublishBeginRead(sampleTime, hostTime, ioBufferFrameSize);
+                control->rxCaptureBufferTelemetry.RecordReaderBeginRead();
                 // The frames this read needs are not all in the capture ring:
                 // drain the receive ring here rather than wait for the
                 // interrupt, which a real-time load can hold off for
@@ -365,7 +405,8 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                 const CaptureRead read = PrepareCaptureRingForBeginRead(
                     runtime.directAudioGraph, *control, sampleTime, ioBufferFrameSize);
                 if (read.shortAfterStartup) {
-                    RecordShortRead(*driverIvars, readContext, pull, read.write);
+                    RecordReadEvent(*driverIvars, readContext, pull, read.write,
+                                    ASFW::Audio::Runtime::GlitchEventKind::ShortCaptureRead);
                 }
                 control->counters.CountBeginRead();
                 if (timeIo) {
