@@ -41,6 +41,13 @@ public:
     kern_return_t StartRuntime(IOService* provider) LOCALONLY;
     void RequestRuntimeQuiesce(uint32_t reason) LOCALONLY;
 
+    // asfw-config-agent --bring-up / --bring-down (user client selectors 74
+    // and 75): the runtime bring-up and its quiesce, run on the default queue
+    // like Start and SetPowerState. For a controller claimed with
+    // asfw-start = manual, or to run the bring-up again by hand.
+    kern_return_t RequestBringUp() LOCALONLY;
+    kern_return_t RequestBringDown() LOCALONLY;
+
     // Post-wake health check. The SetPowerState(On) callback can arrive during
     // dark wake, before the PCIe/Thunderbolt path is fully restored: the rebuild
     // then completes cleanly over MMIO but the forced bus reset never delivers
@@ -156,4 +163,12 @@ struct ASFWDriver_IVars {
     IOTimerDispatchSource* startWatchdogTimer; // retained
     OSAction* startWatchdogAction;          // retained
     bool startInProgress;                   // accessed with __atomic builtins
+
+    // Boot options from the controller's properties (OpenCore DeviceProperties,
+    // b193 B760 report): asfw-boot-trace = the pause after each start step, in
+    // ms, with every step published in the I/O Registry for the boot-trace
+    // daemon (0: off); asfw-start = manual: Start() claims the controller and
+    // returns, and the bring-up waits for asfw-config-agent --bring-up.
+    uint32_t bootTraceStepMs;
+    bool manualStart;
 };

@@ -21,6 +21,15 @@
 #                        by per-subsystem levels, e.g. "debug" or "info irm=debug isoch=trace".
 #                        The app and the login agent can change the level later without a reboot.
 #     --no-log-level     remove asfw-log-level again
+#     --boot-trace [MS]  set asfw-boot-trace: the driver publishes every start step (and, in this
+#                        mode, every register write, kernel call and poll) in the I/O Registry and
+#                        pauses MS ms (default 100) after each, and the LaunchDaemon
+#                        net.asfw.boot-trace writes them to /var/log/asfw/boot-trace-<boot>.log as they
+#                        happen. After a hang, the file's last line is the last step that completed.
+#     --no-boot-trace    remove asfw-boot-trace again
+#     --manual-start     set asfw-start = manual: the driver claims the controller at boot and leaves
+#                        it alone until `asfw-config-agent --bring-up`
+#     --auto-start       remove asfw-start again
 #     --dry-run          show what would change, write nothing
 #
 # Takes effect at the next boot. To undo by hand, copy the backup over config.plist,
@@ -37,7 +46,7 @@ info() { printf '        %s\n' "$*"; }
 # missing key's error on stdout, so its exit status decides, not its output.
 plget() { local v; v=$(plutil -extract "$1" raw -o - "$2" 2>/dev/null) || return 0; printf '%s' "$v"; }
 
-MODE=arm; ESP=""; VTD=0; DRY=0; LOGLEVEL=""; NO_LOGLEVEL=0
+MODE=arm; ESP=""; VTD=0; DRY=0; LOGLEVEL=""; NO_LOGLEVEL=0; BOOTTRACE=""; NO_BOOTTRACE=0; START=""; NO_START=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --arm) MODE=arm ;;
@@ -46,9 +55,13 @@ while [ $# -gt 0 ]; do
         --esp) ESP="${2:-}"; shift ;;
         --log-level) LOGLEVEL="${2:-}"; shift ;;
         --no-log-level) NO_LOGLEVEL=1 ;;
+        --boot-trace) if [[ "${2:-}" =~ ^[0-9]+$ ]]; then BOOTTRACE="$2"; shift; else BOOTTRACE=100; fi ;;
+        --no-boot-trace) NO_BOOTTRACE=1 ;;
+        --manual-start) START=manual ;;
+        --auto-start) NO_START=1 ;;
         --vtd) VTD=1 ;;
         --dry-run) DRY=1 ;;
-        -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,38p' "$0"; exit 0 ;;
         *) echo "unknown option: $1 (see --help)"; exit 2 ;;
     esac
     shift
@@ -130,6 +143,10 @@ while IFS=$'\t' read -r p n ids; do
     [ "$(armed_count "$p")" -gt 0 ] && ok "armed:   $p" || info "unarmed: $p"
     level=$(plget "DeviceProperties.Add.$p.asfw-log-level" "$C")
     [ -n "$level" ] && info "         asfw-log-level = $level"
+    trace=$(plget "DeviceProperties.Add.$p.asfw-boot-trace" "$C")
+    [ -n "$trace" ] && info "         asfw-boot-trace = $trace ms per step (lockstep trace to /var/log/asfw)"
+    start=$(plget "DeviceProperties.Add.$p.asfw-start" "$C")
+    [ -n "$start" ] && info "         asfw-start = $start"
 done <<< "$PATHS"
 bootargs=$(plget "NVRAM.Add.$OCGUID.boot-args" "$C")
 info "boot-args: ${bootargs:-<none>}"
@@ -166,6 +183,24 @@ while IFS=$'\t' read -r p n ids; do
     fi
     if { [ "$MODE" = disarm ] || [ "$NO_LOGLEVEL" = 1 ]; } && [ -n "$level" ]; then
         plutil -remove "DeviceProperties.Add.$p.asfw-log-level" "$TMP" && { ok "remove asfw-log-level  $p"; changed=1; }
+    fi
+    trace=$(plget "DeviceProperties.Add.$p.asfw-boot-trace" "$TMP")
+    if [ "$MODE" = arm ] && [ -n "$BOOTTRACE" ] && [ "$BOOTTRACE" != "$trace" ]; then
+        [ -n "$trace" ] && plutil -remove "DeviceProperties.Add.$p.asfw-boot-trace" "$TMP"
+        plutil -insert "DeviceProperties.Add.$p.asfw-boot-trace" -integer "$BOOTTRACE" "$TMP" \
+            && { ok "boot trace  $p  $BOOTTRACE ms per step"; changed=1; }
+    fi
+    if { [ "$MODE" = disarm ] || [ "$NO_BOOTTRACE" = 1 ]; } && [ -n "$trace" ]; then
+        plutil -remove "DeviceProperties.Add.$p.asfw-boot-trace" "$TMP" && { ok "remove asfw-boot-trace  $p"; changed=1; }
+    fi
+    start=$(plget "DeviceProperties.Add.$p.asfw-start" "$TMP")
+    if [ "$MODE" = arm ] && [ -n "$START" ] && [ "$START" != "$start" ]; then
+        [ -n "$start" ] && plutil -remove "DeviceProperties.Add.$p.asfw-start" "$TMP"
+        plutil -insert "DeviceProperties.Add.$p.asfw-start" -string "$START" "$TMP" \
+            && { ok "start  $p  $START"; changed=1; }
+    fi
+    if { [ "$MODE" = disarm ] || [ "$NO_START" = 1 ]; } && [ -n "$start" ]; then
+        plutil -remove "DeviceProperties.Add.$p.asfw-start" "$TMP" && { ok "remove asfw-start  $p"; changed=1; }
     fi
     # The DMA exclusion property is gone from the driver (b178); old configs lose it on disarm.
     if [ "$MODE" = disarm ] && plutil -extract "DeviceProperties.Add.$p.asfw-dma-exclude" raw -o - "$TMP" >/dev/null 2>&1; then

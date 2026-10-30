@@ -83,6 +83,10 @@ enum {
     // The log level (Logging/LogLevels.hpp): set from a spec, and read back.
     kMethodSetLogLevel = 72,
     kMethodGetLogLevel = 73,
+    // asfw-config-agent --bring-up / --bring-down: the runtime bring-up and its
+    // quiesce on request (a controller claimed with asfw-start = manual).
+    kMethodBringUp = 74,
+    kMethodBringDown = 75,
     // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
     kMethodTestIRMAllocation = 26,
     kMethodTestIRMRelease = 27,
@@ -298,6 +302,10 @@ MethodDispatchResult DispatchDriverControlMethods(ASFWDriver& driver,
     case kMethodSetLogLevel:
     case kMethodGetLogLevel:
         return HandleLogLevel(arguments, selector == kMethodSetLogLevel);
+    case kMethodBringUp:
+        return MethodDispatchResult{driver.RequestBringUp()};
+    case kMethodBringDown:
+        return MethodDispatchResult{driver.RequestBringDown()};
     default:
         return std::nullopt;
     }

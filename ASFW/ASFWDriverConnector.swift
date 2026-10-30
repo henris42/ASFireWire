@@ -64,6 +64,9 @@ final class ASFWDriverConnector: ObservableObject {
         // The driver log level (DriverConnector+LogLevel.swift): set, and read back.
         case setLogLevel = 72
         case getLogLevel = 73
+        // The runtime bring-up and its quiesce on request (DriverConnector+BringUp.swift).
+        case bringUp = 74
+        case bringDown = 75
         // Read-only audio telemetry diagnostics.
         case getAudioTelemetry = 1013
         // Driver-owned LogRing category names and named filter presets.

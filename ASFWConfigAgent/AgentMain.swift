@@ -24,6 +24,15 @@ enum AgentMain {
         if let flag = arguments.firstIndex(of: "--log-level") {
             exit(LogLevelCommand.run(arguments.indices.contains(flag + 1) ? arguments[flag + 1] : nil))
         }
+        if arguments.contains("--bring-up") {
+            exit(BringUpCommand.run(up: true))
+        }
+        if arguments.contains("--bring-down") {
+            exit(BringUpCommand.run(up: false))
+        }
+        if arguments.contains("--boot-trace-daemon") {
+            exit(BootTraceDaemon.run())
+        }
         if !arguments.isEmpty {
             print("""
                 usage: asfw-config-agent                     re-apply the app's remembered device settings
@@ -32,6 +41,12 @@ enum AgentMain {
                        asfw-config-agent --log-level SPEC    set and save it: off, error, warn, info, debug
                                                              or trace, optionally followed by category=level
                                                              ("info irm=debug"); default forgets it
+                       asfw-config-agent --bring-up          run the controller bring-up now (a controller
+                                                             armed with asfw-start = manual waits for this)
+                       asfw-config-agent --bring-down        quiesce the runtime again, as for sleep
+                       asfw-config-agent --boot-trace-daemon write the lockstep boot trace to /var/log/asfw
+                                                             (the LaunchDaemon net.asfw.boot-trace; exits
+                                                             unless a controller carries asfw-boot-trace)
                 """)
             exit(arguments.contains("--help") ? 0 : 64)
         }

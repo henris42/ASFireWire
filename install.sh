@@ -112,6 +112,13 @@ CONFIG_AGENT_PLIST="/Library/LaunchAgents/${CONFIG_AGENT_LABEL}.plist"
 
 CONFIG_AGENT_BIN="/usr/local/libexec/asfw-config-agent"
 
+# Boot trace daemon: the same binary as a LaunchDaemon at boot. It writes the
+# driver's lockstep bring-up trace to /var/log/asfw while a controller carries
+# the asfw-boot-trace property (asfw-opencore-arm.sh --boot-trace); without
+# the property it exits at once.
+BOOT_TRACE_LABEL="net.asfw.boot-trace"
+BOOT_TRACE_PLIST="/Library/LaunchDaemons/${BOOT_TRACE_LABEL}.plist"
+
 install_config_agent() {
   local tmp
   if [[ ! -f "$SCRIPT_DIR/asfw-config-agent" ]]; then
@@ -162,9 +169,46 @@ PLIST
   else
     info "Device-settings agent will start at the next login."
   fi
+  install_boot_trace_daemon
+}
+
+install_boot_trace_daemon() {
+  local tmp
+  tmp="$(mktemp)"
+  cat > "$tmp" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>${BOOT_TRACE_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${CONFIG_AGENT_BIN}</string>
+    <string>--boot-trace-daemon</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><false/>
+  <key>StandardOutPath</key><string>/var/log/asfw/boot-trace-daemon.log</string>
+  <key>StandardErrorPath</key><string>/var/log/asfw/boot-trace-daemon.log</string>
+</dict>
+</plist>
+PLIST
+  sudo install -d -o root -g wheel -m 0755 /var/log/asfw
+  if ! cmp -s "$tmp" "$BOOT_TRACE_PLIST" 2>/dev/null; then
+    sudo install -o root -g wheel -m 0644 "$tmp" "$BOOT_TRACE_PLIST"
+    info "Installed ${BOOT_TRACE_PLIST} (runs at boot; active only with asfw-boot-trace on the controller)."
+  fi
+  rm -f "$tmp"
+  sudo launchctl bootout "system/${BOOT_TRACE_LABEL}" 2>/dev/null || true
+  sudo launchctl bootstrap system "$BOOT_TRACE_PLIST" 2>/dev/null || true
 }
 
 remove_config_agent() {
+  sudo launchctl bootout "system/${BOOT_TRACE_LABEL}" 2>/dev/null || true
+  if [[ -e "$BOOT_TRACE_PLIST" ]]; then
+    sudo rm -f "$BOOT_TRACE_PLIST"
+    info "Removed ${BOOT_TRACE_PLIST}."
+  fi
   launchctl bootout "gui/$(id -u)/${CONFIG_AGENT_LABEL}" 2>/dev/null || true
   if [[ -e "$CONFIG_AGENT_PLIST" ]]; then
     sudo rm -f "$CONFIG_AGENT_PLIST"

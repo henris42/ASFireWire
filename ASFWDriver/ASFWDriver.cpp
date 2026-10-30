@@ -18,6 +18,7 @@
 #include <DriverKit/IOMemoryDescriptor.h>
 #include <DriverKit/IOServiceNotificationDispatchSource.h>
 #include <DriverKit/OSAction.h>
+#include <DriverKit/OSArray.h>
 #include <DriverKit/OSBoolean.h>
 #include <DriverKit/OSDictionary.h>
 #include <DriverKit/OSNumber.h>
@@ -27,6 +28,7 @@
 #include <PCIDriverKit/IOPCIFamilyDefinitions.h>
 
 #include <atomic>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <new>
@@ -340,6 +342,91 @@ bool ProviderIsArmed(IOService* provider) {
 } // namespace
 #endif
 
+namespace {
+// The boot options on the controller (OpenCore DeviceProperties; a string
+// arrives as data with a trailing NUL, a number as data or a number).
+struct BootOptions {
+    uint32_t traceStepMs{0};
+    bool manualStart{false};
+};
+
+constexpr uint32_t kDefaultBootTraceStepMs = 100;
+
+bool PropertyText(OSObject* value, char* out, size_t capacity) {
+    const char* text = nullptr;
+    size_t length = 0;
+    if (auto* data = OSDynamicCast(OSData, value); data != nullptr) {
+        text = static_cast<const char*>(data->getBytesNoCopy());
+        length = data->getLength();
+    } else if (auto* string = OSDynamicCast(OSString, value); string != nullptr) {
+        text = string->getCStringNoCopy();
+        length = string->getLength();
+    }
+    if (text == nullptr || length >= capacity) {
+        return false;
+    }
+    memcpy(out, text, length);
+    out[length] = 0;
+    return true;
+}
+
+BootOptions ReadBootOptions(IOService* provider) {
+    BootOptions options{};
+    OSDictionary* properties = nullptr;
+    if (provider == nullptr || provider->CopyProperties(&properties) != kIOReturnSuccess ||
+        properties == nullptr) {
+        return options;
+    }
+    if (OSObject* trace = properties->getObject("asfw-boot-trace"); trace != nullptr) {
+        options.traceStepMs = kDefaultBootTraceStepMs;
+        char text[16];
+        if (auto* number = OSDynamicCast(OSNumber, trace); number != nullptr) {
+            options.traceStepMs = static_cast<uint32_t>(number->unsigned32BitValue());
+        } else if (PropertyText(trace, text, sizeof(text)) && text[0] >= '0' && text[0] <= '9') {
+            options.traceStepMs = static_cast<uint32_t>(strtoul(text, nullptr, 10));
+        } else if (auto* data = OSDynamicCast(OSData, trace);
+                   data != nullptr && data->getLength() <= 8) {
+            uint64_t value = 0;
+            memcpy(&value, data->getBytesNoCopy(), data->getLength());
+            options.traceStepMs = static_cast<uint32_t>(value);
+        }
+        if (options.traceStepMs == 0) {
+            options.traceStepMs = kDefaultBootTraceStepMs;
+        }
+    }
+    char mode[16];
+    if (OSObject* start = properties->getObject("asfw-start");
+        start != nullptr && PropertyText(start, mode, sizeof(mode))) {
+        options.manualStart = strcmp(mode, "manual") == 0;
+    }
+    properties->release();
+    return options;
+}
+
+// BringUpTrace's publisher in lockstep: the kept lines go into this service's
+// registry entry as asfw-boot-trace-lines (every kept line, oldest first) and
+// asfw-boot-trace-count (how many there have been in all), where the boot
+// trace daemon reads them (asfw-config-agent --boot-trace-daemon).
+void PublishBootTraceLines(void* context, const char* const* lines, uint32_t count,
+                           uint64_t total) {
+    auto* driver = static_cast<ASFWDriver*>(context);
+    auto array = OSSharedPtr(OSArray::withCapacity(count), OSNoRetain);
+    auto properties = OSSharedPtr(OSDictionary::withCapacity(2), OSNoRetain);
+    auto number = OSSharedPtr(OSNumber::withNumber(total, 64), OSNoRetain);
+    if (!driver || !array || !properties || !number) {
+        return;
+    }
+    for (uint32_t index = 0; index < count; ++index) {
+        if (auto line = OSSharedPtr(OSString::withCString(lines[index]), OSNoRetain)) {
+            array->setObject(line.get());
+        }
+    }
+    properties->setObject("asfw-boot-trace-lines", array.get());
+    properties->setObject("asfw-boot-trace-count", number.get());
+    (void)driver->SetProperties(properties.get());
+}
+} // namespace
+
 kern_return_t IMPL(ASFWDriver, Start) {
     auto kr = Start(provider, SUPERDISPATCH);
     if (kr != kIOReturnSuccess)
@@ -357,6 +444,28 @@ kern_return_t IMPL(ASFWDriver, Start) {
     if (!ivars || !ivars->context)
         return kIOReturnNoMemory;
     ivars->powerProvider = provider;
+    const BootOptions options = ReadBootOptions(provider);
+    ivars->bootTraceStepMs = options.traceStepMs;
+    ivars->manualStart = options.manualStart;
+    if (options.traceStepMs != 0 || options.manualStart) {
+        // Registered now, before any hardware is touched, so the boot-trace
+        // daemon finds this service while the bring-up runs and the agent can
+        // open a user client on a controller that waits for --bring-up.
+        RegisterService();
+        ivars->serviceRegistered = true;
+        ASFW_LOG_MILESTONE(Controller,
+                           "[StartStep] boot options: trace %u ms per step%{public}s",
+                           options.traceStepMs, options.manualStart ? ", manual start" : "");
+    }
+    if (options.manualStart) {
+        // The controller is ours (IOKit matched us, so Apple's driver stays
+        // off it) and untouched: no PCI open, no register, no DMA, no
+        // interrupt. asfw-config-agent --bring-up runs StartRuntime.
+        ASFW_LOG_MILESTONE(Controller,
+                           "[StartStep] manual start: the controller is claimed and left alone; run "
+                           "asfw-config-agent --bring-up to bring it up");
+        return kIOReturnSuccess;
+    }
     // A Start() that blocks (b49: kmem_alloc_contig, b52: CreateMapping, both
     // kernel RPCs that never returned) holds the provider busy and the whole
     // boot with it; a Start() that fails lets IOKit fall back to Apple's
@@ -367,11 +476,58 @@ kern_return_t IMPL(ASFWDriver, Start) {
     return kr;
 }
 
+kern_return_t ASFWDriver::RequestBringUp() {
+    if (!ivars || !ivars->powerProvider) {
+        return kIOReturnNotReady;
+    }
+    if (__atomic_load_n(&ivars->startInProgress, __ATOMIC_ACQUIRE)) {
+        return kIOReturnBusy;
+    }
+    IODispatchQueue* queue = nullptr;
+    if (CopyDispatchQueue(kIOServiceDefaultQueueName, &queue) != kIOReturnSuccess || !queue) {
+        return kIOReturnError;
+    }
+    retain();
+    queue->DispatchAsync(^{
+        ASFW_LOG_MILESTONE(Controller, "[StartStep] bring-up requested (asfw-config-agent --bring-up)");
+        ArmStartWatchdog();
+        const kern_return_t kr = StartRuntime(ivars->powerProvider);
+        DisarmStartWatchdog();
+        ASFW_LOG_MILESTONE(Controller, "[StartStep] bring-up on request: 0x%08x", kr);
+        release();
+    });
+    queue->release();
+    return kIOReturnSuccess;
+}
+
+kern_return_t ASFWDriver::RequestBringDown() {
+    if (!ivars || !ivars->context) {
+        return kIOReturnNotReady;
+    }
+    IODispatchQueue* queue = nullptr;
+    if (CopyDispatchQueue(kIOServiceDefaultQueueName, &queue) != kIOReturnSuccess || !queue) {
+        return kIOReturnError;
+    }
+    retain();
+    queue->DispatchAsync(^{
+        // The sleep path's quiesce: the runtime goes, the service stays, and
+        // StartRuntime brings it back (as a wake does).
+        ASFW_LOG_MILESTONE(Controller, "[StartStep] bring-down requested (asfw-config-agent --bring-down)");
+        RequestRuntimeQuiesce(static_cast<uint32_t>(QuiesceReason::kSystemSuspend));
+        ASFW_LOG_MILESTONE(Controller, "[StartStep] bring-down on request done");
+        release();
+    });
+    queue->release();
+    return kIOReturnSuccess;
+}
+
 namespace {
 // Normal Start() is well under a few seconds (soft reset, LPS, bus reset,
 // self-ID); a stuck RPC never returns. Long enough for a slow VM, short
-// enough that the boot continues without a power reset.
+// enough that the boot continues without a power reset. In lockstep every
+// step pauses, and the register details make hundreds of them.
 constexpr uint64_t kStartWatchdogNs = 30ull * 1000ull * 1000ull * 1000ull;
+constexpr uint64_t kStartWatchdogLockstepNs = 600ull * 1000ull * 1000ull * 1000ull;
 } // namespace
 
 void ASFWDriver::ArmStartWatchdog() {
@@ -415,10 +571,10 @@ void ASFWDriver::ArmStartWatchdog() {
         ivars->startWatchdogAction = action;
     }
     (void)ASFW::Timing::initializeHostTimebase();
-    const uint64_t deadline =
-        mach_absolute_time() + ASFW::Timing::nanosToHostTicks(kStartWatchdogNs);
+    const uint64_t budgetNs = ivars->bootTraceStepMs != 0 ? kStartWatchdogLockstepNs : kStartWatchdogNs;
+    const uint64_t deadline = mach_absolute_time() + ASFW::Timing::nanosToHostTicks(budgetNs);
     (void)ivars->startWatchdogTimer->WakeAtTime(kIOTimerClockMachAbsoluteTime, deadline, 0);
-    ASFW_LOG(Controller, "Start watchdog armed: %llu s", kStartWatchdogNs / 1000000000ull);
+    ASFW_LOG(Controller, "Start watchdog armed: %llu s", budgetNs / 1000000000ull);
 }
 
 void ASFWDriver::DisarmStartWatchdog() {
@@ -520,10 +676,13 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
     }
     ctx.lifecycle->MarkStageComplete(StartStage::kQueueReady);
     auto& trace = ctx.deps.hardware->BringUpTrace();
+    if (ivars->bootTraceStepMs != 0 && !trace.Lockstep()) {
+        trace.SetLockstep(ivars->bootTraceStepMs, &PublishBootTraceLines, this);
+    }
     trace.Begin();
-    trace.Step("start %s (%s%s), IOMMU %s", ASFW::Version::kSemanticVersion,
+    trace.Step("start %s (%s%s), IOMMU %s%s", ASFW::Version::kSemanticVersion,
                ASFW::Version::kGitCommitShort, ASFW::Version::kGitDirty ? " dirty" : "",
-               IommuState(provider));
+               IommuState(provider), trace.Lockstep() ? ", lockstep trace" : "");
 
     kr = ctx.deps.hardware->Attach(this, provider);
     if (kr != kIOReturnSuccess) {
