@@ -300,9 +300,6 @@ public:
         // True where the HAL clock comes from published zero timestamps
         // (M-Audio: TX completions); IO waits for the first one.
         bool clockFromZts{false};
-        // False models a TX preparation queue that wakes late: WriteEnd's
-        // wake request is not run, only the transport interrupts are.
-        bool dispatchWriteEndWakes{true};
         // Nonzero: the first WriteEnd reports this many frames while
         // CoreAudio wrote only ioFrames (b146: a cold start replayed about one
         // ring of the previous session after the first write).
@@ -490,11 +487,9 @@ private:
                 ivars_, *control_, nextWrite_, HostTicksFor(atPacket), reported));
             ++writeEnds_;
             nextWrite_ += plan.ioFrames;
-            // WriteEnd asked for a TX preparation action: run it now, as the
-            // action queue would, so the fill sees what CoreAudio just wrote.
-            if (plan.dispatchWriteEndWakes && nub_.txPreparationRequests != wakesBefore) {
-                driver_.TxPreparationReady_Impl(nullptr, nub_.lastTxPreparationGeneration);
-            }
+            // The producer is woken by the transport interrupts only: WriteEnd
+            // runs in the HAL's IO cycle and sends no action from there.
+            EXPECT_EQ(nub_.txPreparationRequests, wakesBefore);
         }
     }
 
@@ -1523,16 +1518,16 @@ TEST(TxOwnershipGolden, StallDoesNotRunTxAheadOfRxReplay) {
 // T4 on hardware: with the fill on the TX preparation queue, a 64-frame
 // buffer lost packets whenever the queue woke late (up to 13.7 ms), because a
 // frame has ~1 ms from WriteEnd to its packet's deadline (TX_OWNERSHIP.md §1d).
-// The fill now runs inside WriteEnd, so it must not depend on that wake:
-// here WriteEnd's wake requests are never run, and after start-up no frame
-// may miss its deadline.
+// The fill now runs inside WriteEnd, so it must not depend on that wake (and
+// WriteEnd no longer sends one): after start-up no frame may miss its
+// deadline.
 TEST(TxOwnershipGolden, SmallBufferFillDoesNotWaitForTheQueue) {
     const ASFW::Isoch::Audio::DICE::DiceProfile profile{{.name = "Focusrite Saffire (DICE)"}};
     TxProducerRig rig;
     rig.SetResolvedPlayback({.pcmChannels = 8, .am824Slots = 9, .midiPorts = 1});
     ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::FocusriteSPro24Dsp, 48000));
     rig.FeedBlockingRx(8);
-    rig.EnableHostOutput({.ioFrames = 64, .leadFrames = 112, .dispatchWriteEndWakes = false});
+    rig.EnableHostOutput({.ioFrames = 64, .leadFrames = 112});
     ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets / 2)) << rig.DescribeFault();
     const uint64_t missedAfterStart =
         rig.Ivars().runtime.txStreamEngine.PayloadWriterCounters().framesMissedFinality.load();

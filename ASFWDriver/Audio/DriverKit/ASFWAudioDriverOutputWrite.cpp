@@ -4,9 +4,9 @@
 //
 // The CoreAudio output side of TX (documentation/TX_OWNERSHIP.md):
 //
-// - WriteEnd publishes the client's write end W and the playback-ring range,
-//   fills, and wakes the TX producer. The HAL output ring CoreAudio just
-//   wrote is the PCM publication.
+// - WriteEnd publishes the client's write end W and the playback-ring range
+//   and fills. The HAL output ring CoreAudio just wrote is the PCM
+//   publication.
 // - FillTransmitPayloads, run inside WriteEnd on the IO thread (its only
 //   owner), copies each written frame once from that ring into the armed
 //   packet that carries it, if the packet is still ahead of the hardware.
@@ -89,19 +89,12 @@ bool HandleOutputWriteEnd(ASFWAudioDriver_IVars& ivars,
     // frame has ~1 ms between this write and its packet's deadline, and queue
     // wakes were measured up to 13.7 ms late on hardware, leaving packets
     // silent (TX_OWNERSHIP.md §1d). This thread is the fill's only owner.
+    //
+    // The producer is not woken from here. It arms packets 126 ms ahead of
+    // the hardware (kTxCoverageLeadPackets), and every transmit interrupt
+    // wakes it; a wake from this thread cost an OSAction message (an
+    // allocation and a kevent) inside the HAL's IO cycle and added nothing.
     FillTransmitPayloads(ivars);
-
-    // Wake the producer so packet arming keeps pace with CoreAudio. The
-    // coalescing latch keeps this RT callback to at most one outstanding
-    // action.
-    const uint64_t requestGeneration =
-        control.txPreparationRequests.PublishRequest(hostTime);
-    if (ivars.device.audioNub && ivars.txPreparationAction &&
-        control.txPreparationRequests.TryScheduleWake()) {
-        // OSAction-targeted, one-way dispatch goes directly to TxPreparation.
-        // Never wait behind a device-control RPC on the nub's Default queue.
-        ivars.device.audioNub->TxPreparationReady(ivars.txPreparationAction.get(), requestGeneration);
-    }
 
     control.counters.CountWriteEnd();
     return true;
