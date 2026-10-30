@@ -135,4 +135,41 @@ final class DriverConnectorTransport {
         out.count = outSize
         return out
     }
+
+    /// Scalar input, structure output.
+    func callScalarStruct(selector: UInt32, scalars: [UInt64], initialCap: Int = 4096) -> Data? {
+        let connection = connectionProvider()
+        guard connection != 0 else {
+            errorHandler("Not connected to driver")
+            return nil
+        }
+        var outSize = initialCap
+        var out = Data(count: outSize)
+
+        func doCall() -> kern_return_t {
+            out.withUnsafeMutableBytes { outPtr in
+                scalars.withUnsafeBufferPointer { inPtr in
+                    IOConnectCallMethod(connection, selector,
+                                        inPtr.baseAddress, UInt32(scalars.count),
+                                        nil, 0,  // No struct input
+                                        nil, nil,  // No scalar output
+                                        outPtr.baseAddress, &outSize)
+                }
+            }
+        }
+
+        var kr = doCall()
+        if kr == kIOReturnNoSpace {
+            out = Data(count: outSize)
+            kr = doCall()
+        }
+        guard kr == KERN_SUCCESS else {
+            let errMsg = "selector \(selector) failed: \(interpretIOReturn(kr))"
+            print("[Connector] ❌ callScalarStruct error: \(errMsg)")
+            errorHandler(errMsg)
+            return nil
+        }
+        out.count = outSize
+        return out
+    }
 }

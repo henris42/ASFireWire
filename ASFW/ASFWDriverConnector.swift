@@ -195,6 +195,11 @@ final class ASFWDriverConnector: ObservableObject {
         transport.callStruct(selector: selector.rawValue, input: input, initialCap: initialCap)
     }
 
+    /// Scalar input, structure output (the driver reads `scalars` as scalarInput).
+    func callScalarStruct(_ selector: Method, scalars: [UInt64], initialCap: Int = 4096) -> Data? {
+        transport.callScalarStruct(selector: selector.rawValue, scalars: scalars, initialCap: initialCap)
+    }
+
     func callStructWithScalar(_ selector: Method, input: Data? = nil, initialCap: Int = 64 * 1024, scalarOutput: inout UInt64) -> Data? {
         transport.callStructWithScalar(selector: selector.rawValue, input: input, initialCap: initialCap, scalarOutput: &scalarOutput)
     }

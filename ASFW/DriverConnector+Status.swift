@@ -91,11 +91,10 @@ extension ASFWDriverConnector {
     func getBusResetHistory(startIndex: UInt64 = 0, count: UInt64 = 10) -> [BusResetPacketSnapshot]? {
         guard connection != 0 else { return nil }
 
-        var input = Data()
-        withUnsafeBytes(of: startIndex.littleEndian) { input.append(contentsOf: $0) }
-        withUnsafeBytes(of: count.littleEndian) { input.append(contentsOf: $0) }
-
-        guard let bytes = callStruct(.getBusResetHistory, input: input, initialCap: 4096) else { return nil }
+        // The driver reads start and count as scalar inputs; sent as a structure
+        // every call failed with kIOReturnBadArgument (b187 report).
+        guard let bytes = callScalarStruct(.getBusResetHistory, scalars: [startIndex, count],
+                                           initialCap: 4096) else { return nil }
 
         let packetSize = MemoryLayout<BusResetPacketWire>.size
         guard !bytes.isEmpty, bytes.count % packetSize == 0 else { return [] }
