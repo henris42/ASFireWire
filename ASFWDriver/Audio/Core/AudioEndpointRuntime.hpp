@@ -99,6 +99,7 @@ public:
             directOutputCapacityFrames_ = activeFrames;
             directInputCapacityFrames_ = activeFrames;
             ++directGeneration_;
+            PublishBindingGenerationLocked();
         }
         if (lock_) {
             IOLockUnlock(lock_);
@@ -333,6 +334,10 @@ public:
         IOLockUnlock(lock_);
     }
 
+    [[nodiscard]] uint64_t PeekDirectAudioBindingGeneration() const noexcept override {
+        return publishedBindingGeneration_.load(std::memory_order_acquire);
+    }
+
     [[nodiscard]] bool CopyDirectAudioBinding(Runtime::DirectAudioBindingSnapshot& out) noexcept override {
         out = {};
         if (!lock_) {
@@ -514,6 +519,7 @@ private:
         directControl_ = reinterpret_cast<Runtime::AudioTransportControlBlock*>(
             static_cast<uintptr_t>(directControlMap_->GetAddress()));
         ++directGeneration_;
+        PublishBindingGenerationLocked();
 
         ASFW_LOG_DEBUG(DirectAudio,
                        "ADK DBG BIND runtime local_memory_ready guid=0x%016llx gen=%llu outBase=%p outBytes=%llu outFrames=%u outCh=%u inBase=%p inBytes=%llu inFrames=%u inCh=%u control=%p rate=%u",
@@ -531,6 +537,14 @@ private:
                        directSampleRateHz_);
     }
 
+    // What PeekDirectAudioBindingGeneration reports: the generation of a
+    // complete binding, else 0. Stored after every generation bump.
+    void PublishBindingGenerationLocked() noexcept {
+        publishedBindingGeneration_.store(
+            HasCompleteDirectAudioMemoryLocked() ? directGeneration_ : 0,
+            std::memory_order_release);
+    }
+
     void ReleaseDirectAudioMemoryLocked() noexcept {
         directOutputBase_ = nullptr;
         directOutputBytes_ = 0;
@@ -543,6 +557,7 @@ private:
         directControl_ = nullptr;
         directSampleRateHz_ = 0;
         ++directGeneration_;
+        PublishBindingGenerationLocked();
 
         if (directOutputMap_) {
             directOutputMap_->release();
@@ -727,6 +742,7 @@ private:
     std::atomic<bool> streaming_{false};
 
     uint64_t directGeneration_{0};
+    std::atomic<uint64_t> publishedBindingGeneration_{0};
     uint32_t directAllocatedFrames_{Isoch::Config::kAudioRingBufferFrames};
     IOBufferMemoryDescriptor* directOutputMemory_{nullptr};
     IOBufferMemoryDescriptor* directInputMemory_{nullptr};

@@ -89,12 +89,22 @@ public:
             bindingSource_ = bindingSource;
         }
         if (bindingSource_ != nullptr) {
+            // The same binding as last batch: keep the rate and the control,
+            // but still notice a new stream generation in it (StartIO).
+            const uint64_t published = bindingSource_->PeekDirectAudioBindingGeneration();
+            if (clockControl_ != nullptr && published == bindingGeneration_ &&
+                published != ::ASFW::Audio::Runtime::IDirectAudioBindingSource::kBindingGenerationUnknown) {
+                BindClockControl(clockControl_);
+                return;
+            }
             ::ASFW::Audio::Runtime::DirectAudioBindingSnapshot snapshot{};
             if (bindingSource_->CopyDirectAudioBinding(snapshot) && snapshot.control != nullptr) {
                 sampleRateHz_ = snapshot.sampleRateHz;
+                bindingGeneration_ = snapshot.generation;
                 BindClockControl(snapshot.control);
             } else {
                 sampleRateHz_ = 0;
+                bindingGeneration_ = 0;
                 clockControl_ = nullptr;
             }
         }
@@ -381,6 +391,8 @@ private:
     ::ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource_{nullptr};
     MotuRxDiagnosticCapture* diagnosticCapture_{nullptr};
     uint32_t sampleRateHz_{0};
+    // The binding generation sampleRateHz_ and clockControl_ came from.
+    uint64_t bindingGeneration_{0};
     uint64_t diagnosticGuid_{0};
     uint32_t diagnosticStride_{0};
     bool timingEstablished_{false};

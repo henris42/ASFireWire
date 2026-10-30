@@ -264,6 +264,39 @@ TEST(AudioEndpointRuntime, RateChangeMovesActiveRingAndReusesMemory) {
     }
 }
 
+// The receive path checks the binding's generation on every batch without the
+// lock: it must be what a copy would report, and 0 with no complete binding.
+TEST(AudioEndpointRuntime, PeekedBindingGenerationMatchesTheCopy) {
+    ASFW::Audio::AudioEndpointRuntime runtime(0x1020304050607080ULL);
+    EXPECT_EQ(runtime.PeekDirectAudioBindingGeneration(), 0U);
+    runtime.UpdateConfig(MakeDeviceConfig());
+    EXPECT_EQ(runtime.PeekDirectAudioBindingGeneration(), 0U);
+
+    IOMemoryDescriptor* outputMemory = nullptr;
+    IOMemoryDescriptor* inputMemory = nullptr;
+    IOMemoryDescriptor* controlMemory = nullptr;
+    uint32_t outputFrames = 0, outputChannels = 0, inputFrames = 0, inputChannels = 0, sampleRateHz = 0;
+    uint64_t generation = 0;
+    ASSERT_EQ(runtime.CopyDirectAudioMemory(&outputMemory, &inputMemory, &controlMemory, &outputFrames,
+                                            &outputChannels, &inputFrames, &inputChannels, &sampleRateHz,
+                                            &generation),
+              kIOReturnSuccess);
+    ASFW::Audio::Runtime::DirectAudioBindingSnapshot snapshot{};
+    ASSERT_TRUE(runtime.CopyDirectAudioBinding(snapshot));
+    EXPECT_NE(snapshot.generation, 0U);
+    EXPECT_EQ(runtime.PeekDirectAudioBindingGeneration(), snapshot.generation);
+
+    runtime.SetCurrentSampleRate(96000);
+    ASFW::Audio::Runtime::DirectAudioBindingSnapshot at96{};
+    ASSERT_TRUE(runtime.CopyDirectAudioBinding(at96));
+    EXPECT_GT(at96.generation, snapshot.generation);
+    EXPECT_EQ(runtime.PeekDirectAudioBindingGeneration(), at96.generation);
+
+    for (IOMemoryDescriptor* memory : {outputMemory, inputMemory, controlMemory}) {
+        memory->release();
+    }
+}
+
 TEST(AudioEndpointRuntime, AvcRateAndWidthChangesKeepMemoryObjectsAndResetEpoch) {
     ASFW::Audio::AudioEndpointRuntime runtime(0x1020304050607080ULL);
     auto config = MakeDeviceConfig();

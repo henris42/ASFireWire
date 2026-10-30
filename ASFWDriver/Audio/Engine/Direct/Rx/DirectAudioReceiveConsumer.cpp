@@ -134,6 +134,12 @@ void DirectAudioReceiveConsumer::BeginReceiveBatch(
     if (!bindingSource_) {
         return;
     }
+    // Unchanged (or still unbound): nothing to copy, and no lock taken.
+    const uint64_t published = bindingSource_->PeekDirectAudioBindingGeneration();
+    if (published != ::ASFW::Audio::Runtime::IDirectAudioBindingSource::kBindingGenerationUnknown &&
+        published == lastBindingGeneration_) {
+        return;
+    }
 
     ::ASFW::Audio::Runtime::DirectAudioBindingSnapshot snapshot{};
     if (!bindingSource_->CopyDirectAudioBinding(snapshot)) {

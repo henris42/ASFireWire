@@ -48,6 +48,15 @@ public:
         return false;
     }
     [[nodiscard]] virtual bool CopyDirectAudioBinding(DirectAudioBindingSnapshot& out) noexcept = 0;
+    // The generation CopyDirectAudioBinding would report now, read without
+    // its lock: 0 while there is no complete binding. The receive path checks
+    // it on every batch and copies only when it changed, so a batch takes no
+    // lock. A source that cannot tell returns kBindingGenerationUnknown, and
+    // the caller copies.
+    static constexpr uint64_t kBindingGenerationUnknown = UINT64_MAX;
+    [[nodiscard]] virtual uint64_t PeekDirectAudioBindingGeneration() const noexcept {
+        return kBindingGenerationUnknown;
+    }
     // Our 6-bit node id for the CIP header's SID, from the session when it
     // prepares the transmit context. Stored in the control block for the
     // producer; a source without one ignores it.
