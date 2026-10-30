@@ -183,8 +183,9 @@ class HardwareInterface {
                                        uint64_t preparedOffset, const char* what);
     [[nodiscard]] OSSharedPtr<IODMACommand> CreateDMACommand();
 
-    // Numbered start steps, [StartStep] (Logging/BringUpTrace.hpp).
-    [[nodiscard]] ASFW::Logging::BringUpTrace& BringUpTrace() noexcept { return bringUpTrace_; }
+    // Numbered start steps, [StartStep] (Logging/BringUpTrace.hpp). Mutable:
+    // in lockstep, register writes (const) add their detail steps.
+    [[nodiscard]] ASFW::Logging::BringUpTrace& BringUpTrace() const noexcept { return bringUpTrace_; }
 
     [[nodiscard]] uint32_t ReadHCControl() const noexcept;
     void SetHCControlBits(uint32_t bits) noexcept;
@@ -290,7 +291,7 @@ class HardwareInterface {
     void LatchHardwareGoneFromPresenceProbe(Register32 reg) const noexcept;
 
     mutable HardwareAccessGate accessGate_;
-    ASFW::Logging::BringUpTrace bringUpTrace_;
+    mutable ASFW::Logging::BringUpTrace bringUpTrace_;
     OSSharedPtr<IOPCIDevice> device_;
     // Scratch page VerifyDirectDMA reads the DMA view into (created on first
     // use); probeLock_ serializes the probes that share it.

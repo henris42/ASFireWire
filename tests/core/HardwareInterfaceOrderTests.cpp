@@ -52,6 +52,11 @@ protected:
             .WillByDefault([](uint8_t, uint64_t, uint32_t* val) {
                 *val = 0x80000000;
             });
+        // Attach reads OHCI Version once: a controller that answers.
+        ON_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kVersion), _))
+            .WillByDefault([](uint8_t, uint64_t, uint32_t* val) {
+                *val = 0x01010010;
+            });
 
         hardware_.Attach(nullptr, mockDevice_);
     }
@@ -440,6 +445,27 @@ TEST_F(HardwareInterfaceOrderTests, SetRootHoldOffTrueSetsRhbPreservingGap) {
         });
 
     hardware_.SetRootHoldOff(true);
+}
+
+// A controller that does not answer on its BAR (every read all ones) is left
+// alone: Attach fails and closes the device, so the start fails and the boot
+// goes on (b193 B760 report).
+TEST(HardwareInterfaceAttachTests, AControllerThatReadsAllOnesIsNotAttached) {
+    auto* device = new testing::NiceMock<MockPCIDevice>();
+    ON_CALL(*device, Open(_)).WillByDefault(Return(kIOReturnSuccess));
+    ON_CALL(*device, GetBARInfo(0, _, _, _))
+        .WillByDefault([](uint8_t, uint8_t* index, uint64_t* size, uint8_t* type) {
+            *index = 0;
+            *size = 4096;
+            *type = 1;
+            return kIOReturnSuccess;
+        });
+    ON_CALL(*device, MemoryRead32(_, _, _))
+        .WillByDefault([](uint8_t, uint64_t, uint32_t* val) { *val = 0xFFFFFFFFu; });
+    HardwareInterface hardware;
+    EXPECT_EQ(hardware.Attach(nullptr, device), kIOReturnNoDevice);
+    EXPECT_FALSE(hardware.Attached()) << "detached again: no MMIO after the refusal";
+    device->release();
 }
 
 } // namespace

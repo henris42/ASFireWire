@@ -86,6 +86,7 @@ kern_return_t HardwareInterface::Attach(IOService* owner, IOService* provider) {
         return kIOReturnBadArgument;
     }
 
+    bringUpTrace_.Detail("IOPCIDevice::Open");
     kern_return_t kr = pci->Open(owner);
     if (kr != kIOReturnSuccess) {
         return kr;
@@ -114,6 +115,7 @@ kern_return_t HardwareInterface::Attach(IOService* owner, IOService* provider) {
 
     const uint16_t desired = command | kRequiredCommandBits;
     if (desired != command) {
+        bringUpTrace_.Detail("pci command <- 0x%04x", desired);
         pci->ConfigurationWrite16(kIOPCIConfigurationOffsetCommand, desired);
     }
 
@@ -128,6 +130,7 @@ kern_return_t HardwareInterface::Attach(IOService* owner, IOService* provider) {
     uint64_t barSize = 0;
     uint8_t barType = 0;
     uint8_t memoryIndex = 0;
+    bringUpTrace_.Detail("GetBARInfo");
     kr = pci->GetBARInfo(kDefaultBAR, &memoryIndex, &barSize, &barType);
     if (kr != kIOReturnSuccess) {
         pci->Close(owner);
@@ -162,6 +165,28 @@ kern_return_t HardwareInterface::Attach(IOService* owner, IOService* provider) {
     accessGate_.Open();
     bringUpTrace_.Step("pci command 0x%04x -> 0x%04x, BAR0 %llu bytes type %u",
                        command, commandVerify, barSize, barType);
+
+    // The first MMIO read: a controller that does not answer on its BAR reads
+    // all ones (the device or its link is not there). It is left alone, so
+    // the start fails and the boot goes on (b193 B760 report: "it must fail
+    // and continue").
+    uint32_t version = 0xFFFFFFFFu;
+    {
+        bringUpTrace_.Detail("first MMIO read: OHCI Version");
+        auto access = TryBeginAccess();
+        if (access) {
+            version = access.Read(Register32::kVersion);
+        }
+    }
+    if (version == 0xFFFFFFFFu) {
+        ASFW_LOG_ERROR(Hardware, "❌ OHCI Version reads 0x%08x: the controller does not answer on BAR0",
+                       version);
+        bringUpTrace_.Step("OHCI Version reads 0x%08x: the controller does not answer on BAR0; not starting",
+                           version);
+        Detach();
+        return kIOReturnNoDevice;
+    }
+    bringUpTrace_.Detail("OHCI Version 0x%08x", version);
     return kIOReturnSuccess;
 }
 
@@ -282,6 +307,13 @@ void HardwareInterface::WriteScoped(Register32 reg, uint32_t value) const noexce
         return;
     }
     device_->MemoryWrite32(barIndex_, static_cast<uint64_t>(reg), value);
+    // Lockstep bring-up trace: every register write with what the register
+    // reads back (OHCI set/clear registers read as the value in force).
+    if (bringUpTrace_.Lockstep() && bringUpTrace_.Active()) {
+        const uint32_t readBack = ReadScoped(reg);
+        bringUpTrace_.Detail("reg 0x%03x <- 0x%08x, reads 0x%08x", static_cast<unsigned>(reg), value,
+                             readBack);
+    }
 }
 
 void HardwareInterface::FlushPostedWritesScoped() const noexcept {
@@ -784,6 +816,7 @@ HardwareInterface::AllocateDMA(size_t length, uint64_t options, size_t alignment
     }
 
     IOBufferMemoryDescriptor* buffer = nullptr;
+    bringUpTrace_.Detail("IOBufferMemoryDescriptor::Create %zu bytes, alignment %zu", length, alignment);
     kern_return_t kr = IOBufferMemoryDescriptor::Create(options, length, alignment, &buffer);
     if (kr != kIOReturnSuccess || buffer == nullptr) {
         ASFW_LOG_ERROR(Hardware,
@@ -817,6 +850,7 @@ HardwareInterface::AllocateDMA(size_t length, uint64_t options, size_t alignment
     uint32_t segmentCount = 32;
     uint64_t flags = 0;
 
+    bringUpTrace_.Detail("PrepareForDMA %zu bytes", length);
     kr = command->PrepareForDMA(kIODMACommandPrepareForDMANoOptions, buffer, 0, length, &flags,
                                 &segmentCount, segments);
 
@@ -892,6 +926,7 @@ HardwareInterface::AllocateDMAPaged(size_t length, uint64_t options) {
     // the pages are scattered, the CPU mapping is contiguous, and DMAMemoryManager
     // translates per page run.
     IOBufferMemoryDescriptor* rawBuffer = nullptr;
+    bringUpTrace_.Detail("IOBufferMemoryDescriptor::Create %zu bytes, paged", length);
     kern_return_t kr = IOBufferMemoryDescriptor::Create(options, length, kDMAPageGranule, &rawBuffer);
     if (kr != kIOReturnSuccess || rawBuffer == nullptr) {
         ASFW_LOG_ERROR(Hardware, "AllocateDMAPaged: IOBufferMemoryDescriptor::Create failed: 0x%08x (%zu bytes)",
@@ -937,6 +972,7 @@ HardwareInterface::AllocateDMAPaged(size_t length, uint64_t options) {
         IOAddressSegment segments[32];
         uint32_t segmentCount = 32;
         uint64_t flags = 0;
+        bringUpTrace_.Detail("PrepareForDMA %zu bytes at offset %zu", window, offset);
         kr = command->PrepareForDMA(kIODMACommandPrepareForDMANoOptions, buffer.get(), offset, window,
                                     &flags, &segmentCount, segments);
         if (kr != kIOReturnSuccess || segmentCount == 0) {
@@ -1266,7 +1302,9 @@ bool HardwareInterface::WaitHC(uint32_t mask, bool expectSet, uint32_t timeoutUs
         return false;
     }
 
-    return WaitForRegister(
+    bringUpTrace_.Detail("poll HCControl for 0x%08x %s, up to %u us", mask, expectSet ? "set" : "clear",
+                         timeoutUsec);
+    const bool reached = WaitForRegister(
         [this] {
             auto access = const_cast<HardwareInterface*>(this)->TryBeginAccess();
             return access ? access.Read(Register32::kHCControl) : 0xFFFFFFFFu;
@@ -1283,6 +1321,8 @@ bool HardwareInterface::WaitHC(uint32_t mask, bool expectSet, uint32_t timeoutUs
                          attempts, t, unit);
             }
         });
+    bringUpTrace_.Detail("poll HCControl %s", reached ? "reached" : "timed out");
+    return reached;
 }
 
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
@@ -1292,7 +1332,9 @@ bool HardwareInterface::WaitLink(uint32_t mask, bool expectSet, uint32_t timeout
         return false;
     }
 
-    return WaitForRegister(
+    bringUpTrace_.Detail("poll LinkControl for 0x%08x %s, up to %u us", mask, expectSet ? "set" : "clear",
+                         timeoutUsec);
+    const bool reached = WaitForRegister(
         [this] {
             auto access = const_cast<HardwareInterface*>(this)->TryBeginAccess();
             return access ? access.Read(Register32::kLinkControl) : 0xFFFFFFFFu;
@@ -1302,6 +1344,8 @@ bool HardwareInterface::WaitLink(uint32_t mask, bool expectSet, uint32_t timeout
             ASFW_LOG(Hardware, "%{public}s: 0x%08x tries=%llu t=%lluus ejected=%d", name, value,
                      attempts, usec, ejected);
         });
+    bringUpTrace_.Detail("poll LinkControl %s", reached ? "reached" : "timed out");
+    return reached;
 }
 
 bool HardwareInterface::WaitNodeIdValid(uint32_t timeoutMs) const {
@@ -1309,7 +1353,8 @@ bool HardwareInterface::WaitNodeIdValid(uint32_t timeoutMs) const {
         return false;
     }
 
-    return WaitForRegister(
+    bringUpTrace_.Detail("poll NodeID valid, up to %u ms", timeoutMs);
+    const bool reached = WaitForRegister(
         [this] {
             auto access = const_cast<HardwareInterface*>(this)->TryBeginAccess();
             return access ? access.Read(Register32::kNodeID) : 0xFFFFFFFFu;
@@ -1324,6 +1369,8 @@ bool HardwareInterface::WaitNodeIdValid(uint32_t timeoutMs) const {
                      "%{public}s: 0x%08x valid=%d bus=%u node=%u tries=%llu t=%lluus ejected=%d",
                      name, value, valid, bus, node, attempts, usec, ejected);
         });
+    bringUpTrace_.Detail("poll NodeID %s", reached ? "valid" : "timed out");
+    return reached;
 }
 
 void HardwareInterface::FlushPostedWrites() const {

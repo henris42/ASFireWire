@@ -419,6 +419,9 @@ kern_return_t DriverWiring::PrepareInterrupts(ASFWDriver& service, IOService* pr
         // handler reads this controller's IntEvent and returns at once when
         // nothing of its own is pending.
         const char* mode = "MSI-X";
+        if (ctx.deps.hardware) {
+            ctx.deps.hardware->BringUpTrace().Detail("ConfigureInterrupts MSI-X, then MSI");
+        }
         auto status = pci->ConfigureInterrupts(kIOInterruptTypePCIMessagedX, 1, 1, 0);
         if (status != kIOReturnSuccess) {
             mode = "MSI";
@@ -450,6 +453,9 @@ kern_return_t DriverWiring::PrepareInterrupts(ASFWDriver& service, IOService* pr
         ctx.interruptAction = OSSharedPtr(action, OSNoRetain);
     }
 
+    if (ctx.deps.hardware) {
+        ctx.deps.hardware->BringUpTrace().Detail("IOInterruptDispatchSource::Create and SetHandler");
+    }
     auto kr = intrMgr->Initialise(provider, ctx.workQueue, ctx.interruptAction, ctx.teardownCompletion);
     if (kr != kIOReturnSuccess) {
         ctx.interruptAction.reset();
