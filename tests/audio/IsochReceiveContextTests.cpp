@@ -23,6 +23,10 @@ class RecordingReceiveConsumer final : public IIsochReceiveConsumer {
   public:
     void OnReceiveActivated() noexcept override { ++activationCount; }
     void OnReceiveQuiesced() noexcept override { ++quiesceCount; }
+    void SetReceivePollSource(IIsochReceivePollSource* source) noexcept override {
+        pollSource = source;
+        ++pollSourceChanges;
+    }
 
     void BeginReceiveBatch(const IsochReceiveBatch& batch) noexcept override {
         ++batchCount;
@@ -41,6 +45,8 @@ class RecordingReceiveConsumer final : public IIsochReceiveConsumer {
     uint32_t lastPacketBytes{0};
     uint32_t activationCount{0};
     uint32_t quiesceCount{0};
+    IIsochReceivePollSource* pollSource{nullptr};
+    uint32_t pollSourceChanges{0};
     IsochReceiveBatch lastBatch{};
 };
 
@@ -208,6 +214,35 @@ TEST_F(IsochReceiveContextTest, PollPublishesTheBatchToAContentConsumer) {
     hardware_->SetTestRegister(controlSet, 0);
     EXPECT_EQ(context_->Stop(), kIOReturnSuccess);
     EXPECT_EQ(consumer.quiesceCount, 1u);
+}
+
+// The BeginRead pull reaches the context through its consumer: handed over
+// at start, taken back at stop, and a pull marks its batch and backs off
+// while another poll holds the gate.
+TEST_F(IsochReceiveContextTest, TheConsumerHoldsThePollSourceForTheRun) {
+    RecordingReceiveConsumer consumer;
+    ASSERT_EQ(context_->Configure(0, 0), kIOReturnSuccess);
+    context_->SetReceiveConsumer(&consumer);
+    ASSERT_EQ(context_->Start(), kIOReturnSuccess);
+    ASSERT_EQ(consumer.pollSource, static_cast<IIsochReceivePollSource*>(context_.get()));
+
+    uint32_t processed = 99;
+    EXPECT_TRUE(consumer.pollSource->TryPoll(processed));
+    EXPECT_EQ(processed, 0U);
+    EXPECT_TRUE(consumer.lastBatch.readerPull);
+    EXPECT_EQ(context_->Poll(), 0U);
+    EXPECT_FALSE(consumer.lastBatch.readerPull);
+
+    ASSERT_TRUE(context_->AcquirePollGateForTesting());
+    EXPECT_FALSE(consumer.pollSource->TryPoll(processed));
+    context_->ReleasePollGateForTesting();
+
+    const auto controlSet = static_cast<::ASFW::Driver::Register32>(
+        ::DMAContextHelpers::IsoRcvContextControlSet(0));
+    hardware_->SetTestRegister(controlSet, 0);
+    EXPECT_EQ(context_->Stop(), kIOReturnSuccess);
+    EXPECT_EQ(consumer.pollSource, nullptr);
+    context_->SetReceiveConsumer(nullptr);
 }
 
 TEST_F(IsochReceiveContextTest, BusyPollRetainsBindingUntilStopCanAcquireOwnership) {

@@ -12,6 +12,8 @@
 #include <span>
 #include <TargetConditionals.h>
 
+#include "IsochReceivePollSource.hpp"
+
 namespace ASFW::Isoch {
 
 // A single OHCI drain obtains one controller-cycle/host-time pair. Every
@@ -20,6 +22,11 @@ namespace ASFW::Isoch {
 struct IsochReceiveBatch final {
     uint32_t drainCycleTimer{0};
     uint64_t drainHostTicks{0};
+    // Drained on a reader's thread, on demand (TryPoll: the audio side's
+    // BeginRead pull on the real-time IO thread), not by the interrupt or the
+    // watchdog. A consumer keeps that batch to its own state and leaves side
+    // effects that reach other subsystems to the next regular poll.
+    bool readerPull{false};
 };
 
 // Payload-opaque result of one IR descriptor. `payload` is valid only for the
@@ -44,6 +51,13 @@ class IIsochReceiveConsumer {
     // from OnReceiveQuiesced(); it must not retain `payload` past ConsumePacket.
     virtual void OnReceiveActivated() noexcept {}
     virtual void OnReceiveQuiesced() noexcept {}
+
+    // The context this consumer is attached to, as something it may poll
+    // from another thread: set before OnReceiveActivated(), cleared (nullptr)
+    // after OnReceiveQuiesced() and before the context goes away. A consumer
+    // that handed the source to another thread must make sure that thread is
+    // done with it before this returns.
+    virtual void SetReceivePollSource(IIsochReceivePollSource* source) noexcept { (void)source; }
 
     virtual void BeginReceiveBatch(const IsochReceiveBatch& batch) noexcept = 0;
     virtual void ConsumePacket(const IsochReceiveBatch& batch,

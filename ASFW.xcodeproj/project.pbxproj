@@ -1501,6 +1501,7 @@
 		D8746964EA1B6590D5326A97 /* BusInspectorNodeRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BusInspectorNodeRow.swift; sourceTree = "<group>"; };
 		D87DB965F8A0BA1405BDFD1E /* MAudioSpecialRouting.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MAudioSpecialRouting.hpp; sourceTree = "<group>"; };
 		D8C2DA61E525937C3A4F77F7 /* GenericAvcProfile.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = GenericAvcProfile.cpp; sourceTree = "<group>"; };
+		D90C2914FB85289F8D3ED547 /* IsochReceivePollSource.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IsochReceivePollSource.hpp; sourceTree = "<group>"; };
 		D9C1869110AEA5F316DDED8D /* BeBoBBootloaderCue.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = BeBoBBootloaderCue.cpp; sourceTree = "<group>"; };
 		D9C9CEE2B5EF0A53B8A52533 /* ControllerCoreLifecycle.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ControllerCoreLifecycle.cpp; sourceTree = "<group>"; };
 		D9F79B8A2C59677282DC21F8 /* DiscoveryReducer.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DiscoveryReducer.hpp; sourceTree = "<group>"; };
@@ -1657,6 +1658,7 @@
 		FE0057D2389E9882DD0915E6 /* LockCommand.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = LockCommand.hpp; sourceTree = "<group>"; };
 		FE0A655B89850ED93F6008C8 /* Syt.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = Syt.cpp; sourceTree = "<group>"; };
 		FE37D2D75389D1CAD4D98057 /* ICycleTimeline.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ICycleTimeline.hpp; sourceTree = "<group>"; };
+		FEC17129B9E144F072771AB2 /* RxPullHook.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RxPullHook.hpp; sourceTree = "<group>"; };
 		FEE43DA9F73128A0AAA41E4B /* DVConnectionPlan.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DVConnectionPlan.hpp; sourceTree = "<group>"; };
 		FF09D65685E88DC69256887D /* FWUnit.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = FWUnit.cpp; sourceTree = "<group>"; };
 		FF26B9D9B6DD1E2CD447CB18 /* SaffireMixerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SaffireMixerView.swift; sourceTree = "<group>"; };
@@ -2156,6 +2158,7 @@
 			children = (
 				8548E1DA1006A1671CC85CF1 /* IsochDmaGeometry.hpp */,
 				3DC0A6CF3AE91F3EF65A4BAB /* IsochEventGroup.hpp */,
+				D90C2914FB85289F8D3ED547 /* IsochReceivePollSource.hpp */,
 				F5252BDAC15F6AA21DCD3E28 /* IsochTxQueue.hpp */,
 				72BE64F16BB205405D7F37A1 /* IsochTypes.hpp */,
 			);
@@ -3693,6 +3696,7 @@
 				60B977922E42F4A0876927D6 /* MotuRxSphRateMeter.hpp */,
 				25DAE3D3403115107D58FAE6 /* MotuServoStallDetector.hpp */,
 				0E40653930A424FE44CFE5BF /* MotuTxPhaseTracePublisher.hpp */,
+				FEC17129B9E144F072771AB2 /* RxPullHook.hpp */,
 			);
 			path = Runtime;
 			sourceTree = "<group>";

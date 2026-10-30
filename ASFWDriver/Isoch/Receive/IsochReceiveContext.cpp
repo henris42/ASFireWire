@@ -124,6 +124,7 @@ kern_return_t IsochReceiveContext::Start() {
     rxRing_.ResetForStart();
 
     if (receiveConsumer_) {
+        receiveConsumer_->SetReceivePollSource(this);
         receiveConsumer_->OnReceiveActivated();
     }
     return kIOReturnSuccess;
@@ -159,12 +160,18 @@ kern_return_t IsochReceiveContext::Stop() {
             IOLockUnlock(lock_);
             if (receiveConsumer_) {
                 receiveConsumer_->OnReceiveQuiesced();
+                receiveConsumer_->SetReceivePollSource(nullptr);
             }
             ASFW_LOG(Isoch,
                      "[Lifecycle] IR stop context=%u hardware-gone action=release-direct-binding",
                      contextIndex_);
             rxLock_.clear(std::memory_order_release);
             return kIOReturnSuccess;
+        }
+        // The context stays bound, but no thread outside the poll path may
+        // keep reaching it: a later teardown would leave it dangling.
+        if (receiveConsumer_) {
+            receiveConsumer_->SetReceivePollSource(nullptr);
         }
         rxLock_.clear(std::memory_order_release);
         return kIOReturnNotReady;
@@ -207,6 +214,9 @@ kern_return_t IsochReceiveContext::Stop() {
         ASFW_LOG_ERROR(Isoch,
                        "IR: stop did not quiesce context=%u control=0x%08x kr=0x%08x (%{public}s); retaining direct binding",
                        contextIndex_, control, failure, ASFW::Logging::IOReturnName(failure));
+        if (receiveConsumer_) {
+            receiveConsumer_->SetReceivePollSource(nullptr);
+        }
         rxLock_.clear(std::memory_order_release);
         return failure;
     }
@@ -217,6 +227,7 @@ kern_return_t IsochReceiveContext::Stop() {
 
     if (receiveConsumer_) {
         receiveConsumer_->OnReceiveQuiesced();
+        receiveConsumer_->SetReceivePollSource(nullptr);
     }
 
     rxLock_.clear(std::memory_order_release);
@@ -224,13 +235,24 @@ kern_return_t IsochReceiveContext::Stop() {
 }
 
 uint32_t IsochReceiveContext::Poll() {
+    uint32_t processed = 0;
+    (void)PollOnce(processed, /*readerPull=*/false);
+    return processed;
+}
+
+bool IsochReceiveContext::TryPoll(uint32_t& processed) noexcept {
+    return PollOnce(processed, /*readerPull=*/true);
+}
+
+bool IsochReceiveContext::PollOnce(uint32_t& processed, bool readerPull) noexcept {
+    processed = 0;
     if (rxLock_.test_and_set(std::memory_order_acquire)) {
-        return 0;
+        return false;
     }
 
     if (GetState() != IRPolicy::State::Running) {
         rxLock_.clear(std::memory_order_release);
-        return 0;
+        return true;
     }
 
     const auto cycleHostPair =
@@ -242,12 +264,13 @@ uint32_t IsochReceiveContext::Poll() {
     const IsochReceiveBatch receiveBatch{
         .drainCycleTimer = drainCycleTimer,
         .drainHostTicks = drainHostTicks,
+        .readerPull = readerPull,
     };
     if (receiveConsumer_) {
         receiveConsumer_->BeginReceiveBatch(receiveBatch);
     }
 
-    const uint32_t processed = rxRing_.DrainCompleted(
+    processed = rxRing_.DrainCompleted(
         *dmaMemory_,
         [this, drainHostTicks, drainCycleTimer, receiveBatch](
             const Rx::IsochRxDmaRing::CompletedPacket& pkt) {
@@ -273,7 +296,7 @@ uint32_t IsochReceiveContext::Poll() {
     });
 
     rxLock_.clear(std::memory_order_release);
-    return processed;
+    return true;
 }
 
 void IsochReceiveContext::SetCallback(IsochReceiveCallback callback) {
@@ -285,12 +308,24 @@ void IsochReceiveContext::SetReceiveConsumer(
     receiveConsumer_ = consumer;
 }
 
+// The consumer's telemetry and diagnostics touch state its packet path
+// writes, and a poll can run on another thread (TryPoll: the BeginRead pull).
+// Take the poll gate; a poll in progress means this tick is skipped, and the
+// next one (the watchdog's, about every 100 ms) catches up.
 void IsochReceiveContext::DrainZtsTelemetry(uint32_t maxRecords) {
-    if (receiveConsumer_) receiveConsumer_->DrainReceiveTelemetry(maxRecords);
+    if (!receiveConsumer_ || rxLock_.test_and_set(std::memory_order_acquire)) {
+        return;
+    }
+    receiveConsumer_->DrainReceiveTelemetry(maxRecords);
+    rxLock_.clear(std::memory_order_release);
 }
 
 void IsochReceiveContext::ServiceConsumerDiagnostics() {
-    if (receiveConsumer_) receiveConsumer_->ServiceConsumerDiagnostics();
+    if (!receiveConsumer_ || rxLock_.test_and_set(std::memory_order_acquire)) {
+        return;
+    }
+    receiveConsumer_->ServiceConsumerDiagnostics();
+    rxLock_.clear(std::memory_order_release);
 }
 
 } // namespace ASFW::Isoch

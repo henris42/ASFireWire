@@ -4,6 +4,7 @@
 #include "AudioRtCounters.hpp"
 #include "MotuPhaseTrace.hpp"
 #include "MotuRxSphClockSnapshot.hpp"
+#include "RxPullHook.hpp"
 #include "../../Runtime/HardwareSampleTimeline.hpp"
 #include "../../Runtime/HostClockAnchor.hpp"
 #include "../../Runtime/Seqlock.hpp"
@@ -664,6 +665,9 @@ struct AudioTransportControlBlock final {
     std::atomic<uint64_t> captureRingStartupStarvations{0};
     std::atomic<bool> captureRingFirstCompleteRead{false};
     RxCaptureBufferTelemetry rxCaptureBufferTelemetry{};
+    // The BeginRead pull (RxPullHook.hpp). Not reset per start: the receive
+    // consumer publishes and withdraws it around its context's run.
+    RxPullHook rxPull{};
 
     [[nodiscard]] HostClockAnchorPublishResult PublishHostClockAnchor(
         uint64_t sampleFrame,

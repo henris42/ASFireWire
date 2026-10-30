@@ -6,6 +6,7 @@
 //
 
 #include "ASFWAudioDriverPrivate.hpp"
+#include "../../Common/TimingUtils.hpp"
 #include "../../Logging/Logging.hpp"
 
 #include <DriverKit/DriverKit.h>
@@ -14,6 +15,10 @@
 
 namespace ASFW::Audio::DriverKit {
 namespace {
+
+// How long a BeginRead pull waits for a poll already in progress (the
+// interrupt draining the same ring) before it reads what is there.
+constexpr uint64_t kRxPullBusyBudgetNanos = 100'000;
 
 void ZeroInputFrameIfMissing(ASFW::Audio::Runtime::AudioGraphBinding& graph,
                              uint64_t absoluteFrame) noexcept {
@@ -156,6 +161,15 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                 }
                 control->client.PublishBeginRead(sampleTime, hostTime, ioBufferFrameSize);
                 control->rxCaptureBufferTelemetry.RecordReaderBeginRead();
+                // The frames this read needs are not all in the capture ring:
+                // drain the receive ring here rather than wait for the
+                // interrupt, which a real-time load can hold off for
+                // milliseconds (RxPullHook.hpp).
+                if (control->captureRingWriteFrame.load(std::memory_order_acquire) <
+                    sampleTime + ioBufferFrameSize) {
+                    (void)control->rxPull.Pull(
+                        ASFW::Timing::nanosToHostTicks(kRxPullBusyBudgetNanos));
+                }
                 (void)PrepareCaptureRingForBeginRead(driverIvars->runtime.directAudioGraph,
                                                      *control,
                                                      sampleTime,

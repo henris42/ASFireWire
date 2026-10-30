@@ -51,7 +51,8 @@ struct IRTag {
 // Owned by std::unique_ptr, matching IsochTransmitContext.
 class IsochReceiveContext final
     : public ::ASFW::Shared::DmaContextManagerBase<
-          IsochReceiveContext, ::ASFW::Shared::DescriptorRing, IRTag, IRPolicy> {
+          IsochReceiveContext, ::ASFW::Shared::DescriptorRing, IRTag, IRPolicy>,
+      public IIsochReceivePollSource {
   public:
     IsochReceiveContext()
         : ::ASFW::Shared::DmaContextManagerBase<IsochReceiveContext, ::ASFW::Shared::DescriptorRing,
@@ -80,6 +81,9 @@ class IsochReceiveContext final
     // release any DMA-visible memory until this returns success (ACTIVE clear).
     [[nodiscard]] kern_return_t Stop();
     uint32_t Poll();
+    // Poll from any thread: the interrupt, the watchdog, or the audio side's
+    // BeginRead pull on the IO thread. The gate serializes them.
+    [[nodiscard]] bool TryPoll(uint32_t& processed) noexcept override;
 
     void SetCallback(IsochReceiveCallback callback);
     // Content-neutral synchronous seam. The consumer owns all payload
@@ -121,6 +125,7 @@ class IsochReceiveContext final
     std::atomic_flag rxLock_ = ATOMIC_FLAG_INIT;
 
     Registers GetRegisters(uint8_t index) const;
+    bool PollOnce(uint32_t& processed, bool readerPull) noexcept;
 };
 
 } // namespace ASFW::Isoch

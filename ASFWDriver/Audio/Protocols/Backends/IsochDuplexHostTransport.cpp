@@ -156,6 +156,10 @@ kern_return_t IsochDuplexHostTransport::PrepareReceiveStream(
     if (attached != kIOReturnSuccess) {
         return attached;
     }
+    // A pull at BeginRead would drain the master only (RxPullHook.hpp).
+    if (receiveConsumers_[0]) {
+        receiveConsumers_[0]->AllowBeginReadPull(false);
+    }
     const kern_return_t status = isoch_.PrepareReceiveStream(
         streamIndex, channel, hardware, channelOffset, format.streamChannels);
     if (status != kIOReturnSuccess) {

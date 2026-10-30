@@ -85,6 +85,9 @@ uint64_t DirectAudioReceiveConsumer::UnwrapDrainBusTicks(uint32_t drainCycleTime
 }
 
 void DirectAudioReceiveConsumer::OnReceiveActivated() noexcept {
+    pendingReplayReady_ = false;
+    pendingTimingLoss_ = false;
+    pendingZtsAnchor_ = false;
     lastDbcValid_ = false;
     secondaryAnchored_ = false;
     secondaryAnchorEpoch_ = 0;
@@ -120,14 +123,88 @@ void DirectAudioReceiveConsumer::OnReceiveQuiesced() noexcept {
     if (timingObserver_ != nullptr) {
         timingObserver_->Reset();
     }
+    // The binding is still valid here; after this nothing pulls into the
+    // context through it. Events a pull deferred belong to the stopped run.
+    WithdrawPull();
+    pendingReplayReady_ = false;
+    pendingTimingLoss_ = false;
+    pendingZtsAnchor_ = false;
     inputWriter_.Unbind();
     clockPublisher_.Unbind();
     inputView_ = {};
     replayResetForStart_ = false;
 }
 
+void DirectAudioReceiveConsumer::SetReceivePollSource(
+    ::ASFW::Isoch::IIsochReceivePollSource* source) noexcept {
+    if (source == pollSource_) {
+        return;
+    }
+    WithdrawPull();
+    pollSource_ = source;
+    PublishPull(inputView_.control);
+}
+
+void DirectAudioReceiveConsumer::PublishPull(
+    ::ASFW::Audio::Runtime::AudioTransportControlBlock* control) noexcept {
+    const bool wanted = !configuration_.isSecondary && beginReadPullAllowed_ &&
+                        pollSource_ != nullptr && control != nullptr;
+    if (wanted && control == pullControl_ && pollSource_ == pulledSource_) {
+        return;
+    }
+    // The same control block is still valid: take the old entry out. A
+    // different one went with its memory: drop the record of it, never touch it.
+    if (pullControl_ != nullptr && pullControl_ == control) {
+        pullControl_->rxPull.Clear(pulledSource_);
+    }
+    ForgetPull();
+    if (!wanted) {
+        return;
+    }
+    control->rxPull.Publish(pollSource_);
+    pullControl_ = control;
+    pulledSource_ = pollSource_;
+}
+
+void DirectAudioReceiveConsumer::ForgetPull() noexcept {
+    pullControl_ = nullptr;
+    pulledSource_ = nullptr;
+}
+
+void DirectAudioReceiveConsumer::WithdrawPull() noexcept {
+    if (pullControl_ != nullptr) {
+        pullControl_->rxPull.Withdraw(pulledSource_);
+    }
+    ForgetPull();
+}
+
+void DirectAudioReceiveConsumer::DeliverDeferredEvents() noexcept {
+    if (pendingReplayReady_) {
+        pendingReplayReady_ = false;
+        if (replayReadyCallback_) {
+            replayReadyCallback_();
+        }
+    }
+    if (pendingZtsAnchor_) {
+        pendingZtsAnchor_ = false;
+        if (ztsAnchorReadyCallback_) {
+            ztsAnchorReadyCallback_(pendingZtsGeneration_);
+        }
+    }
+    if (pendingTimingLoss_) {
+        pendingTimingLoss_ = false;
+        if (timingLossCallback_) {
+            timingLossCallback_();
+        }
+    }
+}
+
 void DirectAudioReceiveConsumer::BeginReceiveBatch(
-    const ::ASFW::Isoch::IsochReceiveBatch&) noexcept {
+    const ::ASFW::Isoch::IsochReceiveBatch& batch) noexcept {
+    deferEvents_ = batch.readerPull;
+    if (!deferEvents_) {
+        DeliverDeferredEvents();
+    }
     if (timingObserver_ != nullptr) {
         timingObserver_->OnBatchBegin(bindingSource_);
     }
@@ -144,6 +221,7 @@ void DirectAudioReceiveConsumer::BeginReceiveBatch(
     ::ASFW::Audio::Runtime::DirectAudioBindingSnapshot snapshot{};
     if (!bindingSource_->CopyDirectAudioBinding(snapshot)) {
         if (lastBindingGeneration_ != 0) {
+            ForgetPull();
             inputWriter_.Unbind();
             clockPublisher_.Unbind();
             inputView_ = {};
@@ -182,7 +260,9 @@ void DirectAudioReceiveConsumer::BeginReceiveBatch(
         if (!configuration_.isSecondary) {
             clockPublisher_.Bind(&inputView_);
         }
+        PublishPull(inputView_.control);
     } else {
+        ForgetPull();
         inputWriter_.Unbind();
         clockPublisher_.Unbind();
         inputView_ = {};
@@ -582,7 +662,11 @@ void DirectAudioReceiveConsumer::ConsumePacket(
         }
         if (!replayReadyNotified_ && replayReadyCallback_) {
             replayReadyNotified_ = true;
-            replayReadyCallback_();
+            if (deferEvents_) {
+                pendingReplayReady_ = true;
+            } else {
+                replayReadyCallback_();
+            }
         }
     }
 
@@ -671,7 +755,12 @@ void DirectAudioReceiveConsumer::ConsumePacket(
         } else {
             ++ztsPublishCount_;
             if (publish.notifyConsumer && ztsAnchorReadyCallback_) {
-                ztsAnchorReadyCallback_(publish.notificationGeneration);
+                if (deferEvents_) {
+                    pendingZtsAnchor_ = true;
+                    pendingZtsGeneration_ = publish.notificationGeneration;
+                } else {
+                    ztsAnchorReadyCallback_(publish.notificationGeneration);
+                }
             }
             ::ASFW::Isoch::Rx::ZtsTelemetryRecord record{};
             record.publishCount = ztsPublishCount_;
@@ -853,7 +942,11 @@ void DirectAudioReceiveConsumer::ResetReplayEpochForDiscontinuity(
             context.packetStatus, context.sampleFrame, timestampValidCount_, timestampInvalidCount_);
     }
     if (wasEstablished && reportTimingLoss && timingLossCallback_) {
-        timingLossCallback_();
+        if (deferEvents_) {
+            pendingTimingLoss_ = true;
+        } else {
+            timingLossCallback_();
+        }
     }
 }
 

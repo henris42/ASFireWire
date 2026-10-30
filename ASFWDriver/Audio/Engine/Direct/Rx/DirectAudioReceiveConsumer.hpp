@@ -62,9 +62,14 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
         timingObserver_ = observer;
     }
     [[nodiscard]] bool IsReplayEstablished() const noexcept;
+    // The BeginRead pull (RxPullHook.hpp) drains the master stream only, so a
+    // device with secondary capture streams turns it off: their slices would
+    // lag the frames the pull writes.
+    void AllowBeginReadPull(bool allowed) noexcept { beginReadPullAllowed_ = allowed; }
 
     void OnReceiveActivated() noexcept override;
     void OnReceiveQuiesced() noexcept override;
+    void SetReceivePollSource(::ASFW::Isoch::IIsochReceivePollSource* source) noexcept override;
     void BeginReceiveBatch(const ::ASFW::Isoch::IsochReceiveBatch& batch) noexcept override;
     void ConsumePacket(const ::ASFW::Isoch::IsochReceiveBatch& batch,
                        const ::ASFW::Isoch::IsochReceivePacket& packet) noexcept override;
@@ -110,6 +115,28 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     bool AnchorCursorToTransmitClock(const ::ASFW::Isoch::IsochReceivePacket& packet,
                                      const RxAudioPacketProcessorResult& result,
                                      uint64_t packetHostTicks) noexcept;
+
+    // The BeginRead pull: this stream's context, published in the bound
+    // control block's hook while both are there. PublishPull and ForgetPull
+    // run inside a poll (possibly the pull's own, on the IO thread) and never
+    // wait; WithdrawPull waits out a pull in progress, and runs only from the
+    // context's start, stop and teardown.
+    void PublishPull(::ASFW::Audio::Runtime::AudioTransportControlBlock* control) noexcept;
+    void ForgetPull() noexcept;
+    void WithdrawPull() noexcept;
+    // A batch the pull drains (IsochReceiveBatch::readerPull) runs on the IO
+    // thread. Its events go to handlers that start transmit contexts and take
+    // the coordinator's locks, so they wait for the next regular poll.
+    void DeliverDeferredEvents() noexcept;
+    bool deferEvents_{false};
+    bool pendingReplayReady_{false};
+    bool pendingTimingLoss_{false};
+    bool pendingZtsAnchor_{false};
+    uint64_t pendingZtsGeneration_{0};
+    ::ASFW::Isoch::IIsochReceivePollSource* pollSource_{nullptr};
+    ::ASFW::Isoch::IIsochReceivePollSource* pulledSource_{nullptr};
+    ::ASFW::Audio::Runtime::AudioTransportControlBlock* pullControl_{nullptr};
+    bool beginReadPullAllowed_{true};
 
     ::ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource_{nullptr};
     uint64_t lastBindingGeneration_{0};
