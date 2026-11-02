@@ -319,21 +319,71 @@ kern_return_t PrepareSelfIdBuffer(const std::shared_ptr<ASFW::Driver::SelfIDCapt
     return kIOReturnSuccess;
 }
 
-void SeedInitialInterruptMask(ASFW::Driver::HardwareInterface& hw,
-                              ASFW::Driver::InterruptManager* interrupts) {
-    auto access = hw.TryBeginAccess();
-    if (!access) return;
-    access.Write(ASFW::Driver::Register32::kIntMaskClear, 0xFFFFFFFFU);
-    access.Write(ASFW::Driver::Register32::kIntEventClear, 0xFFFFFFFFU);
+// Interrupt self-test (b199 B760 report: "keep IntMask master off until the
+// dext's handler is confirmed live"). With every event cleared and masked, the
+// software interrupt alone is enabled and raised through IntEventSet (OHCI 1.1
+// §6.1, bit 29); the handler's read of IntEvent moves
+// HardwareInterface::InterruptCaptures(). No interrupt within the budget means
+// the line does not reach this driver (a vector routed elsewhere, a line still
+// owned by another driver this early in the boot, MSI not delivered): the
+// controller stays masked, the start fails, and the boot goes on.
+constexpr uint32_t kInterruptSelfTestBudgetMs = 200;
 
-    const uint32_t initialMask =
-        ASFW::Driver::kBaseIntMask | ASFW::Driver::IntMaskBits::kMasterIntEnable;
+kern_return_t SeedInitialInterruptMask(ASFW::Driver::HardwareInterface& hw,
+                                       ASFW::Driver::InterruptManager* interrupts) {
+    using namespace ASFW::Driver;
+    {
+        auto access = hw.TryBeginAccess();
+        if (!access) return kIOReturnNoDevice;
+        access.Write(Register32::kIntMaskClear, 0xFFFFFFFFU);
+        access.Write(Register32::kIntEventClear, 0xFFFFFFFFU);
+    }
+#ifndef ASFW_HOST_TEST
+    if (interrupts) {
+        constexpr uint32_t kTestMask = IntEventBits::kSoftInterrupt | IntMaskBits::kMasterIntEnable;
+        const uint64_t before = hw.InterruptCaptures();
+        interrupts->EnableInterrupts(kTestMask);
+        {
+            auto access = hw.TryBeginAccess();
+            if (!access) return kIOReturnNoDevice;
+            access.Write(Register32::kIntMaskSet, kTestMask);
+            access.WriteAndFlush(Register32::kIntEventSet, IntEventBits::kSoftInterrupt);
+        }
+        uint32_t waitedMs = 0;
+        while (hw.InterruptCaptures() == before && waitedMs < kInterruptSelfTestBudgetMs) {
+            IOSleep(1);
+            ++waitedMs;
+        }
+        const bool fired = hw.InterruptCaptures() != before;
+        interrupts->MaskInterrupts(&hw, IntEventBits::kSoftInterrupt);
+        hw.ClearIntEvents(IntEventBits::kSoftInterrupt);
+        if (!fired) {
+            interrupts->MaskInterrupts(&hw, 0xFFFFFFFFU);
+            ASFW_LOG_ERROR(Hardware,
+                           "❌ interrupt self-test: no interrupt within %u ms of raising softInterrupt; the "
+                           "line does not reach this driver. Not starting",
+                           kInterruptSelfTestBudgetMs);
+            hw.BringUpTrace().Step("interrupt self-test: no interrupt within %u ms; not starting",
+                                   kInterruptSelfTestBudgetMs);
+            return kIOReturnNotReady;
+        }
+        hw.BringUpTrace().Step("interrupt self-test: the handler ran within %u ms", waitedMs);
+        ASFW_LOG(Hardware, "interrupt self-test: the handler ran within %u ms", waitedMs);
+    }
+#endif
+
+    const uint32_t initialMask = kBaseIntMask | IntMaskBits::kMasterIntEnable;
     hw.BringUpTrace().Step("IntMask cleared, IntMaskSet 0x%08x", initialMask);
-    access.Write(ASFW::Driver::Register32::kIntMaskSet, initialMask);
+    {
+        auto access = hw.TryBeginAccess();
+        if (!access) return kIOReturnNoDevice;
+        access.Write(Register32::kIntMaskSet, initialMask);
+    }
     if (interrupts) {
         interrupts->EnableInterrupts(initialMask);
     }
     ASFW_LOG(Hardware, "IntMask seeded: base|master=0x%08x", initialMask);
+    return kIOReturnSuccess;
 }
 
 // The one sanctioned direct InitiateBusReset in the driver.
@@ -822,7 +872,10 @@ kern_return_t ControllerCore::EnableInterruptsAndStartBus() {
     }
 
     auto& hw = *deps_.hardware;
-    SeedInitialInterruptMask(hw, deps_.interrupts.get());
+    if (const kern_return_t seedKr = SeedInitialInterruptMask(hw, deps_.interrupts.get());
+        seedKr != kIOReturnSuccess) {
+        return seedKr;
+    }
 
     ASFW_LOG(Hardware,
              "Setting linkEnable + BIBimageValid atomically - will trigger auto bus reset");
