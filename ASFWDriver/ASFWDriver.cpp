@@ -463,12 +463,16 @@ kern_return_t IMPL(ASFWDriver, Start) {
     ivars->bootTracePublish = options.tracePublish;
     ivars->bootTraceStepMs = options.traceStepMs;
     ivars->manualStart = options.manualStart;
-    if (options.tracePublish || options.manualStart) {
-        // Registered now, before any hardware is touched, so the boot-trace
-        // daemon finds this service while the bring-up runs and the agent can
-        // open a user client on a controller that waits for --bring-up.
+    if (options.manualStart) {
+        // Registered now, before any hardware is touched, so the agent can
+        // open a user client on a controller that waits for --bring-up. (The
+        // boot-trace daemon no longer needs this: it finds the unregistered
+        // service by registry path, so a traced start is as early as a plain
+        // one; b199/b205: the hang needs the early start.)
         RegisterService();
         ivars->serviceRegistered = true;
+    }
+    if (options.tracePublish || options.manualStart) {
         ASFW_LOG_MILESTONE(Controller,
                            "[StartStep] boot options: trace %u ms per step%{public}s%{public}s",
                            options.traceStepMs, options.traceStepMs == 0 ? " (no pauses)" : "",
@@ -713,7 +717,8 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
     trace.Begin();
     trace.Step("start %s (%s%s), IOMMU %s%s", ASFW::Version::kSemanticVersion,
                ASFW::Version::kGitCommitShort, ASFW::Version::kGitDirty ? " dirty" : "",
-               IommuState(provider), trace.Lockstep() ? ", lockstep trace" : "");
+               IommuState(provider),
+               !trace.Lockstep() ? "" : (ivars->bootTraceStepMs != 0 ? ", lockstep trace" : ", trace"));
 
     kr = ctx.deps.hardware->Attach(this, provider);
     if (kr != kIOReturnSuccess) {

@@ -54,7 +54,7 @@ enum BootTraceDaemon {
         var reportedWaiting = false
         while true {
             var sawService = false
-            for entry in driverServices() {
+            for entry in driverServices(under: traced) {
                 sawService = true
                 defer { IOObjectRelease(entry) }
                 var entryID: UInt64 = 0
@@ -107,16 +107,35 @@ enum BootTraceDaemon {
         return paths
     }
 
-    private static func driverServices() -> [io_registry_entry_t] {
-        var iterator: io_iterator_t = 0
-        guard IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceNameMatching(driverServiceName),
-                                           &iterator) == KERN_SUCCESS else { return [] }
-        defer { IOObjectRelease(iterator) }
+    /// The driver services: by name once registered, and before that by
+    /// registry path under each traced controller (a service attached to its
+    /// provider is in the plane before RegisterService; the driver registers
+    /// late so that a traced start is as early as a plain one).
+    private static func driverServices(under controllers: [String]) -> [io_registry_entry_t] {
         var entries: [io_registry_entry_t] = []
-        while true {
-            let entry = IOIteratorNext(iterator)
-            if entry == 0 { break }
-            entries.append(entry)
+        var seen = Set<UInt64>()
+        func add(_ entry: io_registry_entry_t) {
+            var id: UInt64 = 0
+            if IORegistryEntryGetRegistryEntryID(entry, &id) == KERN_SUCCESS, !seen.contains(id) {
+                seen.insert(id)
+                entries.append(entry)
+            } else {
+                IOObjectRelease(entry)
+            }
+        }
+        for controller in controllers {
+            let entry = IORegistryEntryFromPath(kIOMainPortDefault, controller + "/" + driverServiceName)
+            if entry != 0 { add(entry) }
+        }
+        var iterator: io_iterator_t = 0
+        if IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceNameMatching(driverServiceName),
+                                        &iterator) == KERN_SUCCESS {
+            defer { IOObjectRelease(iterator) }
+            while true {
+                let entry = IOIteratorNext(iterator)
+                if entry == 0 { break }
+                add(entry)
+            }
         }
         return entries
     }
