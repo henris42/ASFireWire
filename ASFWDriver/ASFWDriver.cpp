@@ -227,6 +227,14 @@ void ExecuteRuntimeTeardown(ServiceContext& ctx, const QuiescePlan& plan) {
     }
 
     ctx.watchdog.Stop();
+    // Quiet at the controller before the source goes: nothing of ours may
+    // assert the line (or DMA) once the driver has left, including across a
+    // warm reset of a card that keeps its state (b205 B760 report).
+    if (!providerRevoked && ctx.deps.hardware && !ctx.deps.hardware->HardwareGone() &&
+        plan.completedStartStage >= StartStage::kProviderOpened) {
+        ctx.deps.hardware->SetInterruptMask(0xFFFFFFFFu, false);
+        ctx.deps.hardware->ClearIntEvents(0xFFFFFFFFu);
+    }
     if (ctx.deps.interrupts) {
         ctx.deps.interrupts->Disable();
         if (plan.reason != QuiesceReason::kSystemSuspend &&
@@ -252,6 +260,12 @@ void ExecuteRuntimeTeardown(ServiceContext& ctx, const QuiescePlan& plan) {
         }
         if (ctx.deps.configRomStager && ctx.deps.hardware) {
             ctx.deps.configRomStager->Teardown(*ctx.deps.hardware);
+        }
+        // Soft reset last: every DMA context stops, linkEnable and LPS go,
+        // the card is as a cold boot leaves it (Linux ohci.c pci_remove and
+        // suspend do the same).
+        if (ctx.controller) {
+            (void)ctx.controller->PerformSoftReset();
         }
     } else if (hardwareGone) {
         ASFW_LOG(Controller,

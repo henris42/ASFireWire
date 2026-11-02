@@ -118,6 +118,9 @@ class ControllerCore final : private Role::IPhyConfigReset,
                              public ASFW::Bus::ILinkOnExecutor,
                              public std::enable_shared_from_this<ControllerCore> {
   public:
+    // OHCI soft reset: every DMA context stops, linkEnable and LPS go. The
+    // start sequence and the runtime teardown both use it.
+    kern_return_t PerformSoftReset() const;
     struct Dependencies {
         std::shared_ptr<HardwareInterface> hardware;
         std::shared_ptr<InterruptManager> interrupts;
@@ -272,7 +275,6 @@ class ControllerCore final : private Role::IPhyConfigReset,
 
     void LogBuildBanner() const;
     kern_return_t InitializeBusResetAndDiscovery();
-    kern_return_t PerformSoftReset() const;
     kern_return_t InitialiseHardware(IOService* provider);
     kern_return_t EnableInterruptsAndStartBus();
     kern_return_t StageConfigROM(uint32_t busOptions, uint32_t guidHi, uint32_t guidLo) const;

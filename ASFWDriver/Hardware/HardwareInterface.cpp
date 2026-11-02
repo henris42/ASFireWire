@@ -281,6 +281,19 @@ void HardwareInterface::Detach() {
     // RevokeAndDrain() also waits for any in-progress batch to finish.
     RevokeAndDrain();
     if (device_) {
+#ifndef ASFW_HOST_TEST
+        // Leave the function unable to master the bus: a card that keeps its
+        // state across a warm reset (b205 B760 report) must not DMA into the
+        // next boot's memory before a driver owns it again.
+        if (!HardwareGone()) {
+            uint16_t command = 0;
+            device_->ConfigurationRead16(kIOPCIConfigurationOffsetCommand, &command);
+            if (command != 0xFFFF && (command & kIOPCICommandBusMaster) != 0) {
+                device_->ConfigurationWrite16(kIOPCIConfigurationOffsetCommand,
+                                              static_cast<uint16_t>(command & ~kIOPCICommandBusMaster));
+            }
+        }
+#endif
         if (owner_) {
             device_->Close(owner_);
         }
