@@ -839,6 +839,9 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
     if (!ctx.lifecycle->CompleteStart("runtime start complete", mach_absolute_time())) {
         return failStart(kIOReturnError, "runtime start completion rejected");
     }
+    ctx.irqEntriesAtStart = ctx.irqEntries.load(std::memory_order_acquire);
+    ctx.startCompleteNs = ASFW::Timing::hostTicksToNanos(mach_absolute_time());
+    ctx.irqArrivalChecked = false;
 
 #ifndef ASFW_HOST_TEST
     // Arm only after the last failStart(). Enabling the source queues an initial
@@ -1281,6 +1284,13 @@ constexpr uint64_t kTracedInterrupts = 8;
 // storm on a shared line (b199 B760 report): the controller is masked and the
 // machine stays up. A healthy shared line sees a few of these per second.
 constexpr uint32_t kSpuriousInterruptStormLimit = 2000;
+// After start complete the forced bus reset raises busReset and selfIDComplete
+// at once (b202: 1 ms). No interrupt in this long means the line does not
+// reach this driver (a vector routed elsewhere, a level line still owned by
+// another driver early in the boot): the controller is masked and the runtime
+// quiesced, the service stays claimed, the machine goes on. (b205: checking
+// this inside Start cannot work, the handler runs on the queue Start holds.)
+constexpr uint64_t kInterruptArrivalBudgetNs = 1'000'000'000ull;
 } // namespace
 
 void ASFWDriver::InterruptOccurred_Impl(ASFWDriver_InterruptOccurred_Args) {
@@ -1414,6 +1424,29 @@ void ASFWDriver::AsyncWatchdogTimerFired_Impl(ASFWDriver_AsyncWatchdogTimerFired
         // chain permanently on a transient non-running state; the chain's
         // real kill switch is the timer disable in watchdog.Stop()/Reset().
         if (ctx.lifecycle && ctx.lifecycle->AdmitsNormalWork()) {
+            if (!ctx.irqArrivalChecked && ctx.startCompleteNs != 0 &&
+                ASFW::Timing::hostTicksToNanos(mach_absolute_time()) - ctx.startCompleteNs >=
+                    kInterruptArrivalBudgetNs) {
+                ctx.irqArrivalChecked = true;
+                const uint64_t arrived = ctx.irqEntries.load(std::memory_order_acquire) - ctx.irqEntriesAtStart;
+                if (arrived == 0) {
+                    ASFW_LOG_ERROR(Controller,
+                                   "❌ no interrupt within %llu ms of start complete, though the bus reset raised one: "
+                                   "the line does not reach this driver. Masking the controller and quiescing the runtime",
+                                   kInterruptArrivalBudgetNs / 1000000ull);
+                    if (ctx.deps.hardware) {
+                        ctx.deps.hardware->BringUpTrace().Step("no interrupt within %llu ms of start complete; quiescing",
+                                                                kInterruptArrivalBudgetNs / 1000000ull);
+                        if (ctx.deps.interrupts) {
+                            ctx.deps.interrupts->MaskInterrupts(ctx.deps.hardware.get(), 0xFFFFFFFFu);
+                        }
+                    }
+                    RequestRuntimeQuiesce(static_cast<uint32_t>(QuiesceReason::kSystemSuspend));
+                    return;
+                }
+                ASFW_LOG(Controller, "interrupt arrival: %llu within %llu ms of start complete", arrived,
+                         kInterruptArrivalBudgetNs / 1000000ull);
+            }
             // Read-only anomaly probe. Linux ohci.c:2203-2225 samples IntEvent
             // before acknowledging it; this probe deliberately never clears it.
             // 100 ms sampling avoids MMIO/logging on each watchdog or IRQ tick.

@@ -319,16 +319,11 @@ kern_return_t PrepareSelfIdBuffer(const std::shared_ptr<ASFW::Driver::SelfIDCapt
     return kIOReturnSuccess;
 }
 
-// Interrupt self-test (b199 B760 report: "keep IntMask master off until the
-// dext's handler is confirmed live"). With every event cleared and masked, the
-// software interrupt alone is enabled and raised through IntEventSet (OHCI 1.1
-// §6.1, bit 29); the handler's read of IntEvent moves
-// HardwareInterface::InterruptCaptures(). No interrupt within the budget means
-// the line does not reach this driver (a vector routed elsewhere, a line still
-// owned by another driver this early in the boot, MSI not delivered): the
-// controller stays masked, the start fails, and the boot goes on.
-constexpr uint32_t kInterruptSelfTestBudgetMs = 200;
-
+// The mask is seeded with every event cleared first. (b205: a self-test that
+// waited here for the handler could never pass: the interrupt source delivers
+// on the default queue, which Start occupies. Whether the line reaches the
+// driver is checked after Start returns, by the watchdog; see ASFWDriver.cpp
+// kInterruptArrivalBudgetNs.)
 kern_return_t SeedInitialInterruptMask(ASFW::Driver::HardwareInterface& hw,
                                        ASFW::Driver::InterruptManager* interrupts) {
     using namespace ASFW::Driver;
@@ -338,39 +333,6 @@ kern_return_t SeedInitialInterruptMask(ASFW::Driver::HardwareInterface& hw,
         access.Write(Register32::kIntMaskClear, 0xFFFFFFFFU);
         access.Write(Register32::kIntEventClear, 0xFFFFFFFFU);
     }
-#ifndef ASFW_HOST_TEST
-    if (interrupts) {
-        constexpr uint32_t kTestMask = IntEventBits::kSoftInterrupt | IntMaskBits::kMasterIntEnable;
-        const uint64_t before = hw.InterruptCaptures();
-        interrupts->EnableInterrupts(kTestMask);
-        {
-            auto access = hw.TryBeginAccess();
-            if (!access) return kIOReturnNoDevice;
-            access.Write(Register32::kIntMaskSet, kTestMask);
-            access.WriteAndFlush(Register32::kIntEventSet, IntEventBits::kSoftInterrupt);
-        }
-        uint32_t waitedMs = 0;
-        while (hw.InterruptCaptures() == before && waitedMs < kInterruptSelfTestBudgetMs) {
-            IOSleep(1);
-            ++waitedMs;
-        }
-        const bool fired = hw.InterruptCaptures() != before;
-        interrupts->MaskInterrupts(&hw, IntEventBits::kSoftInterrupt);
-        hw.ClearIntEvents(IntEventBits::kSoftInterrupt);
-        if (!fired) {
-            interrupts->MaskInterrupts(&hw, 0xFFFFFFFFU);
-            ASFW_LOG_ERROR(Hardware,
-                           "❌ interrupt self-test: no interrupt within %u ms of raising softInterrupt; the "
-                           "line does not reach this driver. Not starting",
-                           kInterruptSelfTestBudgetMs);
-            hw.BringUpTrace().Step("interrupt self-test: no interrupt within %u ms; not starting",
-                                   kInterruptSelfTestBudgetMs);
-            return kIOReturnNotReady;
-        }
-        hw.BringUpTrace().Step("interrupt self-test: the handler ran within %u ms", waitedMs);
-        ASFW_LOG(Hardware, "interrupt self-test: the handler ran within %u ms", waitedMs);
-    }
-#endif
 
     const uint32_t initialMask = kBaseIntMask | IntMaskBits::kMasterIntEnable;
     hw.BringUpTrace().Step("IntMask cleared, IntMaskSet 0x%08x", initialMask);

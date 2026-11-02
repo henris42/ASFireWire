@@ -468,7 +468,6 @@ IsochContextEvents HardwareInterface::TakeIsochContextEvents(uint32_t intEvent) 
 InterruptSnapshot HardwareInterface::CaptureInterruptSnapshot(uint64_t timestamp) const noexcept {
     InterruptSnapshot snapshot{};
     snapshot.timestamp = timestamp;
-    interruptCaptures_.fetch_add(1, std::memory_order_acq_rel);
     auto access = const_cast<HardwareInterface*>(this)->TryBeginAccess();
     if (!access) return snapshot;
     snapshot.intEvent = access.Read(Register32::kIntEvent);

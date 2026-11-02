@@ -44,6 +44,11 @@ struct ServiceContext {
     uint32_t irqSpurious{0};
     uint64_t irqSpuriousWindowNs{0};
     bool irqStormMasked{false};
+    // The first interrupt after start complete (the forced bus reset raises
+    // one) must arrive within kInterruptArrivalBudgetNs; the watchdog checks.
+    uint64_t startCompleteNs{0};
+    uint64_t irqEntriesAtStart{0};
+    bool irqArrivalChecked{true};
     std::atomic<bool> selfTerminationRequested{false};
     uint64_t irqProbeLastEntries{0};
     ASFW::Driver::ControllerCore::Dependencies deps;

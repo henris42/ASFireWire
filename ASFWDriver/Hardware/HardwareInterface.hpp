@@ -93,11 +93,6 @@ class HardwareInterface {
 
     void SetInterruptMask(uint32_t mask, bool enable);
     [[nodiscard]] InterruptSnapshot CaptureInterruptSnapshot(uint64_t timestamp) const noexcept;
-    /// How many times the interrupt handler has read IntEvent. The start's
-    /// interrupt self-test waits for this to move.
-    [[nodiscard]] uint64_t InterruptCaptures() const noexcept {
-        return interruptCaptures_.load(std::memory_order_acquire);
-    }
     void SetLinkControlBits(uint32_t bits);
     void ClearLinkControlBits(uint32_t bits);
     void ClearIntEvents(uint32_t mask);
@@ -318,7 +313,6 @@ class HardwareInterface {
 
     //! Advisory: is an isoch stream running? See SetIsochStreamingActive().
     std::atomic<bool> isochStreamingActive_{false};
-    mutable std::atomic<uint64_t> interruptCaptures_{0};
 
     // Once PCI decoding disappears, an all-ones BAR read is terminal for this
     // provider incarnation. It is deliberately separate from a planned
