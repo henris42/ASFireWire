@@ -34,6 +34,10 @@
 #                        I/O Registry (repeatable), e.g. arm a slot while the card is out:
 #                        --path 'PciRoot(0x0)/Pci(0x1C,0x4)/Pci(0x0,0x0)/Pci(0x0,0x0)'
 #                        (--report prints the path of every controller present)
+#     --keep-aspm        do not set pci-aspm-default = 0 on the controller's PCIe bridge. By default
+#                        arming disables ASPM on the XIO2213B's link: its erratum #2 (TI SCPZ007A) hangs
+#                        the system when the link leaves L1. IOPCIFamily applies the property to the
+#                        bridge and its root port at enumeration; --report shows the current value.
 #     --dry-run          show what would change, write nothing
 #
 # Takes effect at the next boot. To undo by hand, copy the backup over config.plist,
@@ -50,7 +54,7 @@ info() { printf '        %s\n' "$*"; }
 # missing key's error on stdout, so its exit status decides, not its output.
 plget() { local v; v=$(plutil -extract "$1" raw -o - "$2" 2>/dev/null) || return 0; printf '%s' "$v"; }
 
-MODE=arm; ESP=""; VTD=0; DRY=0; LOGLEVEL=""; NO_LOGLEVEL=0; BOOTTRACE=""; NO_BOOTTRACE=0; START=""; NO_START=0; GIVEN=""
+MODE=arm; ESP=""; VTD=0; DRY=0; LOGLEVEL=""; NO_LOGLEVEL=0; BOOTTRACE=""; NO_BOOTTRACE=0; START=""; NO_START=0; GIVEN=""; KEEP_ASPM=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --arm) MODE=arm ;;
@@ -69,8 +73,9 @@ while [ $# -gt 0 ]; do
             fi
             GIVEN+="$2"$'\t'"given"$'\t'$'\n'; shift ;;
         --vtd) VTD=1 ;;
+        --keep-aspm) KEEP_ASPM=1 ;;
         --dry-run) DRY=1 ;;
-        -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,44p' "$0"; exit 0 ;;
         *) echo "unknown option: $1 (see --help)"; exit 2 ;;
     esac
     shift
@@ -161,6 +166,10 @@ while IFS=$'\t' read -r p n ids; do
     [ -n "$trace" ] && info "         asfw-boot-trace = $trace ms per step (lockstep trace to /var/log/asfw)"
     start=$(plget "DeviceProperties.Add.$p.asfw-start" "$C")
     [ -n "$start" ] && info "         asfw-start = $start"
+    bridge="${p%/*}"
+    aspm=$(plget "DeviceProperties.Add.$bridge.pci-aspm-default" "$C")
+    if [ -n "$aspm" ]; then info "         bridge $bridge: pci-aspm-default = $aspm (ASPM off; XIO2213B erratum #2)"
+    else warn "bridge $bridge: no pci-aspm-default in the config; L1 stays as the firmware left it (XIO2213B erratum #2: hang on L1 exit)"; fi
 done <<< "$PATHS"
 # Paths in the config that carry asfw-* properties but are not in the list above:
 # a card that was pulled, or a slot armed with --path.
@@ -228,6 +237,22 @@ while IFS=$'\t' read -r p n ids; do
     fi
     if { [ "$MODE" = disarm ] || [ "$NO_START" = 1 ]; } && [ -n "$start" ]; then
         plutil -remove "DeviceProperties.Add.$p.asfw-start" "$TMP" && { ok "remove asfw-start  $p"; changed=1; }
+    fi
+    # ASPM off on the controller's PCIe bridge (the path one level up): XIO2213B
+    # erratum #2. Removed on disarm only if it is the only key there.
+    bridge="${p%/*}"
+    aspm=$(plget "DeviceProperties.Add.$bridge.pci-aspm-default" "$TMP")
+    if [ "$MODE" = arm ] && [ "$KEEP_ASPM" = 0 ] && [ "$aspm" != "AAAAAA==" ] && [ "$aspm" != "0" ]; then
+        [ -n "$aspm" ] && plutil -remove "DeviceProperties.Add.$bridge.pci-aspm-default" "$TMP"
+        if plutil -extract "DeviceProperties.Add.$bridge" xml1 -o - "$TMP" >/dev/null 2>&1; then
+            plutil -insert "DeviceProperties.Add.$bridge.pci-aspm-default" -data AAAAAA== "$TMP"
+        else
+            plutil -insert "DeviceProperties.Add.$bridge" -xml '<dict><key>pci-aspm-default</key><data>AAAAAA==</data></dict>' "$TMP"
+        fi && { ok "ASPM off  $bridge  (pci-aspm-default = 0)"; changed=1; }
+    fi
+    if [ "$MODE" = disarm ] && [ -n "$aspm" ]; then
+        plutil -remove "DeviceProperties.Add.$bridge.pci-aspm-default" "$TMP" && { ok "remove pci-aspm-default  $bridge"; changed=1; }
+        [ "$(plutil -extract "DeviceProperties.Add.$bridge" xml1 -o - "$TMP" | grep -c '<key>')" = 0 ] && plutil -remove "DeviceProperties.Add.$bridge" "$TMP"
     fi
     # The DMA exclusion property is gone from the driver (b178); old configs lose it on disarm.
     if [ "$MODE" = disarm ] && plutil -extract "DeviceProperties.Add.$p.asfw-dma-exclude" raw -o - "$TMP" >/dev/null 2>&1; then
