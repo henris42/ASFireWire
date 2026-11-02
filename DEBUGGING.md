@@ -214,7 +214,41 @@ debugger that runs on that core.
 - **Early checks**: the first MMIO read fails the start when the controller reads
   all ones; the function's power state is read and set to D0 before anything else.
 
-## 9. Hardware debugger
+## 9. What the chip's own documents say (XIO2213B)
+
+Read for the first time in the b208 round: the data manual SCPS210F and the errata
+SCPZ007A (copies in `~/datasheets`). Three things matter here.
+
+- **Erratum #2: "the system will hang or the device will drop when L1 is
+  enabled."** The link enters ASPM L1; when the root complex wants to leave it, the
+  XIO2213B does not answer, the root port retrains and ends in Poll_Compliance.
+  TI's workaround: do not enable L1. macOS sets the bridge's ASPM from the
+  firmware's value unless a `pci-aspm-default` property is injected on the PCIe
+  device (IOPCIFamily, `IOPCIBridge.cpp`, applied to the device and its root
+  port at enumeration). `asfw-opencore-arm.sh --arm` sets `pci-aspm-default =
+  <00000000>` on the bridge path (one level up from the OHCI function); without
+  a property, `ioreg -lw0 -n PXSX@0 | grep pci-aspm-default` shows the value the
+  firmware left (bit 0 L0s, bit 1 L1). The attach step reports it and warns on L1.
+- **The OHCI function is conventional PCI behind the chip's own PCIe bridge.** No
+  PCIe capability; MSI exists on the bridge only and "enabling MSI messaging in the
+  XIO2213B has no effect"; the command register's interrupt-disable bit is
+  read-only. Interrupts are INTA, turned into PCIe Assert_INTA messages by the
+  bridge, on the root port's shared line (IRQ 16 on the B760).
+- **State across resets.** No VAUX; sticky bits clear only on GRST or power-on, and
+  the OHCI registers on PERST. A board that does not reset the slot on a warm
+  reboot hands the next boot whatever the previous session left (linkEnable,
+  the interrupt mask, bus master, armed DMA contexts). The driver's teardown now
+  masks, soft-resets and drops bus master, but a killed driver or another driver
+  leaves what it leaves; a reset before macOS (a UEFI driver, or ACPI `_INI`
+  through the BAR) is the only cure that does not depend on the previous session.
+  The `arrival:` step before the soft reset shows what the card came with.
+
+Also from the data manual: Link Enhancement Control at config F4h (`enab_accel`,
+`enab_unfair`, now set; AT threshold left at store-and-forward), PCI Misc Config at
+F0h (defaults already as TI recommends), PMCSR not affected by the D3hot to D0
+reset.
+
+## 10. Hardware debugger
 
 Intel DCI (Direct Connect Interface) is JTAG over a USB 3 debug cable and the only
 tool that stops the cores from outside, independent of what the kernel is doing: a
@@ -222,8 +256,9 @@ core stalled on a PCIe read is visible to it and to nothing else. It needs the
 hidden BIOS setting enabled, the cable, and Intel System Debugger with a licence for
 the platform.
 
-## 10. Order of attack
+## 11. Order of attack
 
+0. ASPM L1 off on the XIO2213B's bridge (§9); check the `arrival:` step on a warm reboot.
 1. Prove the panic path (§5, the forced panic). Cheap, and it decides whether past
    "no panic report" results meant anything.
 2. Run the bring-up under the trace with the manual start (§8). The last line names
@@ -233,4 +268,4 @@ the platform.
    core dump within a minute.
 4. If the trace points at one access and the core does not explain it, KDP with
    `0x45` and a breakpoint on that access (§7).
-5. DCI when the licence arrives (§9).
+5. DCI when the licence arrives (§10).
