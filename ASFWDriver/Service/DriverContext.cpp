@@ -4,6 +4,10 @@
 #include <net.asfw.driver/ASFWDriver.h>
 
 #include <PCIDriverKit/IOPCIFamilyDefinitions.h>
+#include <DriverKit/IOKitKeys.h>
+#include <DriverKit/OSArray.h>
+#include <DriverKit/OSData.h>
+#include <cstring>
 
 #include "../Async/AsyncSubsystem.hpp"
 #include "../Async/Interfaces/IFireWireBus.hpp"
@@ -437,11 +441,31 @@ kern_return_t DriverWiring::PrepareInterrupts(ASFWDriver& service, IOService* pr
         // (xnu IOUserServer.cpp, IOInterruptDispatchSourceInterrupt).
         uint64_t type = 0;
         const kern_return_t typeStatus = IOInterruptDispatchSource::GetInterruptType(pci, 0, &type);
+        // The vector behind index 0: the first 32 bits of the provider's first
+        // IOInterruptSpecifiers entry. On a PC the INTx line of a PCH root port
+        // comes from the ACPI _PRT and is shared (b199 B760 report: IRQ 16 with
+        // the GPU, NVMe, XHC, SATA, HDA and LAN).
+        uint32_t vector = 0;
+        bool haveVector = false;
+        OSContainer* specifiers = nullptr;
+        if (pci->SearchProperty("IOInterruptSpecifiers", kIOServicePlane, 0, &specifiers) ==
+                kIOReturnSuccess && specifiers != nullptr) {
+            if (auto* array = OSDynamicCast(OSArray, specifiers); array != nullptr && array->getCount() > 0) {
+                if (auto* data = OSDynamicCast(OSData, array->getObject(0));
+                    data != nullptr && data->getLength() >= sizeof(vector)) {
+                    memcpy(&vector, data->getBytesNoCopy(), sizeof(vector));
+                    haveVector = true;
+                }
+            }
+            specifiers->release();
+        }
+        const char* kind = typeStatus != kIOReturnSuccess ? "unknown" : ((type & 1U) != 0 ? "level" : "edge");
+        ASFW_LOG(Controller, "[Attach] interrupts %{public}s, source 0 type 0x%llx (%{public}s), vector %u%{public}s",
+                 mode, type, kind, vector, haveVector ? "" : " (unknown)");
         if (ctx.deps.hardware) {
             ctx.deps.hardware->BringUpTrace().Step(
-                "interrupts %s, source 0 type 0x%llx (%s, status 0x%08x)", mode, type,
-                typeStatus != kIOReturnSuccess ? "unknown" : ((type & 1U) != 0 ? "level" : "edge"),
-                typeStatus);
+                "interrupts %s, source 0 type 0x%llx (%s, status 0x%08x), vector %u%s", mode, type, kind,
+                typeStatus, vector, haveVector ? "" : " (unknown)");
         }
     }
 

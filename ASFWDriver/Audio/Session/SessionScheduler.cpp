@@ -451,7 +451,7 @@ IOReturn SessionScheduler::DeferRestart(DuplexRestartReason reason, uint64_t obs
         (*deps_.timer)->Cancel(previous);
     }
     ArmPendingTimer(quietMs, generation);
-    ASFW_LOG(Audio, "[Session] restart pending GUID=%llx reason=%u quiet=%ums%s", guid_,
+    ASFW_LOG(Audio, "[Session] restart pending GUID=%llx reason=%u quiet=%ums%{public}s", guid_,
              static_cast<unsigned>(reason), quietMs, merged ? " (merged)" : "");
     return kIOReturnSuccess;
 }

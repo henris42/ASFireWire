@@ -582,7 +582,7 @@ void BeBoBProtocol::EnsurePlugFree(CMP::PCRDirection dir, uint8_t plug,
             return;
         }
         if (used) {
-            ASFW_LOG(Audio, "[BeBoB] Plug %u (direction %s) in use, breaking connections",
+            ASFW_LOG(Audio, "[BeBoB] Plug %u (direction %{public}s) in use, breaking connections",
                      plug, dir == CMP::PCRDirection::kInput ? "Input" : "Output");
             cmpClient_->BreakBothConnections(device, plug, [cb](CMP::CMPStatus status) {
                 cb(status == CMP::CMPStatus::Success ? kIOReturnSuccess : kIOReturnError);

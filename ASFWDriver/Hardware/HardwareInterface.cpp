@@ -126,7 +126,13 @@ kern_return_t HardwareInterface::Attach(IOService* owner, IOService* provider) {
             pci->ConfigurationRead16(pmOffset + kPmcsr, &pmcsr);
             const uint16_t state = pmcsr & kPowerStateMask;
             bringUpTrace_.Detail("power management at 0x%02llx: PMCSR 0x%04x, D%u", pmOffset, pmcsr, state);
-            if (state != 0) {
+            if (state == 0) {
+                ASFW_LOG(Hardware, "[Attach] power management at 0x%02llx: PMCSR 0x%04x, D0", pmOffset, pmcsr);
+            } else {
+                ASFW_LOG_WARNING(Hardware,
+                                 "[Attach] the function is in D%u (PMCSR 0x%04x at 0x%02llx); setting D0 and "
+                                 "waiting 10 ms",
+                                 state, pmcsr, pmOffset);
                 bringUpTrace_.Step("function is in D%u; setting D0 and waiting 10 ms", state);
                 pci->ConfigurationWrite16(pmOffset + kPmcsr,
                                           static_cast<uint16_t>(pmcsr & ~(kPowerStateMask | kPmeStatus)));
@@ -142,9 +148,11 @@ kern_return_t HardwareInterface::Attach(IOService* owner, IOService* provider) {
                     pci->Close(owner);
                     return kIOReturnNotReady;
                 }
+                ASFW_LOG_WARNING(Hardware, "[Attach] D0 reached: PMCSR 0x%04x, BAR0 0x%08x", pmcsr, bar0);
                 bringUpTrace_.Detail("D0 reached: PMCSR 0x%04x, BAR0 0x%08x", pmcsr, bar0);
             }
         } else {
+            ASFW_LOG(Hardware, "[Attach] no power management capability");
             bringUpTrace_.Detail("no power management capability");
         }
     }
@@ -177,10 +185,14 @@ kern_return_t HardwareInterface::Attach(IOService* owner, IOService* provider) {
             uint16_t linkStatus = 0;
             pci->ConfigurationRead16(pcieOffset + 0x10, &linkControl);
             pci->ConfigurationRead16(pcieOffset + 0x12, &linkStatus);
+            ASFW_LOG(Hardware, "[Attach] PCIe at 0x%02llx: link control 0x%04x (ASPM %u), link status 0x%04x (x%u, speed %u)",
+                     pcieOffset, linkControl, linkControl & 0x3, linkStatus, (linkStatus >> 4) & 0x3F,
+                     linkStatus & 0xF);
             bringUpTrace_.Detail("PCIe at 0x%02llx: link control 0x%04x (ASPM %u), link status 0x%04x (x%u, speed %u)",
                                  pcieOffset, linkControl, linkControl & 0x3, linkStatus, (linkStatus >> 4) & 0x3F,
                                  linkStatus & 0xF);
         } else {
+            ASFW_LOG(Hardware, "[Attach] no PCI Express capability: conventional PCI function (behind a bridge)");
             bringUpTrace_.Detail("no PCI Express capability: conventional PCI function (behind a bridge)");
         }
     }
