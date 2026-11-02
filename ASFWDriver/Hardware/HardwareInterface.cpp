@@ -109,6 +109,46 @@ kern_return_t HardwareInterface::Attach(IOService* owner, IOService* provider) {
         ASFW_LOG(Hardware, "⚠️  Agere/LSI chipset detected");
     }
 
+    // Power state before anything else is written: a function the firmware
+    // left in D3hot answers MMIO with nothing or garbage, depending on the
+    // root port, and the D3hot -> D0 transition may reset its configuration
+    // (PCI PM 1.2), which is why it runs before the command register is set
+    // and why BAR0 is checked afterwards. A function that will not reach D0,
+    // or lost its BAR, fails the start instead of being touched further.
+    {
+        uint64_t pmOffset = 0;
+        if (pci->FindPCICapability(kIOPCICapabilityIDPowerManagement, 0, &pmOffset) ==
+                kIOReturnSuccess && pmOffset != 0) {
+            constexpr uint64_t kPmcsr = 4;
+            constexpr uint16_t kPowerStateMask = 0x0003;
+            constexpr uint16_t kPmeStatus = 0x8000; // write-1-to-clear; never written here
+            uint16_t pmcsr = 0;
+            pci->ConfigurationRead16(pmOffset + kPmcsr, &pmcsr);
+            const uint16_t state = pmcsr & kPowerStateMask;
+            bringUpTrace_.Detail("power management at 0x%02llx: PMCSR 0x%04x, D%u", pmOffset, pmcsr, state);
+            if (state != 0) {
+                bringUpTrace_.Step("function is in D%u; setting D0 and waiting 10 ms", state);
+                pci->ConfigurationWrite16(pmOffset + kPmcsr,
+                                          static_cast<uint16_t>(pmcsr & ~(kPowerStateMask | kPmeStatus)));
+                IOSleep(10);
+                pci->ConfigurationRead16(pmOffset + kPmcsr, &pmcsr);
+                uint32_t bar0 = 0;
+                pci->ConfigurationRead32(kIOPCIConfigurationOffsetBaseAddress0, &bar0);
+                if ((pmcsr & kPowerStateMask) != 0 || (bar0 & ~0xFu) == 0) {
+                    ASFW_LOG_ERROR(Hardware, "❌ after setting D0: PMCSR 0x%04x, BAR0 0x%08x; not starting",
+                                   pmcsr, bar0);
+                    bringUpTrace_.Step("after setting D0: PMCSR 0x%04x, BAR0 0x%08x; not starting", pmcsr,
+                                       bar0);
+                    pci->Close(owner);
+                    return kIOReturnNotReady;
+                }
+                bringUpTrace_.Detail("D0 reached: PMCSR 0x%04x, BAR0 0x%08x", pmcsr, bar0);
+            }
+        } else {
+            bringUpTrace_.Detail("no power management capability");
+        }
+    }
+
     pci->ConfigurationRead16(kIOPCIConfigurationOffsetCommand, &command);
     bringUpTrace_.Step("pci %04x:%04x open, command 0x%04x; enabling memory space and bus master",
                        vendorId, deviceId, command);
@@ -123,6 +163,26 @@ kern_return_t HardwareInterface::Attach(IOService* owner, IOService* provider) {
     if ((commandVerify & kRequiredCommandBits) != kRequiredCommandBits) {
         pci->Close(owner);
         return kIOReturnNotReady;
+    }
+
+    // The link, for the trace only. The OHCI function of a XIO2213 sits behind
+    // the chip's own PCI bridge and has no PCI Express capability; a
+    // single-function PCIe OHCI has one, and its link status says whether the
+    // link is trained and how wide.
+    {
+        uint64_t pcieOffset = 0;
+        if (pci->FindPCICapability(kIOPCICapabilityIDPCIExpress, 0, &pcieOffset) == kIOReturnSuccess &&
+            pcieOffset != 0) {
+            uint16_t linkControl = 0;
+            uint16_t linkStatus = 0;
+            pci->ConfigurationRead16(pcieOffset + 0x10, &linkControl);
+            pci->ConfigurationRead16(pcieOffset + 0x12, &linkStatus);
+            bringUpTrace_.Detail("PCIe at 0x%02llx: link control 0x%04x (ASPM %u), link status 0x%04x (x%u, speed %u)",
+                                 pcieOffset, linkControl, linkControl & 0x3, linkStatus, (linkStatus >> 4) & 0x3F,
+                                 linkStatus & 0xF);
+        } else {
+            bringUpTrace_.Detail("no PCI Express capability: conventional PCI function (behind a bridge)");
+        }
     }
 #endif
 
