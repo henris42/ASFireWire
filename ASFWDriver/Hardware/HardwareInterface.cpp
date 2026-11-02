@@ -1,6 +1,7 @@
 #include "HardwareInterface.hpp"
 
 #include <algorithm>
+#include <cstring>
 #include <bit>
 
 #include "../Async/Interfaces/IAsyncControllerPort.hpp"
@@ -9,8 +10,11 @@
 #include "../Logging/Logging.hpp"
 
 #ifndef ASFW_HOST_TEST
+#include <DriverKit/IOKitKeys.h>
 #include <DriverKit/IOLib.h>
 #include <DriverKit/IOService.h>
+#include <DriverKit/OSData.h>
+#include <DriverKit/OSNumber.h>
 #include <DriverKit/OSAction.h>
 #include <PCIDriverKit/IOPCIFamilyDefinitions.h>
 #else
@@ -125,10 +129,10 @@ kern_return_t HardwareInterface::Attach(IOService* owner, IOService* provider) {
             uint16_t pmcsr = 0;
             pci->ConfigurationRead16(pmOffset + kPmcsr, &pmcsr);
             const uint16_t state = pmcsr & kPowerStateMask;
-            bringUpTrace_.Detail("power management at 0x%02llx: PMCSR 0x%04x, D%u", pmOffset, pmcsr, state);
-            if (state == 0) {
-                ASFW_LOG(Hardware, "[Attach] power management at 0x%02llx: PMCSR 0x%04x, D0", pmOffset, pmcsr);
-            } else {
+            // A step, not a detail: the b202 report could not see this line
+            // without the trace.
+            bringUpTrace_.Step("power management at 0x%02llx: PMCSR 0x%04x, D%u", pmOffset, pmcsr, state);
+            if (state != 0) {
                 ASFW_LOG_WARNING(Hardware,
                                  "[Attach] the function is in D%u (PMCSR 0x%04x at 0x%02llx); setting D0 and "
                                  "waiting 10 ms",
@@ -152,8 +156,7 @@ kern_return_t HardwareInterface::Attach(IOService* owner, IOService* provider) {
                 bringUpTrace_.Detail("D0 reached: PMCSR 0x%04x, BAR0 0x%08x", pmcsr, bar0);
             }
         } else {
-            ASFW_LOG(Hardware, "[Attach] no power management capability");
-            bringUpTrace_.Detail("no power management capability");
+            bringUpTrace_.Step("no power management capability");
         }
     }
 
@@ -173,11 +176,59 @@ kern_return_t HardwareInterface::Attach(IOService* owner, IOService* provider) {
         return kIOReturnNotReady;
     }
 
-    // The link, for the trace only. The OHCI function of a XIO2213 sits behind
-    // the chip's own PCI bridge and has no PCI Express capability; a
-    // single-function PCIe OHCI has one, and its link status says whether the
-    // link is trained and how wide.
+    // TI's Link Enhancement Control register (config F4h, SCPS210F §7.22,
+    // aliased at TI extension A88h/A8Ch; OHCI-Lynx compatible, so TSB82AA2 and
+    // TSB12LV26 carry it too). Two bits TI says to set and no generic OHCI
+    // driver does: enab_accel (bit 1, 1394a ack-accelerated arbitration and
+    // fly-by concatenation; the PHY is told the link supports them) and
+    // enab_unfair (bit 7, priority arbitration for asynchronous requests). Both
+    // take effect only with HCControl.aPhyEnhanceEnable, which the PHY
+    // configuration sets. Bit 2 must stay 0; the AT threshold (13:12) stays
+    // at the store-and-forward default: a lower one cuts latency by a FIFO's
+    // worth but underruns on a slow DMA path cost a retry.
+    if (vendorId == 0x104c) {
+        constexpr uint64_t kLinkEnhancementControl = 0xF4;
+        constexpr uint32_t kEnabAccel = 1u << 1;
+        constexpr uint32_t kEnabUnfair = 1u << 7;
+        uint32_t enhancement = 0;
+        pci->ConfigurationRead32(kLinkEnhancementControl, &enhancement);
+        if (enhancement != 0xFFFFFFFFu) {
+            const uint32_t wanted = enhancement | kEnabAccel | kEnabUnfair;
+            if (wanted != enhancement) {
+                pci->ConfigurationWrite32(kLinkEnhancementControl, wanted);
+            }
+            uint32_t readBack = 0;
+            pci->ConfigurationRead32(kLinkEnhancementControl, &readBack);
+            bringUpTrace_.Step("TI link enhancement 0x%08x -> 0x%08x (enab_accel, enab_unfair)", enhancement,
+                               readBack);
+        }
+    }
+
+    // The link. The OHCI function of a XIO2213B is a conventional PCI function
+    // behind the chip's own PCIe-to-PCI bridge (datasheet SCPS210F §7: no PCI
+    // Express capability; MSI exists on the bridge only and "has no effect"),
+    // so the PCIe side is the bridge's, and its ASPM state is what matters:
+    // XIO2213B erratum #2 (SCPZ007A), "the system will hang or the device will
+    // drop when L1 is enabled". IOPCIFamily records the link's ASPM state as
+    // pci-aspm-default on the PCIe device (bit 0 L0s, bit 1 L1), and a
+    // pci-aspm-default property injected there (OpenCore DeviceProperties,
+    // asfw-opencore-arm.sh) is what it applies instead.
     {
+        uint32_t aspm = 0;
+        bool haveAspm = false;
+        OSContainer* value = nullptr;
+        if (provider != nullptr &&
+            provider->SearchProperty("pci-aspm-default", kIOServicePlane, kIOServiceSearchPropertyParents,
+                                     &value) == kIOReturnSuccess && value != nullptr) {
+            if (auto* data = OSDynamicCast(OSData, value); data != nullptr && data->getLength() >= 4) {
+                memcpy(&aspm, data->getBytesNoCopy(), sizeof(aspm));
+                haveAspm = true;
+            } else if (auto* number = OSDynamicCast(OSNumber, value); number != nullptr) {
+                aspm = number->unsigned32BitValue();
+                haveAspm = true;
+            }
+            value->release();
+        }
         uint64_t pcieOffset = 0;
         if (pci->FindPCICapability(kIOPCICapabilityIDPCIExpress, 0, &pcieOffset) == kIOReturnSuccess &&
             pcieOffset != 0) {
@@ -185,15 +236,21 @@ kern_return_t HardwareInterface::Attach(IOService* owner, IOService* provider) {
             uint16_t linkStatus = 0;
             pci->ConfigurationRead16(pcieOffset + 0x10, &linkControl);
             pci->ConfigurationRead16(pcieOffset + 0x12, &linkStatus);
-            ASFW_LOG(Hardware, "[Attach] PCIe at 0x%02llx: link control 0x%04x (ASPM %u), link status 0x%04x (x%u, speed %u)",
-                     pcieOffset, linkControl, linkControl & 0x3, linkStatus, (linkStatus >> 4) & 0x3F,
-                     linkStatus & 0xF);
-            bringUpTrace_.Detail("PCIe at 0x%02llx: link control 0x%04x (ASPM %u), link status 0x%04x (x%u, speed %u)",
-                                 pcieOffset, linkControl, linkControl & 0x3, linkStatus, (linkStatus >> 4) & 0x3F,
-                                 linkStatus & 0xF);
+            bringUpTrace_.Step("PCIe at 0x%02llx: link control 0x%04x (ASPM %u), link status 0x%04x (x%u, speed %u)",
+                               pcieOffset, linkControl, linkControl & 0x3, linkStatus, (linkStatus >> 4) & 0x3F,
+                               linkStatus & 0xF);
+        } else if (haveAspm) {
+            bringUpTrace_.Step("conventional PCI function behind the chip's bridge; upstream link pci-aspm-default 0x%x%s",
+                               aspm, (aspm & 0x2) != 0 ? " (L1 enabled: XIO2213B erratum #2, set it to 0)" : "");
+            if ((aspm & 0x2) != 0) {
+                ASFW_LOG_WARNING(Hardware,
+                                 "[Attach] the upstream PCIe link has ASPM L1 enabled (pci-aspm-default 0x%x): XIO2213B "
+                                 "erratum #2 hangs the system on L1 exit; inject pci-aspm-default = 0 on the bridge "
+                                 "(asfw-opencore-arm.sh does)",
+                                 aspm);
+            }
         } else {
-            ASFW_LOG(Hardware, "[Attach] no PCI Express capability: conventional PCI function (behind a bridge)");
-            bringUpTrace_.Detail("no PCI Express capability: conventional PCI function (behind a bridge)");
+            bringUpTrace_.Step("conventional PCI function behind the chip's bridge; no pci-aspm-default found upstream");
         }
     }
 #endif

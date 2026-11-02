@@ -640,6 +640,18 @@ kern_return_t ControllerCore::PerformSoftReset() const {
 
     auto& hw = *deps_.hardware;
     ASFW_LOG(Hardware, "Performing software reset...");
+    // What the controller arrives with. A card on 3.3 V that kept its state
+    // across a warm reset (b205 B760 report) shows here: linkEnable, an
+    // interrupt mask, pending events, a node ID from the previous session.
+    {
+        auto access = hw.TryBeginAccess();
+        if (access) {
+            hw.BringUpTrace().Step("arrival: HCControl 0x%08x, IntEvent 0x%08x, IntMask 0x%08x, LinkControl 0x%08x, NodeID 0x%08x",
+                                   access.Read(Register32::kHCControlSet), access.Read(Register32::kIntEvent),
+                                   access.Read(Register32::kIntMaskSet), access.Read(Register32::kLinkControlSet),
+                                   access.Read(Register32::kNodeID));
+        }
+    }
     hw.BringUpTrace().Step("soft reset");
     hw.SetHCControlBits(HCControlBits::kSoftReset);
 
