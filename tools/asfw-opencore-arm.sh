@@ -23,7 +23,7 @@
 #     --no-log-level     remove asfw-log-level again
 #     --boot-trace [MS]  set asfw-boot-trace: the driver publishes every start step (and, in this
 #                        mode, every register write, kernel call and poll) in the I/O Registry and
-#                        pauses MS ms (default 100) after each, and the LaunchDaemon
+#                        pauses MS ms (default 100; 0 = no pause) after each, and the LaunchDaemon
 #                        net.asfw.boot-trace writes them to /var/log/asfw/boot-trace-<boot>.log as they
 #                        happen. After a hang, the file's last line is the last step that completed.
 #     --no-boot-trace    remove asfw-boot-trace again

@@ -169,6 +169,7 @@ struct ASFWDriver_IVars {
     // ms, with every step published in the I/O Registry for the boot-trace
     // daemon (0: off); asfw-start = manual: Start() claims the controller and
     // returns, and the bring-up waits for asfw-config-agent --bring-up.
-    uint32_t bootTraceStepMs;
+    bool bootTracePublish;      // asfw-boot-trace present: every step published
+    uint32_t bootTraceStepMs;   // pause after each step; 0 = no pause
     bool manualStart;
 };

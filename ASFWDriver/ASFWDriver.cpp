@@ -346,7 +346,8 @@ namespace {
 // The boot options on the controller (OpenCore DeviceProperties; a string
 // arrives as data with a trailing NUL, a number as data or a number).
 struct BootOptions {
-    uint32_t traceStepMs{0};
+    bool tracePublish{false}; // asfw-boot-trace present: publish every step
+    uint32_t traceStepMs{0};  // pause after each; 0 records without pausing
     bool manualStart{false};
 };
 
@@ -378,6 +379,7 @@ BootOptions ReadBootOptions(IOService* provider) {
         return options;
     }
     if (OSObject* trace = properties->getObject("asfw-boot-trace"); trace != nullptr) {
+        options.tracePublish = true;
         options.traceStepMs = kDefaultBootTraceStepMs;
         char text[16];
         if (auto* number = OSDynamicCast(OSNumber, trace); number != nullptr) {
@@ -385,14 +387,13 @@ BootOptions ReadBootOptions(IOService* provider) {
         } else if (PropertyText(trace, text, sizeof(text)) && text[0] >= '0' && text[0] <= '9') {
             options.traceStepMs = static_cast<uint32_t>(strtoul(text, nullptr, 10));
         } else if (auto* data = OSDynamicCast(OSData, trace);
-                   data != nullptr && data->getLength() <= 8) {
+                   data != nullptr && data->getLength() > 0 && data->getLength() <= 8) {
             uint64_t value = 0;
             memcpy(&value, data->getBytesNoCopy(), data->getLength());
             options.traceStepMs = static_cast<uint32_t>(value);
         }
-        if (options.traceStepMs == 0) {
-            options.traceStepMs = kDefaultBootTraceStepMs;
-        }
+        // 0 is a value: every step published, no pause (b199 B760 report: the
+        // pauses moved the start past the window in which it hung).
     }
     char mode[16];
     if (OSObject* start = properties->getObject("asfw-start");
@@ -445,17 +446,19 @@ kern_return_t IMPL(ASFWDriver, Start) {
         return kIOReturnNoMemory;
     ivars->powerProvider = provider;
     const BootOptions options = ReadBootOptions(provider);
+    ivars->bootTracePublish = options.tracePublish;
     ivars->bootTraceStepMs = options.traceStepMs;
     ivars->manualStart = options.manualStart;
-    if (options.traceStepMs != 0 || options.manualStart) {
+    if (options.tracePublish || options.manualStart) {
         // Registered now, before any hardware is touched, so the boot-trace
         // daemon finds this service while the bring-up runs and the agent can
         // open a user client on a controller that waits for --bring-up.
         RegisterService();
         ivars->serviceRegistered = true;
         ASFW_LOG_MILESTONE(Controller,
-                           "[StartStep] boot options: trace %u ms per step%{public}s",
-                           options.traceStepMs, options.manualStart ? ", manual start" : "");
+                           "[StartStep] boot options: trace %u ms per step%{public}s%{public}s",
+                           options.traceStepMs, options.traceStepMs == 0 ? " (no pauses)" : "",
+                           options.manualStart ? ", manual start" : "");
     }
     if (options.manualStart) {
         // The controller is ours (IOKit matched us, so Apple's driver stays
@@ -690,7 +693,7 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
     }
     ctx.lifecycle->MarkStageComplete(StartStage::kQueueReady);
     auto& trace = ctx.deps.hardware->BringUpTrace();
-    if (ivars->bootTraceStepMs != 0 && !trace.Lockstep()) {
+    if (ivars->bootTracePublish && !trace.Lockstep()) {
         trace.SetLockstep(ivars->bootTraceStepMs, &PublishBootTraceLines, this);
     }
     trace.Begin();
