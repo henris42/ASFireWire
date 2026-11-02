@@ -39,6 +39,11 @@ struct ServiceContext {
     std::atomic<uint64_t> irqEntries{0}, irqExits{0};
     uint32_t irqProbeTicks{0}, irqPendingSamples{0}, irqProbeReports{0};
     uint32_t irqConsecutiveRetriggers{0}; // interrupt queue only
+    // Interrupts that found nothing of ours pending (a shared line), per
+    // second; past the limit the controller is masked (interrupt queue only).
+    uint32_t irqSpurious{0};
+    uint64_t irqSpuriousWindowNs{0};
+    bool irqStormMasked{false};
     std::atomic<bool> selfTerminationRequested{false};
     uint64_t irqProbeLastEntries{0};
     ASFW::Driver::ControllerCore::Dependencies deps;

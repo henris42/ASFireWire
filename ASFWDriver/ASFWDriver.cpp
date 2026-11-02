@@ -1277,6 +1277,10 @@ namespace {
 // Bring-up trace: the first interrupts show whether the line fires at all,
 // and whether it keeps firing with nothing pending.
 constexpr uint64_t kTracedInterrupts = 8;
+// Interrupts with nothing of ours pending, within one second, that count as a
+// storm on a shared line (b199 B760 report): the controller is masked and the
+// machine stays up. A healthy shared line sees a few of these per second.
+constexpr uint32_t kSpuriousInterruptStormLimit = 2000;
 } // namespace
 
 void ASFWDriver::InterruptOccurred_Impl(ASFWDriver_InterruptOccurred_Args) {
@@ -1314,10 +1318,16 @@ void ASFWDriver::InterruptOccurred_Impl(ASFWDriver_InterruptOccurred_Args) {
     auto& hardware = *ctx.deps.hardware;
     auto* interrupts = ctx.deps.interrupts.get();
     bool irqTraced = false;
+    bool firstPass = true;
+    bool spurious = false;
     const uint32_t stillPending = ASFW::Driver::ServiceUntilDeasserted(
         [&] { return hardware.CaptureInterruptSnapshot(timestampNs); },
         [&] { return interrupts != nullptr ? interrupts->EnabledMask() : 0U; },
         [&](const ASFW::Driver::InterruptSnapshot& snap) {
+            if (firstPass) {
+                firstPass = false;
+                spurious = interrupts != nullptr && (snap.intEvent & interrupts->EnabledMask()) == 0U;
+            }
             // One line per interrupt (about 1700/s with two units streaming,
             // b178): trace only.
             ASFW_LOG_TRACE(Controller, "InterruptOccurred: captured snapshot intEvent=0x%08x",
@@ -1332,6 +1342,24 @@ void ASFWDriver::InterruptOccurred_Impl(ASFWDriver_InterruptOccurred_Args) {
                                                    ctx.statusPublisher,
                                                    ctx.deps.asyncController.get());
         });
+    if (spurious && interrupts != nullptr && !ctx.irqStormMasked) {
+        if (timestampNs - ctx.irqSpuriousWindowNs > 1'000'000'000ull) {
+            ctx.irqSpuriousWindowNs = timestampNs;
+            ctx.irqSpurious = 0;
+        }
+        if (++ctx.irqSpurious >= kSpuriousInterruptStormLimit) {
+            // Fail and continue: everything masked at the controller, the
+            // machine stays up, the bus is down until the next start.
+            ctx.irqStormMasked = true;
+            interrupts->MaskInterrupts(&hardware, 0xFFFFFFFFu);
+            ASFW_LOG_ERROR(Controller,
+                           "[IrqStorm] %u interrupts with nothing of ours pending within 1 s; every event "
+                           "masked (IntMaskClear all). The controller is deaf until the next start",
+                           ctx.irqSpurious);
+            hardware.BringUpTrace().Step("interrupt storm: %u with nothing pending within 1 s; masked",
+                                         ctx.irqSpurious);
+        }
+    }
     if (stillPending == 0U) {
         ctx.irqConsecutiveRetriggers = 0;
     } else if (interrupts != nullptr) {

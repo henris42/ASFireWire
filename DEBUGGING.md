@@ -196,7 +196,14 @@ debugger that runs on that core.
   and poll into its I/O Registry entry and pauses after each; the LaunchDaemon
   `net.asfw.boot-trace` appends them to `/var/log/asfw/boot-trace-<boot>.log` with an
   fsync per line. After a hang, the last line is the last step that completed; the
-  next one in the code is the request the kernel did not return from.
+  next one in the code is the request the kernel did not return from. The pause
+  moves the start later in the boot; `--boot-trace 0` records every step without
+  pausing when the hang needs the early start (b199).
+- **Interrupt self-test**: before the interrupt mask is seeded, the driver raises
+  the OHCI software interrupt with everything else masked and waits up to 200 ms
+  for its own handler to run; a line that does not reach the driver fails the
+  start. A **storm guard** masks the controller when 2000 interrupts in one second
+  find nothing of ours pending (a shared line).
 - **Manual start** (`asfw-start = manual`, `--manual-start`): the driver claims the
   controller at boot and does nothing; `asfw-config-agent --bring-up` runs the
   bring-up later, with the machine fully up (ssh, log, trace all working).
