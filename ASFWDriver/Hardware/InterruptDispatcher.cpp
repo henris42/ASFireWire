@@ -5,7 +5,6 @@
 #include "../Diagnostics/StatusPublisher.hpp"
 #include "../Isoch/IsochLanes.hpp"
 #include "../Logging/Logging.hpp"
-#include "HardwareInterface.hpp"
 #include "OHCIConstants.hpp"
 #include "RegisterMap.hpp"
 
@@ -15,10 +14,9 @@ void InterruptDispatcher::HandleSnapshot(const InterruptSnapshot& snap, Controll
                                          HardwareInterface& hardware,
                                          IsochLanes& lanes, StatusPublisher& statusPublisher,
                                          ASFW::Async::IAsyncSubsystemPort* asyncSubsystem) {
-    controller.HandleInterrupt(snap);
-    // After the global acknowledgement: which contexts completed, read and
-    // cleared once.
-    const IsochContextEvents isochEvents = hardware.TakeIsochContextEvents(snap.intEvent);
+    // The controller returns context masks only after the acknowledgement
+    // batch's completion readback. Do not read or acknowledge them again here.
+    const IsochContextEvents isochEvents = controller.HandleInterrupt(snap);
 
     // ===== ISOCHRONOUS RECEIVE INTERRUPT =====
     // Per OHCI §9.1: kIsochRx (bit 7) indicates one or more IR contexts have completed descriptors.

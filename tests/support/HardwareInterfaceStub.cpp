@@ -169,10 +169,17 @@ void HardwareInterface::WriteScoped(Register32 reg, uint32_t value) const noexce
         if (!state.available) {
             return;
         }
+        const uint32_t previous = state.registers[KeyFor(reg)];
         state.registers[KeyFor(reg)] = value;
         state.operations.push_back(TestOperation::Write);
 
-        if (reg == Register32::kIntEventClear) {
+        if (reg == Register32::kPhyReqFilterHiSet || reg == Register32::kPhyReqFilterLoSet) {
+            state.registers[KeyFor(reg)] = previous | value;
+        } else if (reg == Register32::kPhyReqFilterHiClear) {
+            state.registers[KeyFor(Register32::kPhyReqFilterHiSet)] &= ~value;
+        } else if (reg == Register32::kPhyReqFilterLoClear) {
+            state.registers[KeyFor(Register32::kPhyReqFilterLoSet)] &= ~value;
+        } else if (reg == Register32::kIntEventClear) {
             state.registers[KeyFor(Register32::kIntEvent)] &= ~value;
         } else if (reg == Register32::kIntMaskSet) {
             state.registers[KeyFor(Register32::kIntMaskSet)] |= value;
@@ -235,8 +242,12 @@ void HardwareInterface::ClearIntEvents(uint32_t mask) {
     });
 }
 
-IsochContextEvents HardwareInterface::TakeIsochContextEvents(uint32_t intEvent) noexcept {
+IsochContextEvents HardwareInterface::AcknowledgeInterruptEvents(
+    uint32_t globalEventsToClear, uint32_t intEvent) noexcept {
     IsochContextEvents events{};
+    auto access = TryBeginAccess();
+    if (!access) return events;
+    if (globalEventsToClear != 0) ClearIntEvents(globalEventsToClear);
     WithState(this, [intEvent, &events](HardwareTestState& state) {
         if ((intEvent & IntEventBits::kIsochRx) != 0) {
             events.receive = state.registers[KeyFor(Register32::kIsoRecvIntEventClear)];
@@ -246,8 +257,11 @@ IsochContextEvents HardwareInterface::TakeIsochContextEvents(uint32_t intEvent) 
             events.transmit = state.registers[KeyFor(Register32::kIsoXmitIntEventClear)];
             state.registers[KeyFor(Register32::kIsoXmitIntEventClear)] &= ~events.transmit;
         }
-        state.operations.push_back(TestOperation::TakeIsochContextEvents);
+        state.operations.push_back(TestOperation::AcknowledgeInterruptEvents);
     });
+    if (globalEventsToClear != 0 || events.receive != 0 || events.transmit != 0) {
+        access.FlushPostedWrites();
+    }
     return events;
 }
 

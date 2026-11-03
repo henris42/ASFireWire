@@ -101,7 +101,7 @@ void WatchdogCoordinator::Reset() {
         OSAction* action = action_.detach();
         IODispatchQueue* queue = queue_.get();
         ASFW_LOG(Controller, "[Teardown] watchdog cancel requested source=%p action=%p", timer, action);
-        auto done = teardownCompletion_ ? teardownCompletion_->Begin() : std::function<void()>{};
+        auto done = teardownCompletion_ ? teardownCompletion_->Begin("watchdog") : std::function<void()>{};
         const kern_return_t kr = timer->Cancel(^{
             ASFW_LOG(Controller, "[Teardown] watchdog cancel completed source=%p action=%p", timer, action);
             timer->release();

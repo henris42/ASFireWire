@@ -556,6 +556,7 @@ struct DriverConnectorFWDeviceInfo: Identifiable {
         return serial.isEmpty ? "\(vendorName) \(modelName)" : "\(vendorName) \(modelName) #\(serial)"
     }
 
+    var isAudio: Bool { (1...3).contains(deviceKind) }
     var isStorage: Bool { deviceKind == 4 }  // DeviceKind::Storage = 4
     var hasSBP2Unit: Bool { units.contains(where: \.isSBP2Unit) }
     var sbp2Units: [DriverConnectorFWUnitInfo] { units.filter(\.isSBP2Unit) }

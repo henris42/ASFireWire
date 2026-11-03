@@ -14,11 +14,15 @@
 #include "ASFWDriver/Bus/SelfIDCapture.hpp"
 #include "ASFWDriver/Bus/TopologyManager.hpp"
 #include "ASFWDriver/ConfigROM/ConfigROMStager.hpp"
+#include "ASFWDriver/ConfigROM/ROMScanner.hpp"
+#include "ASFWDriver/Discovery/SpeedPolicy.hpp"
 #include "ASFWDriver/Hardware/HardwareInterface.hpp"
 #include "ASFWDriver/Hardware/InterruptManager.hpp"
 #include "ASFWDriver/Hardware/OHCIConstants.hpp"
 #include "ASFWDriver/Hardware/RegisterMap.hpp"
 #include "ASFWDriver/Testing/HostDriverKitStubs.hpp"
+#include "AsyncControllerStub.hpp"
+#include "../mocks/FakeFireWireBus.hpp"
 
 namespace ASFW::Driver {
 
@@ -138,7 +142,14 @@ class BusResetCoordinatorTestPeer {
 
 } // namespace ASFW::Driver
 
+namespace ASFW::Testing {
+extern int gRomScannerAbortCalls;  // BusResetCoordinatorDepsStubs.cpp
+} // namespace ASFW::Testing
+
 using namespace ASFW::Driver;
+using ASFW::Discovery::ROMScanner;
+using ASFW::Discovery::ROMScannerParams;
+using ASFW::Discovery::SpeedPolicy;
 
 namespace {
 
@@ -188,88 +199,6 @@ std::vector<uint32_t> MakeRawSelfIDCapture(uint8_t generation,
     return raw;
 }
 
-class AsyncControllerStub final : public ASFW::Async::IAsyncControllerPort {
-  public:
-    kern_return_t ArmARContextsOnly() override { return kIOReturnSuccess; }
-    void PostToWorkloop(void (^block)()) override {
-        if (block != nullptr) {
-            block();
-        }
-    }
-
-    void OnTxInterrupt() override {}
-    void OnRxRequestInterrupt() override {}
-    void OnRxResponseInterrupt() override {}
-
-    void OnBusResetBegin(uint8_t nextGen) override { beginGenerations.push_back(nextGen); }
-    void OnBusResetComplete(uint8_t stableGen) override {
-        completeGenerations.push_back(stableGen);
-    }
-    void ConfirmBusGeneration(uint8_t confirmedGeneration) override {
-        confirmedGenerations.push_back(confirmedGeneration);
-    }
-    void StopATContextsOnly() override { ++stopAtContextsCount; }
-    void FlushATContexts() override { ++flushAtContextsCount; }
-    void RearmATContexts() override { ++rearmAtContextsCount; }
-
-    [[nodiscard]] ASFW::Async::AsyncBusStateSnapshot GetBusStateSnapshot() const override {
-        return {};
-    }
-
-    [[nodiscard]] ASFW::Shared::DMAMemoryManager* GetDMAManager() override { return nullptr; }
-
-    ASFW::Async::AsyncHandle Read(const ASFW::Async::ReadParams&,
-                                  ASFW::Async::CompletionCallback) override {
-        return {};
-    }
-    ASFW::Async::AsyncHandle ReadWithRetry(const ASFW::Async::ReadParams&,
-                                           const ASFW::Async::RetryPolicy&,
-                                           ASFW::Async::CompletionCallback) override {
-        return {};
-    }
-    ASFW::Async::AsyncHandle Write(const ASFW::Async::WriteParams&,
-                                   ASFW::Async::CompletionCallback) override {
-        return {};
-    }
-    ASFW::Async::AsyncHandle Lock(const ASFW::Async::LockParams&, uint16_t,
-                                  ASFW::Async::CompletionCallback) override {
-        return {};
-    }
-    ASFW::Async::AsyncHandle CompareSwap(const ASFW::Async::CompareSwapParams&,
-                                         ASFW::Async::CompareSwapCallback) override {
-        return {};
-    }
-    ASFW::Async::AsyncHandle PhyRequest(const ASFW::Async::PhyParams&,
-                                        ASFW::Async::CompletionCallback) override {
-        return {};
-    }
-
-    bool Cancel(ASFW::Async::AsyncHandle) override { return false; }
-    void OnTimeoutTick() override {}
-
-    [[nodiscard]] ASFW::Async::AsyncWatchdogStats GetWatchdogStats() const override {
-        return {};
-    }
-    [[nodiscard]] ASFW::Debug::BusResetPacketCapture* GetBusResetCapture() const override {
-        return nullptr;
-    }
-    [[nodiscard]] std::optional<ASFW::Async::AsyncStatusSnapshot> GetStatusSnapshot() const override {
-        return std::nullopt;
-    }
-    [[nodiscard]] ASFW::Debug::AsyncTraceCapture* GetAsyncTraceCapture() const override {
-        return nullptr;
-    }
-    [[nodiscard]] ASFWDiagInboundCSRStats* GetInboundCSRStats() const override {
-        return nullptr;
-    }
-
-    std::vector<uint8_t> beginGenerations;
-    std::vector<uint8_t> confirmedGenerations;
-    std::vector<uint8_t> completeGenerations;
-    uint32_t stopAtContextsCount{0};
-    uint32_t flushAtContextsCount{0};
-    uint32_t rearmAtContextsCount{0};
-};
 
 struct BusResetTestRig {
     OSSharedPtr<IODispatchQueue> queue{new IODispatchQueue(), OSNoRetain};
@@ -294,7 +223,7 @@ struct BusResetTestRig {
         ASFW::Testing::ResetHostMonotonicClockForTesting();
     }
 
-    void Initialize(bool withBusManager = false) {
+    void Initialize(bool withBusManager = false, ROMScanner* romScanner = nullptr) {
         ASSERT_EQ(selfIdCapture.PrepareBuffers(64U, hardware), kIOReturnSuccess);
 
         SetLocalNode(0U);
@@ -305,7 +234,7 @@ struct BusResetTestRig {
 
         coordinator.Initialize(&hardware, queue, &async, &selfIdCapture, &configRomStager,
                                &interrupts, &topologyManager,
-                               withBusManager ? &busManager : nullptr, nullptr);
+                               withBusManager ? &busManager : nullptr, romScanner);
         coordinator.BindCallbacks([this](const TopologySnapshot& topology) {
             publishedTopologies.push_back(topology);
         });
@@ -406,6 +335,32 @@ TEST(BusResetCoordinatorTests, StableResetPublishesTopologyExactlyOnce) {
 // RUN was cleared and the reset FSM polled G_ATInactive() forever — no
 // topology, no discovery, no log line. Linux context_stop() bounds that wait
 // and proceeds (ohci.c:1164-1182); so must both waits here.
+// The 8-bit bus generation wraps to 0 (OHCI 1.2 Table 11-2). A reset that
+// follows a generation-0 topology must still abort the ROM scan for it.
+TEST(BusResetCoordinatorTests, ResetAfterGenerationZeroAbortsRomScan) {
+    ASFW::Async::Fakes::FakeFireWireBus bus;
+    SpeedPolicy speedPolicy;
+    ROMScanner scanner(bus, speedPolicy, ROMScannerParams{});
+
+    BusResetTestRig rig;
+    rig.Initialize(false, &scanner);
+
+    rig.StartResetCycle();
+    const auto rawCapture = MakeRawSelfIDCapture(
+        0U, {MakeBaseSelfID(0U, 63U, true, true), MakeBaseSelfID(1U, 63U)});
+    rig.PrimeCapture(rawCapture, 0U);
+    rig.TriggerStickyCompletion();
+    rig.AdvanceMs(100U);
+    ASSERT_EQ(rig.publishedTopologies.size(), 1U);
+    ASSERT_EQ(rig.publishedTopologies.front().generation, 0U);
+
+    ASFW::Testing::gRomScannerAbortCalls = 0;
+    rig.ResetHardwareState();
+    rig.StartResetCycle();
+
+    EXPECT_EQ(ASFW::Testing::gRomScannerAbortCalls, 1);
+}
+
 TEST(BusResetCoordinatorTests, StuckActiveATContextDoesNotStallResetForever) {
     BusResetTestRig rig;
     rig.Initialize();
@@ -493,6 +448,58 @@ TEST(BusResetCoordinatorTests, RecoveryResetsWithoutTopologyAreCappedThenFatal) 
     BusResetCoordinatorTestPeer::RequestRecoveryReset(rig.coordinator);
     ASSERT_EQ(fatalReasons.size(), 1U);
     EXPECT_EQ(fatalReasons.front(), "bus reset recovery exhausted");
+}
+
+TEST(BusResetCoordinatorTests, HardwareGoneMidResetEndsTheCycleWithoutPolling) {
+    BusResetTestRig rig;
+    rig.Initialize();
+
+    rig.StartResetCycle();
+    rig.hardware.LatchProviderRevokedAndDrain();
+
+    for (int i = 0; i < 40; ++i) {
+        rig.AdvanceMs(100U);
+    }
+
+    EXPECT_EQ(rig.coordinator.GetState(), BusResetCoordinator::State::Idle);
+    EXPECT_EQ(rig.queue->PendingTaskCountForTesting(), 0U);
+    EXPECT_TRUE(rig.publishedTopologies.empty());
+    EXPECT_EQ(rig.async.rearmAtContextsCount, 0U);
+}
+
+// Regression (2026-10-30, FW643 Thunderbolt adapter hot-unplug): the adapter
+// vanished mid-reset; Rearming then polled NodeID.valid every 1 ms on the
+// Default queue forever (~860 wakes/s) and Stop never ran.
+TEST(BusResetCoordinatorTests, HardwareGoneWhileRearmingStopsPollingNodeID) {
+    BusResetTestRig rig;
+    rig.Initialize();
+
+    rig.StartResetCycle();
+    const auto rawCapture = MakeRawSelfIDCapture(
+        7U, {MakeBaseSelfID(0U, 63U, true, true), MakeBaseSelfID(1U, 63U)});
+    rig.PrimeCapture(rawCapture, 7U);
+    // Hold the cycle in QuiescingAT so NodeID can go invalid after the decode
+    // that needs it, the way it does when the adapter vanishes.
+    const auto atReqControl =
+        Register32FromOffsetUnchecked(DMAContextHelpers::AsReqTrContextControlSet);
+    rig.hardware.SetTestRegister(atReqControl, kContextControlActiveBit);
+    rig.TriggerStickyCompletion();
+    ASSERT_EQ(rig.coordinator.GetState(), BusResetCoordinator::State::QuiescingAT);
+
+    rig.hardware.SetTestRegister(Register32::kNodeID, 0U);
+    rig.hardware.SetTestRegister(atReqControl, 0U);
+    rig.AdvanceMs(10U);
+    ASSERT_EQ(rig.coordinator.GetState(), BusResetCoordinator::State::Rearming);
+
+    rig.hardware.LatchProviderRevokedAndDrain();
+    for (int i = 0; i < 40; ++i) {
+        rig.AdvanceMs(100U);
+    }
+
+    EXPECT_EQ(rig.coordinator.GetState(), BusResetCoordinator::State::Idle);
+    EXPECT_EQ(rig.queue->PendingTaskCountForTesting(), 0U);
+    EXPECT_TRUE(rig.publishedTopologies.empty());
+    EXPECT_EQ(rig.async.rearmAtContextsCount, 0U);
 }
 
 TEST(BusResetCoordinatorTests, StableResetDelaysDiscoveryByAppleScanDelay) {

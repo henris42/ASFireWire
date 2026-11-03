@@ -306,6 +306,10 @@ bool IsochReceiveContext::PollOnce(uint32_t& processed,
                                  [readerLimit] { return readerLimit->Reached(mach_absolute_time()); })
         : rxRing_.DrainCompleted(*dmaMemory_, onPacket);
 
+    if (receiveConsumer_) {
+        receiveConsumer_->EndReceiveBatch(receiveBatch);
+    }
+
     rxLock_.clear(std::memory_order_release);
     return true;
 }

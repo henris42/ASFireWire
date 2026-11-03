@@ -330,8 +330,9 @@ def _validate(image: DiceDeviceImage) -> None:
         raise ValueError(f"{where}: no TX or RX streams")
     if len(image.tx_streams) > MAX_STREAMS or len(image.rx_streams) > MAX_STREAMS:
         raise ValueError(f"{where}: more than {MAX_STREAMS} streams in one direction")
-    if len(image.clock_source_names) != 13:
-        raise ValueError(f"{where}: expected 13 clock source names, "
+    # 13 sources at most; some firmware lists fewer (FireStudio 2626: 8).
+    if not 0 < len(image.clock_source_names) <= 13:
+        raise ValueError(f"{where}: expected 1 to 13 clock source names, "
                          f"got {len(image.clock_source_names)}")
 
 
@@ -456,6 +457,10 @@ DEFAULT_REPORTS = (
     ("studiolive-2442", "documentation/fixtures/DICE/presonus2442.txt"),
     ("firestudio-project", "documentation/fixtures/DICE/presonus-firestudio-project.txt"),
     ("multimix", "documentation/fixtures/DICE/alesismultimix.txt"),
+    # Issue #190: 48 PCM capture and 34 PCM playback in one stream each.
+    ("studiolive-3242", "documentation/fixtures/DICE/presonus3242.txt"),
+    # Issue #189: 16+10 PCM each way in two streams, no EAP.
+    ("firestudio-2626", "documentation/fixtures/DICE/presonus-firestudio-2626.txt"),
 )
 
 

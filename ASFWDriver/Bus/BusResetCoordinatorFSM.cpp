@@ -48,10 +48,11 @@ void BusResetCoordinator::BeginNewResetCycle() {
     ++resetEpoch_;
     readyForDiscoveryFailureBits_ = 0;
 
-    if ((romScanner_ != nullptr) && (lastGeneration_.value > 0U)) {
+    // Every reset ends every scan in progress, including one at generation 0
+    // (the 8-bit generation wraps, OHCI 1.2 Table 11-2).
+    if ((romScanner_ != nullptr) && romScanner_->Abort()) {
         ++metrics_.abortCount;
-        ASFW_LOG(BusReset, "Aborting ROM scan for generation %u", lastGeneration_.value);
-        romScanner_->Abort(lastGeneration_);
+        ASFW_LOG(BusReset, "Aborted ROM scan for generation %u", lastGeneration_.value);
     }
 
     if (topologyManager_ != nullptr) {
@@ -324,6 +325,19 @@ void BusResetCoordinator::RunStateMachine() {
 
     if (hardware_ == nullptr) {
         ForceUnmaskBusResetIfNeeded();
+        CompleteCurrentRun();
+        return;
+    }
+
+    // Removed or revoked hardware never reports a valid NodeID, so Rearming
+    // would poll on the Default queue forever and starve Stop. A revoked
+    // interface stays closed until Detach/Attach, so the cycle cannot resume.
+    if (!hardware_->IsAvailable()) {
+        if (state_ != State::Idle) {
+            ASFW_LOG(BusReset, "[FSM] hardware unavailable in %{public}s; abandoning reset cycle",
+                     StateString());
+            TransitionTo(State::Idle, "hardware unavailable");
+        }
         CompleteCurrentRun();
         return;
     }

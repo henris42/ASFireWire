@@ -113,4 +113,8 @@ os_log_t Oxfw() {
     return stub_log;
 }
 
+os_log_t Midi() {
+    return stub_log;
+}
+
 } // namespace ASFW::Driver::Logging

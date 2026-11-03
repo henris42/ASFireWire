@@ -216,6 +216,16 @@ void ExecuteRuntimeTeardown(ServiceContext& ctx, const QuiescePlan& plan) {
         ctx.deps.avcDiscovery->Shutdown();
     }
     ASFW::Protocols::SBP2::SBP2BridgeHub::Clear();
+    // The bridge releases sessions whose commands the target may still be
+    // serving by DMA, and their logouts may fail on a bus that is going down.
+    // Shut the physical response unit first: then no target can reach a
+    // released buffer, and a failed logout needs no bus reset.
+    if (ctx.deps.hardware) {
+        ctx.deps.hardware->ClearPhysicalRequestFilters();
+    }
+    if (ctx.deps.sbp2SessionRegistry) {
+        ctx.deps.sbp2SessionRegistry->PrepareForTeardown();
+    }
     if (ctx.sbp2Bridge) {
         ctx.sbp2Bridge->Shutdown();
         ctx.sbp2Bridge.reset();
@@ -325,7 +335,7 @@ bool ASFWDriver::init() {
 }
 
 void ASFWDriver::free() {
-    ASFW_LOG(Controller, "ASFWDriver: free()");
+    ASFW_LOG(Controller, "[Lifecycle] ASFWDriver free obj=%p", this);
     if (ivars) {
         if (ivars->context) {
             ivars->context->Reset();
@@ -888,6 +898,8 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
 }
 
 kern_return_t IMPL(ASFWDriver, Stop) {
+    ASFW_LOG(Controller, "[Lifecycle] ASFWDriver Stop enter obj=%p provider=%p stopPending=%d",
+             this, provider, ivars ? int(ivars->stopPending) : -1);
     if (ivars && ivars->stopPending) {
         return kIOReturnSuccess;
     }
@@ -921,7 +933,7 @@ kern_return_t IMPL(ASFWDriver, Stop) {
             ivars->wakeVerifyTimer = nullptr;
             ivars->wakeVerifyAction = nullptr;
             ASFW_LOG(Controller, "[Teardown] wake verify cancel requested source=%p action=%p", timer, action);
-            auto done = completion->Begin();
+            auto done = completion->Begin("wake verify");
             const kern_return_t kr = timer->Cancel(^{
                 ASFW_LOG(Controller, "[Teardown] wake verify cancel completed source=%p action=%p", timer, action);
                 timer->release();
@@ -939,10 +951,11 @@ kern_return_t IMPL(ASFWDriver, Stop) {
     completion->FinishWhenDrained([this, provider] {
         ASFW_LOG(Controller, "[Teardown] ASFWDriver cancellations drained; calling superclass Stop");
         const auto kr = Stop(provider, SUPERDISPATCH);
-        ASFW_LOG(Controller, "[Teardown] ASFWDriver Stop complete kr=0x%x", kr);
+        ASFW_LOG(Controller, "[Lifecycle] ASFWDriver Stop done obj=%p kr=0x%x", this, kr);
         provider->release();
         release();
     });
+    ASFW_LOG(Controller, "[Lifecycle] ASFWDriver Stop returned obj=%p (superclass Stop waits for teardown tokens)", this);
     return kIOReturnSuccess;
 }
 
@@ -1282,14 +1295,13 @@ kern_return_t IMPL(ASFWDriver, NewUserClient) {
         return kIOReturnNoResources;
     }
 
-    ASFW_LOG(UserClient, "[Lifecycle] NewUserClient manual Start client=%p provider=%p", client, this);
-    ret = client->Start(this);
-    if (ret != kIOReturnSuccess) {
-        ASFW_LOG_ERROR(Controller, "NewUserClient Start failed: 0x%08x", ret);
-        client->release();
-        return ret;
-    }
-
+    // No Start here: IOKit starts the client itself once this returns
+    // (is_io_service_open_extended: attach, then start, which reaches the
+    // dext as Start). Each successful Start retains the provider until Stop,
+    // and a client also started here was started twice and stopped once, so
+    // every app connection left this driver one reference it never dropped:
+    // free() never ran and the dext process outlived every unplug and
+    // upgrade (upstream d272ce4b, 2026-10-17).
     *userClient = client;
     ASFW_LOG(Controller, "NewUserClient success (client=%p)", client);
     return kIOReturnSuccess;
@@ -1471,6 +1483,7 @@ void ASFWDriver::AsyncWatchdogTimerFired_Impl(ASFWDriver_AsyncWatchdogTimerFired
             // 100 ms sampling avoids MMIO/logging on each watchdog or IRQ tick.
             if (++ctx.irqProbeTicks >= 100 && ctx.deps.hardware && ctx.deps.interrupts) {
                 ctx.irqProbeTicks = 0;
+                bool retriggerFromWatchdog = false;
                 auto access = ctx.deps.hardware->TryBeginAccess();
                 if (access) {
                     using namespace ASFW::Driver;
@@ -1482,6 +1495,12 @@ void ASFWDriver::AsyncWatchdogTimerFired_Impl(ASFWDriver_AsyncWatchdogTimerFired
                     const auto pending = events & mask & relevant;
                     const auto entries = ctx.irqEntries.load(std::memory_order_acquire);
                     const auto exits = ctx.irqExits.load(std::memory_order_acquire);
+                    if (ctx.irqRetriggerPending && entries != ctx.irqRetriggerEntries) {
+                        ctx.irqRetriggerPending = false;
+                        ASFW_LOG_ERROR(Controller,
+                            "[IrqStall] retrigger restored delivery: entries %llu -> %llu",
+                            ctx.irqRetriggerEntries, entries);
+                    }
                     if (events != UINT32_MAX && pending && entries == ctx.irqProbeLastEntries) {
                         ++ctx.irqPendingSamples;
                         if (ctx.irqPendingSamples >= 5 && ctx.irqProbeReports < 3) {
@@ -1494,12 +1513,59 @@ void ASFWDriver::AsyncWatchdogTimerFired_Impl(ASFWDriver_AsyncWatchdogTimerFired
                                 access.Read(static_cast<Register32>(DMAContextHelpers::AsRspTrContextControlSet)),
                                 access.Read(static_cast<Register32>(DMAContextHelpers::AsReqRcvContextControlSet)),
                                 access.Read(static_cast<Register32>(DMAContextHelpers::AsRspRcvContextControlSet)));
+                            if (ctx.irqProbeReports == 1) {
+                                // Everything else that decides whether an IRQ can be
+                                // delivered, once per stall. An ISR that is never
+                                // entered looks the same whether the controller, the
+                                // PCI MSI state or the dispatch source stopped it.
+                                ASFW_LOG_ERROR(Controller,
+                                    "[IrqStall] hc=0x%08x isoTx ev=0x%08x mask=0x%08x isoRx ev=0x%08x mask=0x%08x source=%u",
+                                    access.Read(Register32::kHCControlSet),
+                                    access.Read(Register32::kIsoXmitIntEventSet),
+                                    access.Read(Register32::kIsoXmitIntMaskSet),
+                                    access.Read(Register32::kIsoRecvIntEventSet),
+                                    access.Read(Register32::kIsoRecvIntMaskSet),
+                                    ctx.deps.interrupts->SourceEnabled() ? 1U : 0U);
+                                ASFW_LOG_ERROR(Controller,
+                                    "[IrqStall] cmdPtr atReq=0x%08x atRsp=0x%08x arReq=0x%08x arRsp=0x%08x",
+                                    access.Read(static_cast<Register32>(DMAContextHelpers::AsReqTrCommandPtr)),
+                                    access.Read(static_cast<Register32>(DMAContextHelpers::AsRspTrCommandPtr)),
+                                    access.Read(static_cast<Register32>(DMAContextHelpers::AsReqRcvCommandPtr)),
+                                    access.Read(static_cast<Register32>(DMAContextHelpers::AsRspRcvCommandPtr)));
+                                const auto pciState = ctx.deps.hardware->ReadPciInterruptState();
+                                ASFW_LOG_ERROR(Controller,
+                                    "[IrqStall] pci valid=%u command=0x%04x status=0x%04x msi=%u ctl=0x%04x maskBits=0x%08x msix=%u ctl=0x%04x",
+                                    pciState.valid ? 1U : 0U, pciState.command, pciState.status,
+                                    pciState.msiPresent ? 1U : 0U, pciState.msiControl,
+                                    pciState.msiMaskBits, pciState.msixPresent ? 1U : 0U,
+                                    pciState.msixControl);
+                                // The ISR retriggers itself when an event will not
+                                // deassert, but only from inside the ISR. When it is
+                                // never entered, toggle master enable from here once:
+                                // a pending enabled event then raises a new edge.
+                                // (After this access scope is released: the retrigger
+                                // takes its own, and the gate's lock is not recursive.)
+                                ctx.irqRetriggerPending = true;
+                                ctx.irqRetriggerEntries = entries;
+                                retriggerFromWatchdog = true;
+                            } else if (ctx.irqRetriggerPending) {
+                                ASFW_LOG_ERROR(Controller,
+                                    "[IrqStall] retrigger did not restore delivery; entries still %llu",
+                                    entries);
+                            }
                         }
                     } else {
                         ctx.irqPendingSamples = 0;
                         ctx.irqProbeReports = 0;
                     }
                     ctx.irqProbeLastEntries = entries;
+                }
+                access = {};
+                if (retriggerFromWatchdog) {
+                    ctx.deps.interrupts->RetriggerPendingInterrupt(ctx.deps.hardware.get());
+                    ASFW_LOG_ERROR(Controller,
+                        "[IrqStall] master-enable retriggered from the watchdog; entries=%llu",
+                        ctx.irqRetriggerEntries);
                 }
             }
             ctx.watchdog.HandleTick(ctx.controller.get(), ctx.deps.asyncController.get(),

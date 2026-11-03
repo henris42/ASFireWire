@@ -9,6 +9,7 @@
 #include <memory>
 #include <vector>
 
+#include "../ASFWDriver/Async/Interfaces/IFireWireBus.hpp"
 #include "../ASFWDriver/Bus/BusResetCoordinator.hpp"
 #include "../ASFWDriver/Bus/SelfIDCapture.hpp"
 #include "../ASFWDriver/Bus/TopologyManager.hpp"
@@ -18,6 +19,11 @@
 #include "../ASFWDriver/Hardware/InterruptDrain.hpp"
 #include "../ASFWDriver/Hardware/InterruptManager.hpp"
 #include "../ASFWDriver/Hardware/RegisterMap.hpp"
+#include "../ASFWDriver/ConfigROM/ConfigROMStore.hpp"
+#include "../ASFWDriver/ConfigROM/ROMScanner.hpp"
+#include "../ASFWDriver/Discovery/SpeedPolicy.hpp"
+#include "../support/ROMScanStartRecorder.hpp"
+#include "AsyncControllerStub.hpp"
 
 namespace ASFW::Driver {
 
@@ -87,7 +93,7 @@ protected:
         hardware_->SetTestRegister(
             Register32::kLinkControl,
             hardware_->GetTestRegister(Register32::kLinkControl) & ~LinkControlBits::kCycleMaster);
-        core_->HandleInterrupt(InterruptSnapshot{.intEvent = IntEventBits::kCycleTooLong});
+        (void)core_->HandleInterrupt(InterruptSnapshot{.intEvent = IntEventBits::kCycleTooLong});
     }
 
     static constexpr uint32_t kGeneration = 7;
@@ -98,6 +104,32 @@ protected:
 };
 
 } // namespace
+
+TEST_F(ControllerCoreInterruptTest, ReturnsAcknowledgedContextMasksForDispatch) {
+    const uint32_t events = IntEventBits::kIsochRx | IntEventBits::kIsochTx | IntEventBits::kRQPkt;
+    hardware_->SetTestRegister(Register32::kIntEvent, events);
+    hardware_->SetTestRegister(Register32::kIsoRecvIntEventClear, 3);
+    hardware_->SetTestRegister(Register32::kIsoXmitIntEventClear, 5);
+    const auto acknowledged = core_->HandleInterrupt(InterruptSnapshot{.intEvent = events});
+    EXPECT_EQ(acknowledged.receive, 3u);
+    EXPECT_EQ(acknowledged.transmit, 5u);
+    EXPECT_EQ(hardware_->GetTestRegister(Register32::kIntEvent), 0u);
+    EXPECT_EQ(hardware_->GetTestRegister(Register32::kIsoRecvIntEventClear), 0u);
+    EXPECT_EQ(hardware_->GetTestRegister(Register32::kIsoXmitIntEventClear), 0u);
+    const auto operations = hardware_->CopyTestOperations();
+    ASSERT_GE(operations.size(), 2u);
+    EXPECT_EQ(operations[operations.size() - 2], HardwareInterface::TestOperation::AcknowledgeInterruptEvents);
+    EXPECT_EQ(operations.back(), HardwareInterface::TestOperation::WriteAndFlush);
+}
+
+TEST_F(ControllerCoreInterruptTest, RevokedProviderReturnsNoContextsForDispatch) {
+    hardware_->SetTestRegister(Register32::kIsoRecvIntEventClear, 3);
+    hardware_->RevokeAndDrain();
+    const auto before = hardware_->CopyTestOperations();
+    const auto acknowledged = core_->HandleInterrupt(InterruptSnapshot{.intEvent = IntEventBits::kIsochRx});
+    EXPECT_EQ(acknowledged.receive | acknowledged.transmit, 0u);
+    EXPECT_EQ(hardware_->CopyTestOperations(), before);
+}
 
 // Root: the cycle policy made this node cycle master. After cycleTooLong the
 // controller has cleared cycleMaster; it must be set again, and only after
@@ -113,6 +145,78 @@ TEST_F(ControllerCoreInterruptTest, CycleTooLongReenablesTheCycleMasterThePolicy
     EXPECT_EQ(hardware_->GetTestRegister(Register32::kIntEvent) & IntEventBits::kCycleTooLong, 0U);
     EXPECT_TRUE(CycleMasterSet());
     EXPECT_EQ(core_->GetCyclePolicyCoordinator()->Snapshot().cycleMasterRestoreCount, 1U);
+}
+
+// Discovery after a reset starts its scan with the ROMs that reset suspended,
+// so a device whose bus info block is unchanged is not read again.
+class NullBus final : public Async::IFireWireBus {
+public:
+    Async::AsyncHandle ReadBlock(FW::Generation, FW::NodeId, Async::FWAddress, uint32_t,
+                                 FW::FwSpeed, Async::InterfaceCompletionCallback) override {
+        return Async::AsyncHandle{0};
+    }
+    Async::AsyncHandle WriteBlock(FW::Generation, FW::NodeId, Async::FWAddress,
+                                  std::span<const uint8_t>, FW::FwSpeed,
+                                  Async::InterfaceCompletionCallback) override {
+        return Async::AsyncHandle{0};
+    }
+    Async::AsyncHandle Lock(FW::Generation, FW::NodeId, Async::FWAddress, FW::LockOp,
+                            std::span<const uint8_t>, uint32_t, FW::FwSpeed,
+                            Async::InterfaceCompletionCallback) override {
+        return Async::AsyncHandle{0};
+    }
+    bool Cancel(Async::AsyncHandle) override { return false; }
+    FW::FwSpeed GetSpeed(FW::NodeId) const override { return FW::FwSpeed::S100; }
+    uint32_t HopCount(FW::NodeId, FW::NodeId) const override { return 0; }
+    FW::Generation GetGeneration() const override { return FW::Generation{0}; }
+    FW::NodeId GetLocalNodeID() const override { return FW::NodeId{0}; }
+};
+
+class ControllerCoreDiscoveryTest : public ControllerCoreInterruptTest {
+protected:
+    void SetUp() override {
+        ControllerCore::Dependencies deps{};
+        deps.hardware = hardware_;
+        deps.stateMachine = stateMachine_;
+        deps.topology = topology_;
+        deps.romStore = romStore_;
+        deps.romScanner = std::make_shared<Discovery::ROMScanner>(bus_, speedPolicy_,
+                                                                  Discovery::ROMScannerParams{});
+        core_ = std::make_shared<ControllerCore>(ControllerConfig{}, RolePolicy::MakeLiveDefault(),
+                                                 std::move(deps));
+        ASSERT_EQ(stateMachine_->TransitionTo(ControllerState::kStarting, "test", 0),
+                  TransitionDisposition::kApplied);
+        ASSERT_EQ(stateMachine_->TransitionTo(ControllerState::kRunning, "test", 0),
+                  TransitionDisposition::kApplied);
+        Discovery::Testing::ROMScanStartRecorder() = [this](const Discovery::ROMScanRequest& request) {
+            requests_.push_back(request);
+        };
+    }
+    void TearDown() override { Discovery::Testing::ROMScanStartRecorder() = nullptr; }
+
+    NullBus bus_;
+    Discovery::SpeedPolicy speedPolicy_;
+    std::shared_ptr<Discovery::ConfigROMStore> romStore_ = std::make_shared<Discovery::ConfigROMStore>();
+    std::vector<Discovery::ROMScanRequest> requests_;
+};
+
+TEST_F(ControllerCoreDiscoveryTest, ScanStartsWithTheROMsTheResetSuspended) {
+    Discovery::ConfigROM rom{};
+    rom.gen = Discovery::Generation{kGeneration - 1};
+    rom.nodeId = 0;
+    rom.bib.guid = 0x000A9204050839AEULL;
+    rom.rawQuadlets = {0x04201234, 0x31333934, 0x00008012, 0x000A9204, 0x050839AE, 0x00020000};
+    romStore_->Insert(rom);
+    // The bus-reset edge suspends the previous generation (HandleInterrupt).
+    romStore_->SuspendAll(Discovery::Generation{kGeneration});
+
+    BringUpTopology(/*localNodeId=*/1);
+
+    ASSERT_EQ(requests_.size(), 1U);
+    EXPECT_EQ(requests_.front().gen, Discovery::Generation{kGeneration});
+    ASSERT_EQ(requests_.front().previousROMs.size(), 1U);
+    EXPECT_EQ(requests_.front().previousROMs.front().bib.guid, rom.bib.guid);
+    EXPECT_EQ(requests_.front().previousROMs.front().rawQuadlets, rom.rawQuadlets);
 }
 
 // The policy did not choose this node in this generation, so it restores
@@ -142,6 +246,7 @@ protected:
         deps.topology = topology_;
         deps.interrupts = interrupts_;
         deps.busReset = busReset_;
+        deps.asyncController = async_;
         core_ = std::make_shared<ControllerCore>(ControllerConfig{}, RolePolicy::MakeLiveDefault(),
                                                  std::move(deps));
         ASSERT_EQ(stateMachine_->TransitionTo(ControllerState::kStarting, "test", 0),
@@ -173,7 +278,7 @@ protected:
                     Raise(arrivals[pass]);
                 }
                 ++pass;
-                core_->HandleInterrupt(snap);
+                (void)core_->HandleInterrupt(snap);
             });
     }
 
@@ -182,6 +287,7 @@ protected:
     std::shared_ptr<TopologyManager> topology_ = std::make_shared<TopologyManager>();
     std::shared_ptr<InterruptManager> interrupts_ = std::make_shared<InterruptManager>();
     std::shared_ptr<BusResetCoordinator> busReset_ = std::make_shared<BusResetCoordinator>();
+    std::shared_ptr<AsyncControllerStub> async_ = std::make_shared<AsyncControllerStub>();
     std::shared_ptr<ControllerCore> core_;
 };
 
@@ -213,6 +319,25 @@ TEST_F(ControllerCoreInterruptLineTest, EventArrivingDuringTheHandlerIsServicedB
     EXPECT_EQ(Asserted(), 0U);
 }
 
+// A packet landing after the ring scan but before the acknowledge. With the
+// acknowledge last, its RQPkt was cleared unprocessed and, the output never
+// having deasserted, no MSI followed: the packet sat in the ring until an
+// unrelated interrupt (Hasselblad H camera, 2026-10-15: SBP-2 status blocks
+// serviced 10 s late). The handler must take a second pass for it.
+TEST_F(ControllerCoreInterruptLineTest, PacketArrivingDuringRingServiceIsServicedBeforeReturning) {
+    async_->onRxRequestInterrupt = [this] {
+        if (async_->rxRequestInterrupts == 1) {
+            Raise(IntEventBits::kRQPkt);
+        }
+    };
+    Raise(IntEventBits::kRQPkt);
+
+    EXPECT_EQ(Service(), 0U);
+
+    EXPECT_EQ(async_->rxRequestInterrupts, 2U);
+    EXPECT_EQ(Asserted(), 0U);
+}
+
 TEST(InterruptDrainTest, GivesUpOnAnEventThatNeverClears) {
     int passes = 0;
     const uint32_t pending = ServiceUntilDeasserted(
@@ -222,6 +347,16 @@ TEST(InterruptDrainTest, GivesUpOnAnEventThatNeverClears) {
 
     EXPECT_EQ(pending, IntEventBits::kRQPkt);
     EXPECT_EQ(passes, kMaxInterruptPasses);
+}
+
+TEST_F(ControllerCoreInterruptTest, BusResetClearsEveryPhysicalRequestFilter) {
+    hardware_->SetTestRegister(Register32::kSelfIDCount, kGeneration << 16);
+    ASSERT_TRUE(hardware_->EnablePhysicalRequests(5, kGeneration).has_value());
+    ASSERT_TRUE(hardware_->EnablePhysicalRequests(40, kGeneration).has_value());
+    hardware_->SetTestRegister(Register32::kIntEvent, IntEventBits::kBusReset);
+    (void)core_->HandleInterrupt(InterruptSnapshot{.intEvent = IntEventBits::kBusReset});
+    EXPECT_EQ(0u, hardware_->GetTestRegister(Register32::kPhyReqFilterLoSet));
+    EXPECT_EQ(0u, hardware_->GetTestRegister(Register32::kPhyReqFilterHiSet));
 }
 
 } // namespace ASFW::Driver

@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <vector>
+
 #include "../ASFWDriver/ConfigROM/Remote/ROMScanNodeStateMachine.hpp"
 
 using ASFW::Discovery::ROMScanNodeStateMachine;
@@ -27,6 +29,36 @@ TEST(ROMScanNodeStateMachineTests, RejectsInvalidTransition) {
 
     EXPECT_FALSE(node.TransitionTo(ROMScanNodeStateMachine::State::ReadingDetails));
     EXPECT_EQ(node.CurrentState(), ROMScanNodeStateMachine::State::Idle);
+}
+
+TEST(ROMScanNodeStateMachineTests, SpeedProbeSitsBetweenBibAndDirectoryOrIrm) {
+    for (const auto next : {ROMScanNodeStateMachine::State::ReadingRootDir,
+                            ROMScanNodeStateMachine::State::VerifyingIRM_Read}) {
+        ROMScanNodeStateMachine node;
+        ASSERT_TRUE(node.TransitionTo(ROMScanNodeStateMachine::State::ReadingBIB));
+        ASSERT_TRUE(node.TransitionTo(ROMScanNodeStateMachine::State::ProbingSpeed));
+        EXPECT_TRUE(node.TransitionTo(next));
+    }
+}
+
+// An unchanged bus info block completes the node from the previous
+// generation's ROM at whichever step precedes the root directory read.
+TEST(ROMScanNodeStateMachineTests, UnchangedBusInfoBlockCompletesBeforeTheRootDirectory) {
+    using enum ROMScanNodeStateMachine::State;
+    const std::vector<std::vector<ROMScanNodeStateMachine::State>> paths = {
+        {ReadingBIB},
+        {ReadingBIB, ProbingSpeed},
+        {ReadingBIB, VerifyingIRM_Read},
+        {ReadingBIB, VerifyingIRM_Read, VerifyingIRM_Lock},
+        {ReadingBIB, ProbingSpeed, VerifyingIRM_Read, VerifyingIRM_Lock},
+    };
+    for (const auto& path : paths) {
+        ROMScanNodeStateMachine node;
+        for (const auto state : path) {
+            ASSERT_TRUE(node.TransitionTo(state));
+        }
+        EXPECT_TRUE(node.TransitionTo(Complete)) << "after " << path.size() << " steps";
+    }
 }
 
 TEST(ROMScanNodeStateMachineTests, AcceptsConfigROMReadyRetryTransitions) {

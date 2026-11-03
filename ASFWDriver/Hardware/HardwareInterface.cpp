@@ -367,6 +367,38 @@ bool HardwareInterface::IsAvailable() const noexcept {
     return accessGate_.IsOpen() && static_cast<bool>(device_);
 }
 
+PciInterruptState HardwareInterface::ReadPciInterruptState() const noexcept {
+    PciInterruptState state{};
+#ifndef ASFW_HOST_TEST
+    if (!device_ || HardwareGone()) {
+        return state;
+    }
+    device_->ConfigurationRead16(kIOPCIConfigurationOffsetCommand, &state.command);
+    device_->ConfigurationRead16(kIOPCIConfigurationOffsetStatus, &state.status);
+
+    constexpr uint64_t kMessageControl = 2;
+    constexpr uint16_t kMsi64Bit = 0x0080;
+    constexpr uint16_t kMsiPerVectorMask = 0x0100;
+    uint64_t msi = 0;
+    if (device_->FindPCICapability(kIOPCICapabilityIDMSI, 0, &msi) == kIOReturnSuccess && msi != 0) {
+        state.msiPresent = true;
+        device_->ConfigurationRead16(msi + kMessageControl, &state.msiControl);
+        if ((state.msiControl & kMsiPerVectorMask) != 0) {
+            const uint64_t maskOffset = (state.msiControl & kMsi64Bit) != 0 ? 0x10 : 0x0C;
+            device_->ConfigurationRead32(msi + maskOffset, &state.msiMaskBits);
+        }
+    }
+    uint64_t msix = 0;
+    if (device_->FindPCICapability(kIOPCICapabilityIDMSIX, 0, &msix) == kIOReturnSuccess &&
+        msix != 0) {
+        state.msixPresent = true;
+        device_->ConfigurationRead16(msix + kMessageControl, &state.msixControl);
+    }
+    state.valid = true;
+#endif
+    return state;
+}
+
 bool HardwareInterface::HardwareGone() const noexcept {
     return hardwareGoneReason_.load(std::memory_order_acquire) !=
            static_cast<uint8_t>(HardwareGoneReason::kNone);
@@ -503,36 +535,49 @@ void HardwareInterface::ClearIntEvents(uint32_t mask) {
 }
 
 // Global events first, then each signalled direction's context mask, read and
-// cleared once (Linux ohci.c irq_handler, cross-validated at :2203-2268).
+// cleared once; share one completion readback across those writes (Linux
+// ohci.c irq_handler:2219-2268,2309-2313). Retain HCControl as our readback
+// register so a removed provider still revokes the MMIO access gate.
 // IntEvent.isochTx and isochRx are not latched: each is the OR of
 // (isoXmitIntEvent & isoXmitIntMask), or of the isoRecv pair (OHCI 1.1
 // Table 6-1), so it deasserts only when those context bits are cleared.
 // Reading the Clear address returns the masked events (OHCI 1.1 §6.3.1,
 // §6.4.1), as Linux reads it, so a context whose interrupt is masked is left
-// alone. Only the bits read are cleared: a completion that lands after the
-// read keeps its bit and raises a new interrupt.
-IsochContextEvents HardwareInterface::TakeIsochContextEvents(uint32_t intEvent) noexcept {
+// alone. Only the bits read are cleared: a newly signalled context absent from
+// that bitmap keeps its bit for the next interrupt/drain pass.
+IsochContextEvents HardwareInterface::AcknowledgeInterruptEvents(
+    uint32_t globalEventsToClear, uint32_t intEvent) noexcept {
     IsochContextEvents events{};
-    if ((intEvent & (IntEventBits::kIsochTx | IntEventBits::kIsochRx)) == 0) {
+    if (globalEventsToClear == 0 &&
+        (intEvent & (IntEventBits::kIsochTx | IntEventBits::kIsochRx)) == 0) {
         return events;
     }
     auto access = TryBeginAccess();
     if (!access) {
         return events;
     }
+    bool wrote = globalEventsToClear != 0;
+    if (wrote) {
+        access.Write(Register32::kIntEventClear, globalEventsToClear);
+    }
     if ((intEvent & IntEventBits::kIsochRx) != 0) {
         events.receive = access.Read(Register32::kIsoRecvIntEventClear);
         if (events.receive != 0) {
-            access.WriteAndFlush(Register32::kIsoRecvIntEventClear, events.receive);
+            access.Write(Register32::kIsoRecvIntEventClear, events.receive);
+            wrote = true;
         }
     }
     if ((intEvent & IntEventBits::kIsochTx) != 0) {
         events.transmit = access.Read(Register32::kIsoXmitIntEventClear);
         if (events.transmit != 0) {
-            access.WriteAndFlush(Register32::kIsoXmitIntEventClear, events.transmit);
+            access.Write(Register32::kIsoXmitIntEventClear, events.transmit);
+            wrote = true;
         }
     }
-    return events;
+    if (wrote) {
+        access.FlushPostedWrites();
+    }
+    return HardwareGone() ? IsochContextEvents{} : events;
 }
 
 InterruptSnapshot HardwareInterface::CaptureInterruptSnapshot(uint64_t timestamp) const noexcept {

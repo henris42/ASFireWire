@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <expected>
 #include <optional>
 #include <utility> // for std::pair
 #include <vector>
@@ -35,6 +36,8 @@ class IAsyncControllerPort;
 
 namespace ASFW::Driver {
 
+enum class PhysicalDmaError : uint8_t { InvalidNode, HardwareGone, StaleGeneration };
+
 /// Result of a local autonomous IRM CSR compare-swap operation (OHCI §5.5).
 struct LocalCSRLockResult {
     enum class Status : uint8_t {
@@ -60,6 +63,22 @@ enum class HardwareGoneReason : uint8_t {
     kNone,
     kProviderRevoked,
     kMmioPresenceProbeAllOnes,
+};
+
+/// PCI-side interrupt delivery state, read only when an interrupt stall is
+/// suspected. Raw values; the fields named below are decoded by the reader.
+/// Layout: PCI Local Bus 3.0 MSI/MSI-X capability (Message Control at +2;
+/// MSI mask bits at +0x0C, or +0x10 with 64-bit addressing), as Linux
+/// include/uapi/linux/pci_regs.h names them (PCI_MSI_*, PCI_MSIX_*).
+struct PciInterruptState final {
+    bool valid{false};
+    uint16_t command{0};
+    uint16_t status{0};
+    bool msiPresent{false};
+    uint16_t msiControl{0};      // bit 0 enable, bit 7 64-bit, bit 8 per-vector mask
+    uint32_t msiMaskBits{0};     // valid only when msiControl bit 8 is set
+    bool msixPresent{false};
+    uint16_t msixControl{0};     // bit 15 enable, bit 14 function mask
 };
 
 class HardwareInterface {
@@ -93,13 +112,22 @@ class HardwareInterface {
 
     void SetInterruptMask(uint32_t mask, bool enable);
     [[nodiscard]] InterruptSnapshot CaptureInterruptSnapshot(uint64_t timestamp) const noexcept;
+    /// Configuration-space reads only; no BAR access. Diagnostics, not a hot path.
+    [[nodiscard]] PciInterruptState ReadPciInterruptState() const noexcept;
     void SetLinkControlBits(uint32_t bits);
     void ClearLinkControlBits(uint32_t bits);
+    // Admit one local node's physical requests for the current generation, the
+    // way Linux ohci_enable_phys_dma does. Nothing disables a node; the filter
+    // is cleared as a whole at bus reset and teardown.
+    [[nodiscard]] std::expected<void, PhysicalDmaError>
+    EnablePhysicalRequests(uint16_t node, uint16_t generation) noexcept;
+    void ClearPhysicalRequestFilters() noexcept;
     void ClearIntEvents(uint32_t mask);
-    // Reads and clears the per-context isoch event masks, once, for each
-    // direction `intEvent` signals. Call after the global events are
-    // acknowledged; the caller then services every returned context.
-    [[nodiscard]] IsochContextEvents TakeIsochContextEvents(uint32_t intEvent) noexcept;
+    // Acknowledges the caller-selected global bits, then reads and clears each
+    // signalled isoch direction. One readback completes the entire batch before
+    // the caller services the returned contexts. The caller owns reset/fault policy.
+    [[nodiscard]] IsochContextEvents AcknowledgeInterruptEvents(
+        uint32_t globalEventsToClear, uint32_t intEvent) noexcept;
     // How many isochronous contexts the controller implements per direction
     // (the smaller of IT and IR), found the OHCI way: set every mask bit and
     // read back which exist; the previous mask is restored. Zero when the
@@ -260,7 +288,7 @@ class HardwareInterface {
         Write,
         WriteAndFlush,
         ClearIntEvents,
-        TakeIsochContextEvents,
+        AcknowledgeInterruptEvents,
         SendPhyConfig,
         InitiateBusReset,
         SendPhyGlobalResume,

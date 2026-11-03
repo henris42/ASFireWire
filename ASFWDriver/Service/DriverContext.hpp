@@ -29,6 +29,7 @@ namespace ASFW::Audio {
 class AudioCoordinator;
 }
 
+
 namespace ASFW::Protocols::SBP2 {
 class SBP2NubPublisher;
 class SBP2TargetBridge;
@@ -51,6 +52,10 @@ struct ServiceContext {
     bool irqArrivalChecked{true};
     std::atomic<bool> selfTerminationRequested{false};
     uint64_t irqProbeLastEntries{0};
+    // One master-enable retrigger per stall, issued by the watchdog; the next
+    // probe reports whether the ISR was entered again.
+    bool irqRetriggerPending{false};
+    uint64_t irqRetriggerEntries{0};
     ASFW::Driver::ControllerCore::Dependencies deps;
     ASFW::Driver::ControllerConfig config{}; // immutable identity/static config
     // Initial (wiring-time) role policy. The runtime-mutable copy is owned by

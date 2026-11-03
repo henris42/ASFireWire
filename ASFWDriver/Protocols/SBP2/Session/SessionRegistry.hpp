@@ -2,7 +2,7 @@
 
 // SessionRegistry — bridges discovery metadata to LoginSession instances.
 //
-// Decomposed from PR #19's SBP2SessionRegistry (§2a of SBP2_SESSION_PORT.md):
+// Decomposed from PR #19's SBP2SessionRegistry:
 // identity & lifecycle only. Sessions are created for an owner and target
 // (guid, romOffset); public operations use opaque handles plus owner validation,
 // and the registry rejects duplicate live targets by (guid, romOffset). The
@@ -71,7 +71,8 @@ public:
                     Discovery::DeviceRegistry& deviceRegistry,
                     Discovery::IDeviceManager& deviceManager,
                     ISessionScheduler& scheduler,
-                    IODispatchQueue* workQueue = nullptr);
+                    IODispatchQueue* workQueue = nullptr,
+                    uint16_t maxPayloadSize = 4096);
     ~SessionRegistry();
 
     SessionRegistry(const SessionRegistry&) = delete;
@@ -107,6 +108,12 @@ public:
     // CommandExecutor::SetBusResetRequester). Set once during driver wiring,
     // before any session exists.
     void SetBusResetRequester(std::function<void()> requester);
+    // Handed to every LoginSession (LoginSession::SetPhysicalDmaEnabler).
+    void SetPhysicalDmaEnabler(LoginSession::PhysicalDmaEnabler enabler);
+    // Driver teardown is about to release every session with the physical
+    // response unit already shut: a failed logout then needs no bus reset, and
+    // a parked command is freed with the registry.
+    void PrepareForTeardown();
 
     // Push channel for login state. Fires observer(guid, true) when a session
     // reaches LoggedIn (fresh login or reconnect) and observer(guid, false) on
@@ -129,8 +136,10 @@ private:
     std::shared_ptr<Discovery::FWUnit> ResolveUnit(uint64_t guid, uint32_t romOffset) const;
 
     [[nodiscard]] bool HasSessionForTargetLocked(uint64_t guid, uint32_t romOffset) const;
-    void RetireSessionLocked(const SessionRecord& record);
+    void RetireSessionLocked(const SessionRecord& record,
+                             std::optional<ParkedCommand> parked = std::nullopt);
     void EraseRetiredSessionLocked(const std::shared_ptr<LoginSession>& session);
+    void OnLogoutFailedLocked(const std::shared_ptr<LoginSession>& session, const char* reason);
     void SetReleaseLogoutCallbackLocked(uint64_t handle, uint64_t guid,
                                         const std::shared_ptr<LoginSession>& session);
 
@@ -145,15 +154,19 @@ private:
     Discovery::IDeviceManager& deviceManager_;
     ISessionScheduler& scheduler_;
     IODispatchQueue* workQueue_{nullptr};
+    uint16_t maxPayloadSize_{4096};
 
     IOLock* lock_{nullptr};
     std::function<void()> busResetRequester_;
+    LoginSession::PhysicalDmaEnabler physicalDmaEnabler_;
     std::function<void(uint64_t, bool)> loginStateObserver_;
     std::map<uint64_t, SessionRecord> sessions_;
     struct RetiringSession {
         uint64_t guid{0};
         uint32_t romOffset{0};
         std::shared_ptr<LoginSession> session;
+        // A command the target still owned at release; freed with the entry.
+        std::optional<ParkedCommand> parked;
     };
     // Hidden from registry clients, but retained until async logout finishes/times out.
     std::vector<RetiringSession> retiringSessions_;
@@ -163,6 +176,7 @@ private:
     // they are dispatched to workQueue_ — a management write can fail INLINE
     // while the caller still holds lock_, and os_unfair_lock recursion aborts).
     std::shared_ptr<int> lifetimeToken_{std::make_shared<int>(0)};
+    bool tearingDown_{false};
 };
 
 } // namespace ASFW::Protocols::SBP2

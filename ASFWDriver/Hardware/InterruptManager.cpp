@@ -54,14 +54,17 @@ void InterruptManager::Enable() {
     ASFW_LOG(Controller, "InterruptManager::Enable called: source=%p", source_.get());
     if (source_) {
         source_->SetEnableWithCompletion(true, nullptr);
+        sourceEnabled_.store(true, std::memory_order_release);
     } else {
         ASFW_LOG_ERROR(Controller, "⚠️  InterruptManager::Enable: NO SOURCE!");
     }
 }
 
 void InterruptManager::Disable() {
+    ASFW_LOG(Controller, "InterruptManager::Disable called: source=%p", source_.get());
     if (source_) {
         source_->SetEnableWithCompletion(false, nullptr);
+        sourceEnabled_.store(false, std::memory_order_release);
     }
     // The manager (and its shadow mask) now survives suspend, but the silicon's
     // IntMask does not — a stale shadow would make UnmaskInterrupts skip the
@@ -77,6 +80,7 @@ void InterruptManager::Teardown() {
     }
 
     source_->SetEnableWithCompletion(false, nullptr);
+    sourceEnabled_.store(false, std::memory_order_release);
 
     // The kernel-side source performs IOService::unregisterInterrupt in its
     // free(), i.e. whenever the last reference drops. Hand the final references
@@ -91,7 +95,7 @@ void InterruptManager::Teardown() {
     // caller (teardown inside Start()); release the action behind it.
     IODispatchQueue* queue = queue_.get();
     ASFW_LOG(Controller, "[Teardown] interrupt cancel requested source=%p action=%p", source, handler);
-    auto done = teardownCompletion_ ? teardownCompletion_->Begin() : std::function<void()>{};
+    auto done = teardownCompletion_ ? teardownCompletion_->Begin("interrupt") : std::function<void()>{};
     const kern_return_t kr = source->Cancel(^{
         ASFW_LOG(Controller, "[Teardown] interrupt cancel completed source=%p action=%p", source, handler);
         source->release();

@@ -40,8 +40,6 @@ class ROMScanSession final : public std::enable_shared_from_this<ROMScanSession>
     void Start(ROMScanRequest request, ScanCompletionCallback completion);
     void Abort();
 
-    [[nodiscard]] Generation GetGeneration() const noexcept { return gen_; }
-
   private:
     struct DetailsDiscovery;
 
@@ -58,12 +56,22 @@ class ROMScanSession final : public std::enable_shared_from_this<ROMScanSession>
 
     [[nodiscard]] ROMScanNodeStateMachine* FindNode(uint8_t nodeId);
 
+    // Generation 0 is a real bus generation (the 8-bit counter wraps, OHCI 1.2
+    // Table 11-2), so "no scan running" is scanActive_, never a gen_ value.
+    [[nodiscard]] bool IsCurrentScan(Generation gen) const noexcept {
+        return scanActive_ && gen == gen_;
+    }
+
     [[nodiscard]] static bool TransitionNodeState(ROMScanNodeStateMachine& node,
                                                   ROMScanNodeStateMachine::State next,
                                                   const char* reason);
 
     void StartBIBRead(ROMScanNodeStateMachine& node);
     void HandleBIBComplete(uint8_t nodeId, ROMReader::ReadResult result);
+    void SelectOperationalSpeed(ROMScanNodeStateMachine& node);
+    void StartSpeedProbe(ROMScanNodeStateMachine& node);
+    void HandleSpeedProbeComplete(uint8_t nodeId, ROMReader::ReadResult result);
+    void FinishSpeedSelection(ROMScanNodeStateMachine& node);
     void ContinueAfterBIBSuccess(ROMScanNodeStateMachine& node, uint8_t nodeId);
     [[nodiscard]] bool IsRootNode(uint8_t nodeId) const noexcept;
     void NotifyRootBIBPending(uint8_t nodeId);
@@ -81,6 +89,10 @@ class ROMScanSession final : public std::enable_shared_from_this<ROMScanSession>
     void HandleIRMLockComplete(uint8_t nodeId, bool success);
     void ContinueAfterIRMCheck(ROMScanNodeStateMachine& node);
 
+    // After the BIB, the speed probe and the IRM check: complete from the
+    // previous generation's copy when the BIB is unchanged, else read on.
+    void ContinueToRootDirectory(ROMScanNodeStateMachine& node);
+    void CompleteFromPreviousROM(ROMScanNodeStateMachine& node, const ConfigROM& previous);
     void StartRootDirRead(ROMScanNodeStateMachine& node);
     void HandleRootDirComplete(uint8_t nodeId, ROMReader::ReadResult result);
 
@@ -105,12 +117,14 @@ class ROMScanSession final : public std::enable_shared_from_this<ROMScanSession>
 
     std::atomic<bool> aborted_{false};
 
+    bool scanActive_{false};
     Generation gen_{0};
     Driver::TopologySnapshot topology_{};
     uint8_t localNodeId_{0xFF};
 
     std::vector<ROMScanNodeStateMachine> nodeScans_;
     std::vector<ConfigROM> completedROMs_;
+    std::vector<ConfigROM> previousROMs_;
 
     uint16_t inflight_{0};
     bool hadBusyNodes_{false};

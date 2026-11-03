@@ -75,14 +75,16 @@ SessionRegistry::SessionRegistry(Async::IFireWireBus& bus,
                                  Discovery::DeviceRegistry& deviceRegistry,
                                  Discovery::IDeviceManager& deviceManager,
                                  ISessionScheduler& scheduler,
-                                 IODispatchQueue* workQueue)
+                                 IODispatchQueue* workQueue,
+                                 uint16_t maxPayloadSize)
     : bus_(bus)
     , busInfo_(busInfo)
     , addrSpaceMgr_(addrSpaceMgr)
     , deviceRegistry_(deviceRegistry)
     , deviceManager_(deviceManager)
     , scheduler_(scheduler)
-    , workQueue_(workQueue) {
+    , workQueue_(workQueue)
+    , maxPayloadSize_(maxPayloadSize) {
     lock_ = IOLockAlloc();
 }
 
@@ -95,7 +97,7 @@ SessionRegistry::~SessionRegistry() {
                 (void)record.session->Logout();
             }
             if (record.executor) {
-                record.executor->Cleanup();
+                (void)record.executor->Cleanup();
             }
         }
         sessions_.clear();
@@ -161,6 +163,8 @@ std::expected<uint64_t, int> SessionRegistry::CreateSession(void* owner,
     record.route = *route;
     record.session = std::make_shared<LoginSession>(bus_, busInfo_, addrSpaceMgr_, scheduler_);
     record.session->Configure(targetInfo);
+    record.session->SetMaxPayloadSize(maxPayloadSize_);
+    record.session->SetPhysicalDmaEnabler(physicalDmaEnabler_);
     // record.lastError lives at a stable address (map node), so the executor may
     // bind a reference to it.
     record.executor = std::make_unique<CommandExecutor>(
@@ -220,9 +224,10 @@ std::optional<SBP2SessionState> SessionRegistry::GetSessionState(void* owner,
     }
 
     SBP2SessionState state{};
-    state.loginState = record->session->State();
-    state.loginID = record->session->LoginID();
-    state.generation = record->session->Generation();
+    const LoginSnapshot snap = record->session->Snapshot();
+    state.loginState = snap.state;
+    state.loginID = snap.loginID.value_or(0);
+    state.generation = snap.generation;
     state.lastError = record->lastError;
     state.reconnectPending = (state.loginState == LoginState::Suspended);
     return state;
@@ -286,8 +291,9 @@ bool SessionRegistry::ReleaseSession(void* owner, uint64_t handle) {
         }
 
         auto& record = it->second;
+        std::optional<ParkedCommand> parked;
         if (record.executor) {
-            record.executor->Cleanup();
+            parked = record.executor->Cleanup();
         }
 
         const LoginState state = record.session ? record.session->State() : LoginState::Idle;
@@ -295,11 +301,11 @@ bool SessionRegistry::ReleaseSession(void* owner, uint64_t handle) {
             (state == LoginState::LoggedIn || state == LoginState::Suspended)) {
             SetReleaseLogoutCallbackLocked(handle, record.guid, record.session);
             // Retire optimistically; un-retired below if Logout() is rejected.
-            RetireSessionLocked(record);
+            RetireSessionLocked(record, std::move(parked));
             toLogout = record.session;
         } else if (record.session && state == LoginState::LoggingOut) {
             SetReleaseLogoutCallbackLocked(handle, record.guid, record.session);
-            RetireSessionLocked(record);
+            RetireSessionLocked(record, std::move(parked));
         }
         sessions_.erase(it);
     }
@@ -309,7 +315,7 @@ bool SessionRegistry::ReleaseSession(void* owner, uint64_t handle) {
     // when the device vanished during teardown).
     if (toLogout && !toLogout->Logout()) {
         IOLockGuard lock(lock_);
-        EraseRetiredSessionLocked(toLogout);
+        OnLogoutFailedLocked(toLogout, "rejected");
     }
     return true;
 }
@@ -326,20 +332,20 @@ void SessionRegistry::ReleaseOwner(void* owner) {
 
             auto& record = it->second;
             const LoginState state = record.session ? record.session->State() : LoginState::Idle;
+            std::optional<ParkedCommand> parked;
+            if (record.executor) {
+                parked = record.executor->Cleanup();
+            }
 
             if (record.session &&
                 (state == LoginState::LoggedIn || state == LoginState::Suspended)) {
                 SetReleaseLogoutCallbackLocked(record.handle, record.guid, record.session);
                 // Retire optimistically; un-retired below if Logout() is rejected.
-                RetireSessionLocked(record);
+                RetireSessionLocked(record, std::move(parked));
                 toLogout.push_back(record.session);
             } else if (record.session && state == LoginState::LoggingOut) {
                 SetReleaseLogoutCallbackLocked(record.handle, record.guid, record.session);
-                RetireSessionLocked(record);
-            }
-
-            if (record.executor) {
-                record.executor->Cleanup();
+                RetireSessionLocked(record, std::move(parked));
             }
             it = sessions_.erase(it);
         }
@@ -349,9 +355,24 @@ void SessionRegistry::ReleaseOwner(void* owner) {
     for (auto& session : toLogout) {
         if (!session->Logout()) {
             IOLockGuard lock(lock_);
-            EraseRetiredSessionLocked(session);
+            OnLogoutFailedLocked(session, "rejected");
         }
     }
+}
+
+void SessionRegistry::SetPhysicalDmaEnabler(LoginSession::PhysicalDmaEnabler enabler) {
+    IOLockGuard lock(lock_);
+    physicalDmaEnabler_ = std::move(enabler);
+    for (auto& [handle, record] : sessions_) {
+        if (record.session) {
+            record.session->SetPhysicalDmaEnabler(physicalDmaEnabler_);
+        }
+    }
+}
+
+void SessionRegistry::PrepareForTeardown() {
+    IOLockGuard lock(lock_);
+    tearingDown_ = true;
 }
 
 void SessionRegistry::SetBusResetRequester(std::function<void()> requester) {
@@ -389,14 +410,60 @@ void SessionRegistry::EmitLoginStateLocked(uint64_t guid, bool loggedIn) {
 }
 
 void SessionRegistry::OnBusReset(uint16_t newGeneration) {
-    IOLockGuard lock(lock_);
-    for (auto& [handle, record] : sessions_) {
-        if (record.session) {
-            record.session->HandleBusReset(newGeneration);
+    std::vector<std::shared_ptr<LoginSession>> toReset;
+    {
+        IOLockGuard lock(lock_);
+        for (auto& [handle, record] : sessions_) {
+            if (record.session) {
+                toReset.push_back(record.session);
+            }
+            if (record.executor) {
+                record.executor->OnBusReset();
+            }
         }
-        if (record.executor) {
-            record.executor->OnBusReset();
+        // The reset ends the target's claim on a parked command's buffer. An entry
+        // kept only for that (its logout had failed) goes with it; one still
+        // logging out is erased by its own logout callback.
+        for (auto& retired : retiringSessions_) {
+            retired.parked.reset();
         }
+        std::erase_if(retiringSessions_, [](const RetiringSession& retired) {
+            return retired.session && retired.session->State() != LoginState::LoggingOut;
+        });
+    }
+    // Outside lock_: this thread may end up running work another thread queued
+    // on the session meanwhile (a client's Logout), whose callback takes lock_.
+    for (auto& session : toReset) {
+        session->HandleBusReset(newGeneration);
+    }
+}
+
+// A logout that was rejected or never answered leaves the target's claim on a
+// parked command unresolved; SBP-2 gives no other way to end it than a bus
+// reset (main's policy for an unreachable target), after which OnBusReset
+// frees the command. Without a parked command there is nothing to protect and
+// the entry is simply dropped.
+void SessionRegistry::OnLogoutFailedLocked(const std::shared_ptr<LoginSession>& session,
+                                           const char* reason) {
+    const auto it = std::find_if(
+        retiringSessions_.begin(), retiringSessions_.end(),
+        [&session](const RetiringSession& retired) { return retired.session == session; });
+    if (it == retiringSessions_.end()) {
+        return;
+    }
+    if (!it->parked) {
+        retiringSessions_.erase(it);
+        return;
+    }
+    if (tearingDown_) {
+        // The teardown already shut the physical response unit before it
+        // released the sessions; the parked command goes with the registry.
+        return;
+    }
+    ASFW_LOG(Async, "SessionRegistry: logout %{public}s with a command outstanding — "
+                    "requesting bus reset to free it", reason);
+    if (busResetRequester_) {
+        busResetRequester_();
     }
 }
 
@@ -441,7 +508,7 @@ void SessionRegistry::RefreshTargets(Discovery::Generation gen) {
 
             record.session->Configure(BuildTargetInfoFromUnit(*unit));
             record.route = *route;
-            ASFW_LOG(Async, "SessionRegistry: reconnecting session handle=%llu gen=%u",
+            ASFW_LOG(Async, "SessionRegistry: resuming session handle=%llu gen=%u",
                      handle, gen.value);
             toReconnect.push_back(record.session);
         }
@@ -453,7 +520,7 @@ void SessionRegistry::RefreshTargets(Discovery::Generation gen) {
         session->AbandonSuspended();
     }
     for (auto& session : toReconnect) {
-        (void)session->Reconnect();
+        (void)session->Resume();
     }
 }
 
@@ -523,7 +590,8 @@ bool SessionRegistry::HasSessionForTargetLocked(uint64_t guid, uint32_t romOffse
                        });
 }
 
-void SessionRegistry::RetireSessionLocked(const SessionRecord& record) {
+void SessionRegistry::RetireSessionLocked(const SessionRecord& record,
+                                          std::optional<ParkedCommand> parked) {
     if (record.session == nullptr) {
         return;
     }
@@ -535,7 +603,10 @@ void SessionRegistry::RetireSessionLocked(const SessionRecord& record) {
             .guid = record.guid,
             .romOffset = record.romOffset,
             .session = record.session,
+            .parked = std::move(parked),
         });
+    } else if (!it->parked) {
+        it->parked = std::move(parked);
     }
 }
 
@@ -562,7 +633,7 @@ void SessionRegistry::SetReleaseLogoutCallbackLocked(
     std::weak_ptr<LoginSession> weakSession = session;
     std::weak_ptr<int> alive = lifetimeToken_;
     session->SetLogoutCallback(
-        [this, handle, guid, weakSession, alive](const LogoutCompleteParams&) {
+        [this, handle, guid, weakSession, alive](const LogoutCompleteParams& params) {
             if (alive.expired()) {
                 return;  // registry destroyed; session outlived it
             }
@@ -573,12 +644,16 @@ void SessionRegistry::SetReleaseLogoutCallbackLocked(
             if (it != sessions_.end() &&
                 (completedSession == nullptr || it->second.session == completedSession)) {
                 if (it->second.executor) {
-                    it->second.executor->Cleanup();
+                    (void)it->second.executor->Cleanup();
                 }
                 sessions_.erase(it);
             }
 
-            EraseRetiredSessionLocked(completedSession);
+            if (params.status == 0 || completedSession == nullptr) {
+                EraseRetiredSessionLocked(completedSession);
+            } else {
+                OnLogoutFailedLocked(completedSession, params.status == -2 ? "timed out" : "failed");
+            }
             EmitLoginStateLocked(guid, false);
         });
 }

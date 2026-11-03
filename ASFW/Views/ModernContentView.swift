@@ -5,6 +5,7 @@
 //  Created by ASFireWire Project on 07.10.2025.
 //
 
+import CoreAudio
 import SwiftUI
 import Foundation
 
@@ -14,6 +15,7 @@ struct ModernContentView: View {
     /// claims; the sidebar picks which one the window shows.
     @StateObject private var workspace = CardWorkspace()
     @State private var publishedAudioDevices: [AudioWrapperDevice] = []
+    @State private var deviceListObserver: AudioPropertyObserver?
     @State private var selectedSection: SidebarSection? = .overview
     @AppStorage(AdvancedToolsSettings.storageKey)
     private var showAdvancedTools = AdvancedToolsSettings.defaultEnabled
@@ -99,6 +101,15 @@ struct ModernContentView: View {
             case .overview, .audio: return false
             default: return true
             }
+        }
+
+        /// The selection after the visible set changed: a section that
+        /// disappeared (controller or device gone, advanced tools switched off)
+        /// falls back to Overview.
+        static func resolvedSelection(_ selection: SidebarSection?,
+                                      visible: [SidebarSection]) -> SidebarSection? {
+            guard let selection, !visible.contains(selection) else { return selection }
+            return .overview
         }
     }
 
@@ -218,9 +229,7 @@ struct ModernContentView: View {
             }
         }
         .onChange(of: visibleSections) { _, sections in
-            if let selectedSection, !sections.contains(selectedSection) {
-                self.selectedSection = .overview
-            }
+            selectedSection = SidebarSection.resolvedSelection(selectedSection, visible: sections)
         }
     }
 

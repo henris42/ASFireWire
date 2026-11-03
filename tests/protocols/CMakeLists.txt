@@ -427,3 +427,8 @@ add_protocols_test(AvcFeatureControlTests
     AvcFeatureControlTests.cpp
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Core/AvcFrame.cpp"
 )
+
+# SBP2 LoginStateMachine Tests (pure transition table)
+add_protocols_test(LoginStateMachineTests
+    LoginStateMachineTests.cpp
+)

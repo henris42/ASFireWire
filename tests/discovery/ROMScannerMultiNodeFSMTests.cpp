@@ -5,12 +5,14 @@
 #include <span>
 #include <thread>
 #include <vector>
+#include <memory>
 
 #include "../ASFWDriver/Async/Interfaces/IFireWireBus.hpp"
 #include "../ASFWDriver/ConfigROM/Common/ConfigROMPolicies.hpp"
 #include "../ASFWDriver/ConfigROM/ROMScanner.hpp"
 #include "../ASFWDriver/Controller/ControllerTypes.hpp"
 #include "../ASFWDriver/Discovery/SpeedPolicy.hpp"
+#include "../ASFWDriver/Common/FWCommon.hpp"
 
 using namespace ASFW::Discovery;
 using namespace ASFW::Driver;
@@ -23,6 +25,8 @@ public:
         ASFW::Async::InterfaceCompletionCallback callback;
         ASFW::FW::NodeId nodeId{0};
         ASFW::FW::FwSpeed speed{ASFW::FW::FwSpeed::S100};
+        ASFW::Async::FWAddress address{};
+        uint32_t length{0};
     };
 
     std::vector<PendingRead> pendingReads_;
@@ -31,13 +35,14 @@ public:
 
     ASFW::Async::AsyncHandle ReadBlock(ASFW::FW::Generation,
                                        ASFW::FW::NodeId nodeId,
-                                       ASFW::Async::FWAddress,
-                                       uint32_t,
+                                       ASFW::Async::FWAddress address,
+                                       uint32_t length,
                                        ASFW::FW::FwSpeed speed,
                                        ASFW::Async::InterfaceCompletionCallback callback) override {
         std::lock_guard lock(readsMtx_);
         pendingReads_.push_back(PendingRead{.callback = std::move(callback),
-                                            .nodeId = nodeId, .speed = speed});
+                                            .nodeId = nodeId, .speed = speed,
+                                            .address = address, .length = length});
         readsCv_.notify_all();
         return ASFW::Async::AsyncHandle{static_cast<uint32_t>(pendingReads_.size())};
     }
@@ -110,6 +115,14 @@ public:
         SimulateReadSuccess(startIdx + 2, {bib[3]});
         WaitForPendingReads(startIdx + 4);
         SimulateReadSuccess(startIdx + 3, {bib[4]});
+    }
+    void FailRead(size_t index, ASFW::Async::AsyncStatus status = ASFW::Async::AsyncStatus::kTimeout) {
+        ASFW::Async::InterfaceCompletionCallback callback;
+        {
+            std::lock_guard lock(readsMtx_);
+            callback = std::move(pendingReads_.at(index).callback);
+        }
+        if (callback) callback(status, {});
     }
 };
 

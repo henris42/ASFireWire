@@ -5,7 +5,7 @@
 // from AV/C Music Subunit Status and Audio Subunit Identifier descriptors.
 //
 // References:
-// - Apple AppleFWAudio graph rules (applefwaudio-graph-rules.md)
+// - Apple AppleFWAudio graph rules
 // - TA Document 2001007 (AV/C Music Subunit 1.0)
 // - TA Document 1999008 (AV/C Audio Subunit 1.0)
 //
@@ -201,6 +201,9 @@ struct AudioSourcePlugConnection {
 
 /// Complete device graph built from descriptor discovery
 struct DeviceGraph {
+    /// Host notification watermark belonging to these exact immutable values.
+    /// Not a wire field or a topology revision.
+    uint64_t featureChangeSequence{0};
     std::string modelName;
     bool supportsBlockingTransmit{false};
     std::optional<uint8_t> transmitModes, receiveModes;

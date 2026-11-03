@@ -24,6 +24,7 @@
 #endif
 
 #include "../Bus/GenerationTracker.hpp"
+#include "../Bus/Timing/SplitTimeout.hpp"
 #include "../Debug/AsyncTraceCapture.hpp"
 #include "../Shared/ASFWDiagnosticsABI.h"
 #include "AsyncTypes.hpp"
@@ -228,6 +229,7 @@ class AsyncSubsystem : public IAsyncControllerPort {
     [[nodiscard]] PacketBuilder* GetPacketBuilder() { return packetBuilder_.get(); }
     [[nodiscard]] Tx::Submitter* GetSubmitter() { return submitter_.get(); }
     [[nodiscard]] Driver::HardwareInterface* GetHardware() { return hardware_; }
+    [[nodiscard]] std::shared_ptr<FW::SplitTimeout> GetSplitTimeout() const noexcept { return splitTimeout_; }
     [[nodiscard]] PacketRouter* GetPacketRouter() { return packetRouter_.get(); }
 
     [[nodiscard]] DMAMemoryManager* GetDMAManager() override;
@@ -236,6 +238,7 @@ class AsyncSubsystem : public IAsyncControllerPort {
     std::atomic<uint32_t> is_bus_reset_in_progress_{0};
     std::atomic<bool> acceptingSubmissions_{false};
 
+    std::shared_ptr<FW::SplitTimeout> splitTimeout_{std::make_shared<FW::SplitTimeout>()};
     Driver::HardwareInterface* hardware_{nullptr};
     ::OSObject* owner_{nullptr};
     ::IODispatchQueue* workloopQueue_{nullptr};

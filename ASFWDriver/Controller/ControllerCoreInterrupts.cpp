@@ -40,14 +40,14 @@
 
 namespace ASFW::Driver {
 
-void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
+IsochContextEvents ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
     const auto state = StateMachine().CurrentState();
     const bool admitted = state == ControllerState::kStarting || state == ControllerState::kRunning;
     if (!admitted || !deps_.hardware) {
         ASFW_LOG(Controller, "HandleInterrupt early return (state=%{public}s hw=%p)",
                  ToString(state).data(),
                  deps_.hardware.get());
-        return;
+        return {};
     }
 
     auto& hw = *deps_.hardware;
@@ -60,9 +60,16 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
     HandleFaultInterrupts(events);
     NotifyBusResetCoordinator(events, snapshot.timestamp);
     if ((events & IntEventBits::kBusReset) != 0U) {
+        // Node numbers are reassigned by the reset; no node stays admitted to
+        // physical DMA until its session re-enables it for the new generation.
+        hw.ClearPhysicalRequestFilters();
         auto access = hw.TryBeginAccess();
-        if (!access) return;
-        const uint32_t generation = access.Read(Register32::kSelfIDGeneration);
+        if (!access) return {};
+        // SelfIDCount.selfIDGeneration already holds the new generation at the
+        // busReset edge (OHCI 1.2 Table 11-2); 0x06C is reserved.
+        const uint32_t generation =
+            (access.Read(Register32::kSelfIDCount) & SelfIDCountBits::kGenerationMask) >>
+            SelfIDCountBits::kGenerationShift;
         // A reset edge is a hard liveness boundary: no higher layer may retain
         // the old (generation,node) address while Self-ID and ROM discovery are
         // in flight. This matches the legacy IOFireWireFamily policy of
@@ -84,6 +91,9 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
         }
         if (deps_.cmpClient) {
             deps_.cmpClient->InvalidateAllLeasesForBusReset();
+        }
+        if (deps_.romStore) {
+            deps_.romStore->SuspendAll(Discovery::Generation{generation});
         }
         if (deps_.avcDiscovery) {
             deps_.avcDiscovery->OnBusReset(generation);
@@ -119,6 +129,22 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
             deps_.sbp2SessionRegistry->OnBusReset(static_cast<uint16_t>(generation));
         }
     }
+    // Acknowledge before servicing the rings, as Linux does (ohci.c:2223-2235).
+    // The MSI is one message per 0->1 edge of IntEvent & IntMask. A packet that
+    // lands after the ring scan but before the acknowledge would have its RQPkt
+    // cleared here and sit in the ring until an unrelated interrupt (Hasselblad
+    // H camera, 2026-10-15: status blocks serviced 10 s late). Acknowledged
+    // first, it keeps its bit and ServiceUntilDeasserted's re-read runs another
+    // pass. busReset stays set until the reset FSM has quiesced AT (OHCI 1.1
+    // §7.2.3.2); the fault bits are acknowledged after their handling below.
+    // selfIDComplete/selfIDComplete2 are latched: left set and enabled they
+    // keep the output asserted and silence every later MSI.
+    const uint32_t faultAcks = FaultAckMask(events);
+    const uint32_t toAck = events & ~(IntEventBits::kBusReset | faultAcks);
+    // Capture and acknowledge isoch context events in the same flushed access
+    // before any async ring service; return the captured masks to the dispatcher.
+    const IsochContextEvents isochEvents = hw.AcknowledgeInterruptEvents(toAck, rawEvents);
+
     DispatchAsyncInterrupts(events);
     if ((events & IntEventBits::kBusReset) != 0U &&
         deps_.busResetStartedCallback) {
@@ -129,28 +155,14 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
     }
     LogBusResetCompletionEvents(events, snapshot.timestamp);
 
-    const uint32_t faultAcks = FaultAckMask(events);
-
     if (faultAcks != 0U) {
         hw.ClearIntEvents(faultAcks);
     }
 
-    // Acknowledge everything read except busReset, which must stay set until
-    // the reset FSM has quiesced AT (OHCI 1.1 §7.2.3.2) and which OnIrq has
-    // masked. selfIDComplete/selfIDComplete2 are acknowledged here because
-    // they are already latched: left set and enabled, they kept the interrupt
-    // asserted, and an MSI controller then sends no message for anything that
-    // follows. Linux clears the same set in its handler (ohci.c:2219-2224).
-    uint32_t toAck = events & ~(IntEventBits::kBusReset | faultAcks);
-    if (toAck != 0U) {
-        hw.ClearIntEvents(toAck);
-    }
-    // The per-context isoch events are read and cleared after this, by
-    // InterruptDispatcher (HardwareInterface::TakeIsochContextEvents).
-
     if ((events & IntEventBits::kCycleTooLong) != 0U) {
         HandleCycleTooLong();
     }
+    return isochEvents;
 }
 
 // A cycle ran past 115-120 us while this node was root and cycle master, and
@@ -267,6 +279,15 @@ void ControllerCore::HandleFaultInterrupts(uint32_t events) {
                        "❌ CRITICAL: Posted write error - DMA posted write to host memory failed!");
         ASFW_LOG_ERROR(Controller, "This indicates IOMMU mapping error or invalid DMA target address");
         ASFW_LOG(Controller, "Common causes: Self-ID buffer DMA, Config ROM shadow update");
+        // Linux ohci.c:2121-2125 reads the fault address before acknowledging.
+        // Log-only work: the two MMIO reads run only when the line is logged.
+        if (ASFW_LOG_ENABLED(Controller, Error)) {
+            if (auto access = deps_.hardware->TryBeginAccess()) {
+                const uint32_t hi = access.Read(Register32::kPostedWriteAddressHi);
+                const uint32_t lo = access.Read(Register32::kPostedWriteAddressLo);
+                ASFW_LOG_ERROR(Controller, "Posted write error: addressHi=0x%08x addressLo=0x%08x", hi, lo);
+            }
+        }
     }
 
     if ((events & IntEventBits::kCycle64Seconds) != 0U) {

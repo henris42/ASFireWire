@@ -500,8 +500,6 @@ inline constexpr uint64_t SessionGuid(const SessionShape& shape) noexcept {
 inline ConfigROM MakeSessionRom(const SessionShape& shape, Generation gen) {
     ConfigROM rom{};
     rom.gen = gen;
-    rom.firstSeen = gen;
-    rom.lastValidated = gen;
     rom.nodeId = 2;
     rom.bib.guid = SessionGuid(shape);
     rom.bib.maxRec = 8;
