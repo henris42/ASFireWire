@@ -625,6 +625,7 @@
 		06EDDCF4AE58CBB01C9B67F3 /* MotuRxSphClockSnapshot.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MotuRxSphClockSnapshot.hpp; sourceTree = "<group>"; };
 		070831F2CFF382CA4A41D45E /* InfoRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InfoRow.swift; sourceTree = "<group>"; };
 		070AC8A37A94176E7AACEFF0 /* ControllerCore.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ControllerCore.cpp; sourceTree = "<group>"; };
+		0724AA3406B315062961140F /* IoRestartReasons.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IoRestartReasons.hpp; sourceTree = "<group>"; };
 		077468963C2F7E7BB91E28CB /* ASFWMCPBeBoBTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASFWMCPBeBoBTools.swift; sourceTree = "<group>"; };
 		07B7F13F52B17DD428DE1075 /* AM824Encoder.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AM824Encoder.hpp; sourceTree = "<group>"; };
 		082365EC0A2179FE6E92F668 /* IFireWireBusOps.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = IFireWireBusOps.hpp; sourceTree = "<group>"; };
@@ -3889,6 +3890,7 @@
 				326043212A80E707588E0136 /* AudioTelemetrySnapshot.hpp */,
 				02144B4C4EA2BAF93390486A /* HardwareSampleTimeline.hpp */,
 				1557290E6845737616D01C79 /* HostClockAnchor.hpp */,
+				0724AA3406B315062961140F /* IoRestartReasons.hpp */,
 				E80D888C09A54D7E579A60E1 /* PlaybackRingRange.hpp */,
 				4F4D8FCEB74D28E272CF8FEF /* RateValidation.hpp */,
 				112E711A852B3CB16AB9A58B /* RemoteDeviceStopResult.hpp */,
@@ -4672,7 +4674,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 216;
+				CURRENT_PROJECT_VERSION = 217;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
@@ -4693,7 +4695,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 216;
+				CURRENT_PROJECT_VERSION = 217;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
@@ -4777,7 +4779,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = ASFWDriver/ASFWDriver.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 216;
+				CURRENT_PROJECT_VERSION = 217;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				DRIVERKIT_DEPLOYMENT_TARGET = 25.0;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -4849,7 +4851,7 @@
 				CODE_SIGN_ENTITLEMENTS = ASFW/App.Debug.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 216;
+				CURRENT_PROJECT_VERSION = 217;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -4892,7 +4894,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = ASFWDriver/ASFWDriver.Debug.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 216;
+				CURRENT_PROJECT_VERSION = 217;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				DRIVERKIT_DEPLOYMENT_TARGET = 25.0;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -5009,7 +5011,7 @@
 				CODE_SIGN_ENTITLEMENTS = ASFW/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 216;
+				CURRENT_PROJECT_VERSION = 217;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
