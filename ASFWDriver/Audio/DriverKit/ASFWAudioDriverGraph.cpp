@@ -148,6 +148,38 @@ void ResetDeviceStateFromDefaultConfig(ASFWAudioDriver_IVars& ivars) noexcept {
     ivars.device.timing = {};
 }
 
+kern_return_t BuildStreamFormats(const AudioDriverDeviceState& device,
+                                 IOUserAudioStreamBasicDescription (&inputFormats)[kMaxStreamFormats],
+                                 IOUserAudioStreamBasicDescription (&outputFormats)[kMaxStreamFormats],
+                                 uint32_t& count,
+                                 uint32_t& currentIndex) noexcept {
+    count = device.sampleRateCount > kMaxStreamFormats ? kMaxStreamFormats : device.sampleRateCount;
+    currentIndex = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t inputChannels = device.inputChannelCount, outputChannels = device.outputChannelCount;
+        if (!device.rateFormationCandidates.empty()) {
+            const auto found = std::ranges::find(device.rateFormationCandidates,
+                static_cast<uint32_t>(device.sampleRates[i]), &Runtime::RateFormation::sampleRateHz);
+            if (found == device.rateFormationCandidates.end()) return kIOReturnUnsupported;
+            inputChannels = outputChannels = 0;
+            for (const auto& stream : found->capture) inputChannels += stream.pcmChannels;
+            for (const auto& stream : found->playback) outputChannels += stream.pcmChannels;
+        }
+        inputFormats[i] = {};
+        outputFormats[i] = {};
+        if (device.inputChannelCount != 0) {
+            FillFloat32Format(inputFormats[i], device.sampleRates[i], inputChannels);
+        }
+        if (device.outputChannelCount != 0) {
+            FillFloat32Format(outputFormats[i], device.sampleRates[i], outputChannels);
+        }
+        if (device.sampleRates[i] == device.currentSampleRate) {
+            currentIndex = i;
+        }
+    }
+    return kIOReturnSuccess;
+}
+
 kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
                               IOService* provider,
                               ASFWAudioDriver_IVars& ivars) noexcept {
@@ -473,32 +505,16 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     }
     ASFW_LOG(Audio, "ASFWAudioDriver: Initial sample rate set to %.0f Hz", ivars.device.currentSampleRate);
 
-    IOUserAudioStreamBasicDescription inputFormats[8] = {};
-    IOUserAudioStreamBasicDescription outputFormats[8] = {};
-    const uint32_t formatCount = ivars.device.sampleRateCount > 8 ? 8 : ivars.device.sampleRateCount;
+    IOUserAudioStreamBasicDescription inputFormats[kMaxStreamFormats] = {};
+    IOUserAudioStreamBasicDescription outputFormats[kMaxStreamFormats] = {};
+    uint32_t formatCount = 0;
+    uint32_t currentFormatIndex = 0;
     const bool hasInputStream = ivars.device.inputChannelCount != 0;
     const bool hasOutputStream = ivars.device.outputChannelCount != 0;
-    uint32_t currentFormatIndex = 0;
-    for (uint32_t i = 0; i < formatCount; i++) {
-        uint32_t inputChannels = ivars.device.inputChannelCount, outputChannels = ivars.device.outputChannelCount;
-        if (!ivars.device.rateFormationCandidates.empty()) {
-            const auto found = std::ranges::find(ivars.device.rateFormationCandidates,
-                static_cast<uint32_t>(ivars.device.sampleRates[i]), &Runtime::RateFormation::sampleRateHz);
-            if (found == ivars.device.rateFormationCandidates.end()) return kIOReturnUnsupported;
-            inputChannels = outputChannels = 0;
-            for (const auto& stream : found->capture) inputChannels += stream.pcmChannels;
-            for (const auto& stream : found->playback) outputChannels += stream.pcmChannels;
-        }
-
-        if (hasInputStream) {
-            FillFloat32Format(inputFormats[i], ivars.device.sampleRates[i], inputChannels);
-        }
-        if (hasOutputStream) {
-            FillFloat32Format(outputFormats[i], ivars.device.sampleRates[i], outputChannels);
-        }
-        if (ivars.device.sampleRates[i] == ivars.device.currentSampleRate) {
-            currentFormatIndex = i;
-        }
+    if (const kern_return_t formatStatus =
+            BuildStreamFormats(ivars.device, inputFormats, outputFormats, formatCount, currentFormatIndex);
+        formatStatus != kIOReturnSuccess) {
+        return formatStatus;
     }
 
     ASFW_LOG(Audio,

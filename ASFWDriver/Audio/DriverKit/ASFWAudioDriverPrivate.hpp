@@ -578,6 +578,17 @@ void FillFloat32Format(IOUserAudioStreamBasicDescription& fmt,
                        double sampleRate,
                        uint32_t channels) noexcept;
 
+// One stream format per advertised rate, each with that rate's formation's
+// channel count when the device has formations. Used at graph creation and
+// by a layout change inside the configuration window, so both advertise the
+// same list. `currentIndex` is the entry for the current rate.
+inline constexpr uint32_t kMaxStreamFormats = 8;
+[[nodiscard]] kern_return_t BuildStreamFormats(const AudioDriverDeviceState& device,
+                                               IOUserAudioStreamBasicDescription (&inputFormats)[kMaxStreamFormats],
+                                               IOUserAudioStreamBasicDescription (&outputFormats)[kMaxStreamFormats],
+                                               uint32_t& count,
+                                               uint32_t& currentIndex) noexcept;
+
 [[nodiscard]] ASFW::Audio::Runtime::ZtsMirrorPublishResult PublishSharedZeroTimestampToHAL(ASFWAudioDriver_IVars& ivars,
                                                                                            const char* reason,
                                                                                            bool logSuccess) noexcept;
