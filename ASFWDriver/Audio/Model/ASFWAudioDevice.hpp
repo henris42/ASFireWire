@@ -86,6 +86,14 @@ struct ASFWAudioDevice {
     // Complete capability candidates, separate from HAL advertisement. A
     // discovery observation never grants hardware validation by itself.
     std::vector<Runtime::RateFormation> rateFormationCandidates;
+    /// The widest the streams can become without a new endpoint (a MOTU
+    /// optical port switched to ADAT). The endpoint allocates its direct-audio
+    /// memory for this many channels, so a layout change inside the ADK
+    /// configuration window keeps the memory the ADK device has mapped. Zero:
+    /// the current layout (and the formations) bound it. Not published to the
+    /// nub; only the endpoint runtime reads it.
+    uint32_t inputChannelCapacity{0};
+    uint32_t outputChannelCapacity{0};
 
     /// The audio side must use the resolved geometry above and must NOT fall
     /// back to profile constants. Set by families that always resolve before

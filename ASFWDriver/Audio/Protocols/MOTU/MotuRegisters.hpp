@@ -251,6 +251,31 @@ struct V2PcmChunks {
     default: return std::nullopt;
     }
 }
+/// The widest PCM chunk counts a model's optical setting can select, over
+/// every rate mode, per direction. Only V2 models change their optical modes
+/// at run time (ApplyDeviceSetting); for them the endpoint allocates this much
+/// once, so an optical change re-lays the streams inside the same memory. Zero
+/// for every other model: its layout never changes under a live endpoint.
+struct PcmChunkCapacity {
+    uint32_t tx{0};
+    uint32_t rx{0};
+};
+[[nodiscard]] constexpr PcmChunkCapacity MaximumOpticalPcmChunks(uint32_t version) noexcept {
+    const auto* model = Encoding::Motu::FindModel(version);
+    PcmChunkCapacity capacity{};
+    if (!model || model->protocol != Encoding::Motu::ProtocolVersion::V2) return capacity;
+    for (uint32_t input = 0; input <= 2; ++input) {
+        for (uint32_t output = 0; output <= 2; ++output) {
+            for (uint32_t mode = 0; mode < 3; ++mode) {
+                const auto chunks = ResolveV2PcmChunks((input << 8) | (output << 10), mode, version);
+                capacity.tx = chunks.tx > capacity.tx ? chunks.tx : capacity.tx;
+                capacity.rx = chunks.rx > capacity.rx ? chunks.rx : capacity.rx;
+            }
+        }
+    }
+    return capacity;
+}
+
 [[nodiscard]] constexpr V2PcmChunks ResolvePcmChunks(uint32_t raw, uint32_t mode, uint32_t version) noexcept {
     const auto* model = Encoding::Motu::FindModel(version);
     if (!model || mode >= 3 || (model->unresolvedModes & (1U << mode))) return {};

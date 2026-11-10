@@ -20,6 +20,7 @@
 #include <DriverKit/IOMemoryMap.h>
 #endif
 
+#include <algorithm>
 #include <atomic>
 #include <cstring>
 #include <cstdint>
@@ -605,8 +606,15 @@ private:
             config_.inputChannelCount ? config_.inputChannelCount : config_.channelCount, channelLimit);
         const uint32_t sampleRateHz = config_.currentSampleRate ? config_.currentSampleRate : 48000;
         // Allocate the maximum once; publish the active ring for this rate.
+        // The capacity covers layouts the device can switch to later (b214:
+        // an 828mkII switched to ADAT input needed 18 channels in memory
+        // allocated for 14, and the new audio driver failed with NoResources).
+        const uint32_t outputCapacity = std::max(outputChannels,
+            ClampAudioChannels(config_.outputChannelCapacity, channelLimit));
+        const uint32_t inputCapacity = std::max(inputChannels,
+            ClampAudioChannels(config_.inputChannelCapacity, channelLimit));
         Runtime::ConfigurationAllocation allocation{Isoch::Config::kAudioRingBufferFrames,
-            outputChannels, inputChannels, 0};
+            outputCapacity, inputCapacity, 0};
         if (!config_.rateFormationCandidates.empty()) {
             const auto maximum = Runtime::MaximumFormationAllocation(config_.rateFormationCandidates, allocation);
             if (!maximum) return kIOReturnUnsupported;

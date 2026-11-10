@@ -362,6 +362,9 @@ TEST(MotuFamilyAdapterTests, DescribeCarriesIdentityNamesAndPublishedRates) {
     EXPECT_EQ(dev->outputPlugName, "Output");
     EXPECT_EQ(dev->sampleRates, (std::vector<uint32_t>{44100U, 48000U, 88200U, 96000U}));
     EXPECT_EQ(dev->currentSampleRate, 48000U);
+    // Room for an ADAT port on each side whatever the optical setting now.
+    EXPECT_EQ(dev->inputChannelCapacity, 22U);
+    EXPECT_EQ(dev->outputChannelCapacity, 22U);
     // The port names follow the model table, in host channel order.
     EXPECT_FALSE(dev->inputChannelNames.empty());
     EXPECT_FALSE(dev->outputChannelNames.empty());

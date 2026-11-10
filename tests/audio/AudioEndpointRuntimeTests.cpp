@@ -370,3 +370,70 @@ TEST(AudioEndpointRuntime, PackedCaptureRetains34ChannelsAcrossRateChangesInOneA
     ASSERT_TRUE(runtime.CopyDirectAudioBinding(last)); EXPECT_EQ(last.inputChannels,34U);
     EXPECT_EQ(last.inputBase,first.inputBase);
 }
+
+namespace {
+// An 828mkII's formations for one optical setting: 48 and 96 kHz.
+std::vector<ASFW::Audio::Runtime::RateFormation> MotuFormations(uint32_t in48, uint32_t in96,
+                                                                 uint32_t out48, uint32_t out96) {
+    // Packed: one SPH quadlet, then two message chunks and the PCM chunks.
+    const auto dbs = [](uint32_t chunks) { return 1U + ((2U + chunks) * 3U + 3U) / 4U; };
+    ASFW::Audio::Runtime::RateFormation low{};
+    low.sampleRateHz = 48000;
+    low.protocolSupported = true;
+    low.packedPcm = true;
+    low.capture = {{in48, dbs(in48), 0, {}}};
+    low.playback = {{out48, dbs(out48), 0, {}}};
+    auto high = low;
+    high.sampleRateHz = 96000;
+    high.capture = {{in96, dbs(in96), 0, {}}};
+    high.playback = {{out96, dbs(out96), 0, {}}};
+    return {low, high};
+}
+} // namespace
+
+// b214 part B: an 828mkII published with S/PDIF optical (14 in) and then
+// switched to ADAT input (18 in at 96 kHz). Without the capacity the memory
+// held 14 channels and the new layout was refused with NoResources; with it,
+// the switch re-lays the binding inside the same memory objects.
+TEST(AudioEndpointRuntime, AnOpticalSwitchFitsTheCapacityAllocatedAtPublication) {
+    for (const bool withCapacity : {false, true}) {
+        SCOPED_TRACE(withCapacity ? "with capacity" : "without capacity");
+        ASFW::Audio::AudioEndpointRuntime runtime(0x0001f2000001f717ULL);
+        auto config = MakeDeviceConfig();
+        config.currentSampleRate = 96000;
+        config.inputChannelCount = config.outputChannelCount = config.channelCount = 14;
+        config.rateFormationCandidates = MotuFormations(14, 14, 14, 14);
+        if (withCapacity) config.inputChannelCapacity = config.outputChannelCapacity = 22;
+        runtime.UpdateConfig(config);
+        ASSERT_EQ(runtime.EnsureDirectAudioMemory(), kIOReturnSuccess);
+        ASFW::Audio::Runtime::DirectAudioBindingSnapshot spdif{};
+        ASSERT_TRUE(runtime.CopyDirectAudioBinding(spdif));
+
+        config.inputChannelCount = config.channelCount = 18;
+        config.rateFormationCandidates = MotuFormations(22, 18, 14, 14);
+        runtime.UpdateConfig(config);
+        if (!withCapacity) {
+            EXPECT_EQ(runtime.EnsureDirectAudioMemory(), kIOReturnNoResources);
+            continue;
+        }
+        ASSERT_EQ(runtime.EnsureDirectAudioMemory(), kIOReturnSuccess);
+        ASFW::Audio::Runtime::DirectAudioBindingSnapshot adat{};
+        ASSERT_TRUE(runtime.CopyDirectAudioBinding(adat));
+        EXPECT_EQ(adat.inputBase, spdif.inputBase);
+        EXPECT_EQ(adat.outputBase, spdif.outputBase);
+        EXPECT_EQ(adat.control, spdif.control);
+        EXPECT_EQ(adat.inputChannels, 18U);
+        EXPECT_GT(adat.generation, spdif.generation);
+
+        // And at 48 kHz, the widest layout: 22 inputs.
+        config.currentSampleRate = 48000;
+        config.inputChannelCount = config.channelCount = 22;
+        runtime.UpdateConfig(config);
+        ASSERT_EQ(runtime.EnsureDirectAudioMemory(), kIOReturnSuccess);
+        ASFW::Audio::Runtime::DirectAudioBindingSnapshot wide{};
+        ASSERT_TRUE(runtime.CopyDirectAudioBinding(wide));
+        EXPECT_EQ(wide.inputBase, spdif.inputBase);
+        EXPECT_EQ(wide.inputChannels, 22U);
+    }
+}
+

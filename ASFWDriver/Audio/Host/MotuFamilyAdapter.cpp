@@ -50,6 +50,11 @@ Model::ASFWAudioDevice MotuFamilyAdapter::BuildNubConfig(const Discovery::Device
     dev.outputChannelCount = caps.hostOutputPcmChannels;
     dev.currentSampleRate = caps.sampleRateHz;
     dev.channelCount = std::max(dev.inputChannelCount, dev.outputChannelCount);
+    // Room for the widest optical layout, so a mode change re-lays the streams
+    // in place instead of needing a new endpoint.
+    const auto capacity = Motu::MaximumOpticalPcmChunks(record.unitSwVersion.value_or(0U));
+    dev.inputChannelCapacity = capacity.tx;
+    dev.outputChannelCapacity = capacity.rx;
     if (const auto formations = protocol.RateFormations(); formations && !formations->empty()) {
         dev.rateFormationCandidates = *formations;
         dev.rateRouteIncarnation = record.deviceIncarnation;

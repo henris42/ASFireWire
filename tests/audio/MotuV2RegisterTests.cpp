@@ -217,3 +217,20 @@ TEST(MotuV2AsyncTests, MessageRegionMatchesReference) {
     EXPECT_EQ(kAsyncMessageRegionStart, 0xffffe0000000ull);
     EXPECT_EQ(kAsyncMessageRegionEnd, 0xffffe000ffffull);
 }
+
+// The endpoint allocates for the widest layout the optical ports can select,
+// so switching a port to ADAT later never outgrows the memory (b214).
+TEST(MotuV2PcmChunksTests, OpticalCapacityIsTheWidestLayoutOverEveryModeAndRate) {
+    const auto mk2 = MaximumOpticalPcmChunks(0x3U);         // 828mkII: 14 + 8 ADAT at 1x
+    EXPECT_EQ(mk2.tx, 22U);
+    EXPECT_EQ(mk2.rx, 22U);
+    const auto eightPre = MaximumOpticalPcmChunks(0xfU);    // 8pre: 10/6 + 8 at 1x and 2x
+    EXPECT_EQ(eightPre.tx, 18U);
+    EXPECT_EQ(eightPre.rx, 14U);
+    const auto ultraLite = MaximumOpticalPcmChunks(0xdU);   // no optical: the fixed ports
+    EXPECT_EQ(ultraLite.tx, 14U);
+    EXPECT_EQ(ultraLite.rx, 14U);
+    const auto mk3 = MaximumOpticalPcmChunks(0x15U);        // V3: no run-time optical change
+    EXPECT_EQ(mk3.tx, 0U);
+    EXPECT_EQ(mk3.rx, 0U);
+}
