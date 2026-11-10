@@ -74,7 +74,7 @@ enum BootTraceDaemon {
                 }
                 let fresh = lines.suffix(Int(min(missing, available)))
                 for line in fresh {
-                    write(file, "\(now()) \(line)\n")
+                    write(file, "\(stamp(line)) \(text(line))\n")
                 }
                 written[entryID] = total
                 lastNew = Date()
@@ -191,6 +191,27 @@ enum BootTraceDaemon {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         return formatter.string(from: date)
+    }
+
+    /// A kept line starts with the step's host uptime in microseconds
+    /// ("@<µs> "); the file shows the wall time the step ran, not the time
+    /// this daemon read it (b208: up to a minute apart at boot). Lines from an
+    /// older driver have no time: they get the read time.
+    private static func stamp(_ line: String) -> String {
+        guard line.hasPrefix("@"), let space = line.firstIndex(of: " "),
+              let uptimeUs = UInt64(line[line.index(after: line.startIndex)..<space]) else {
+            return now()
+        }
+        let nowUs = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1000
+        let ageSeconds = nowUs >= uptimeUs ? Double(nowUs - uptimeUs) / 1_000_000 : 0
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        return formatter.string(from: Date().addingTimeInterval(-ageSeconds))
+    }
+
+    private static func text(_ line: String) -> String {
+        guard line.hasPrefix("@"), let space = line.firstIndex(of: " ") else { return line }
+        return String(line[line.index(after: space)...])
     }
 
     private static func now() -> String {

@@ -21,9 +21,23 @@ struct Published {
     uint32_t calls{0};
 };
 
+// Kept lines start with the step's uptime, "@<µs> "; the tests compare the rest.
+std::string WithoutTime(const char* line) {
+    std::string text(line);
+    if (!text.empty() && text[0] == '@') {
+        const auto space = text.find(' ');
+        if (space != std::string::npos) text.erase(0, space + 1);
+    }
+    return text;
+}
+
 void Publish(void* context, const char* const* lines, uint32_t count, uint64_t total) {
     auto* published = static_cast<Published*>(context);
-    published->lines.assign(lines, lines + count);
+    published->lines.clear();
+    for (uint32_t index = 0; index < count; ++index) {
+        EXPECT_EQ(lines[index][0], '@') << "kept lines carry their own time";
+        published->lines.push_back(WithoutTime(lines[index]));
+    }
     published->total = total;
     ++published->calls;
 }

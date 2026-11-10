@@ -9,6 +9,7 @@
 #include <cstring>
 
 #include "Logging.hpp"
+#include "../Common/TimingUtils.hpp"
 
 #include <DriverKit/IOLib.h>  // IOSleep, IODelay (the host tests' mock in tests/mocks)
 
@@ -63,7 +64,13 @@ void BringUpTrace::Emit(const char* format, va_list args) noexcept {
     linesForTesting.emplace_back(line);
 #endif
     if (keep) {
-        Keep(line);
+        // The kept line carries the step's own time (host uptime, µs): the
+        // daemon reads the registry late when the system is busy (b208: up to
+        // a minute behind the kernel at boot) and converts this to wall time.
+        char kept[kLineBytes];
+        const uint64_t uptimeUs = ASFW::Timing::hostTicksToNanos(mach_absolute_time()) / 1000;
+        (void)snprintf(kept, sizeof(kept), "@%llu %s", static_cast<unsigned long long>(uptimeUs), line);
+        Keep(kept);
         if (pauseMs_ != 0) {
             IOSleep(pauseMs_);
         }
