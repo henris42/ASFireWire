@@ -424,7 +424,11 @@ void AudioDeviceHost::RefreshPublication(uint64_t guid) noexcept {
                            kIOReturnNotPermitted, 0, detailText);
                     return;
                 }
-                publisher_.TerminateNub(guid, "geometry-changed");
+                // Idle, so nothing streams: say so on the nub before it goes.
+                // The old audio driver's Stop asks the nub to stop streaming,
+                // and an RPC into a terminated nub returns an unwritten reply
+                // (b214: "StopAudioStreaming failed in Stop(): 0xaaaaaaaa").
+                publisher_.TerminateNub(guid, "geometry-changed", kIOReturnSuccess);
                 ASFW_LOG(Audio,
                          "[AudioHost] guid=%016llx family=%{public}s geometry changed while idle; "
                          "endpoint recreated",
