@@ -52,6 +52,11 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
         ivars->txPreparationQueue.reset();
         TearDownAudioGraph(*this, *ivars);
         (void)Stop(provider, SUPERDISPATCH);
+        // Without this the nub stays registered with no driver under it, and
+        // the next publication refreshes it instead of starting a new driver.
+        if (auto* nub = OSDynamicCast(ASFWAudioNub, provider)) {
+            nub->AudioDriverStartFailed(result);
+        }
         return result;
     };
 

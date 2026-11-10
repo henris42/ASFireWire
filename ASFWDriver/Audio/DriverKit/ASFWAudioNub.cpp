@@ -544,6 +544,16 @@ bool ASFWAudioNub::NotifyIoRestartRequired(uint32_t reason)
     return true;
 }
 
+void ASFWAudioNub::AudioDriverStartFailed(kern_return_t status)
+{
+    if (!ivars || ivars->guid == 0) {
+        return;
+    }
+    if (auto* coordinator = GetAudioCoordinator(ivars)) {
+        coordinator->OnAudioDriverStartFailed(ivars->guid, status);
+    }
+}
+
 uint32_t ASFWAudioNub::GetCurrentSampleRateHz() const
 {
     return ivars ? ivars->currentSampleRateHz : 0;

@@ -800,3 +800,20 @@ TEST(AudioDeviceHostTests, ToStringNamesEveryEventAndOutcome) {
 }
 
 } // namespace
+
+// b214: the replacement audio driver failed to start and its nub stayed
+// registered; later publications only refreshed it. The host retires it.
+TEST(AudioDeviceHostTests, AudioDriverStartFailureRetiresTheEndpoint) {
+    HostFixture f;
+    f.SeedDiceDevice(kGuid);
+    f.host.OnAudioDriverStartFailed(kGuid, kIOReturnNoResources);
+    EXPECT_EQ(f.host.OutcomeCount(HostEvent::Publish, HostOutcome::AudioDriverStartFailed), 1U);
+}
+
+TEST(AudioDeviceHostTests, AudioDriverStartFailureAfterTeardownTouchesNothing) {
+    HostFixture f;
+    f.SeedDiceDevice(kGuid);
+    f.host.BeginTeardown();
+    f.host.OnAudioDriverStartFailed(kGuid, kIOReturnNoResources);
+    EXPECT_EQ(f.host.OutcomeCount(HostEvent::Publish, HostOutcome::AudioDriverStartFailed), 0U);
+}

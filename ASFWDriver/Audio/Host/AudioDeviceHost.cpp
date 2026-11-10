@@ -90,6 +90,7 @@ const char* ToString(HostOutcome outcome) noexcept {
         case HostOutcome::RefusedDescribe: return "RefusedDescribe";
         case HostOutcome::RefusedGeometryChanged: return "RefusedGeometryChanged";
         case HostOutcome::KeptCommittedFormation: return "KeptCommittedFormation";
+        case HostOutcome::AudioDriverStartFailed: return "AudioDriverStartFailed";
         case HostOutcome::Queued: return "Queued";
         case HostOutcome::Deduped: return "Deduped";
         case HostOutcome::NotStreaming: return "NotStreaming";
@@ -581,6 +582,30 @@ void AudioDeviceHost::OnRuntimeFault(uint64_t guid, DuplexRestartReason reason) 
 }
 
 // --- Device events (§4.4) -------------------------------------------------
+
+// b214: an audio driver that failed to start left its nub registered with no
+// driver under it; the next publication (a unit power cycle) only refreshed
+// that nub, so the unit stayed out of Core Audio until the dext restarted.
+void AudioDeviceHost::OnAudioDriverStartFailed(uint64_t guid, IOReturn status) noexcept {
+    if (guid == 0) return;
+    const auto kind = KindForGuid(guid);
+    FamilyAdapter* adapter = kind ? AdapterFor(*kind) : nullptr;
+    const char* family = adapter ? adapter->Name() : kNoFamily;
+    // Not from inside the failing Start: it runs on the audio driver's queue,
+    // with the nub as its provider.
+    const bool queued = Dispatch([this, guid, family, status] {
+        if (Stopping()) return;
+        publisher_.TerminateNub(guid, "audio-driver-start-failed", kIOReturnSuccess);
+        Record(guid, family, HostEvent::Publish, HostOutcome::AudioDriverStartFailed, status);
+        ASFW_LOG_ERROR(Audio,
+                       "[AudioHost] guid=%016llx family=%{public}s the audio driver did not start "
+                       "(kr=0x%x); endpoint retired, the next publication creates a new one",
+                       guid, family, status);
+    });
+    if (!queued) {
+        Record(guid, family, HostEvent::Publish, HostOutcome::AudioDriverStartFailed, kIOReturnNoResources);
+    }
+}
 
 void AudioDeviceHost::OnDeviceEvent(uint64_t guid, DeviceEvent event, uint32_t detail) noexcept {
     if (guid == 0) return;

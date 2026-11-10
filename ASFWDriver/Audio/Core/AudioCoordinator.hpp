@@ -116,6 +116,10 @@ public:
     /// (DeviceSettings.hpp optical modes): restart a running stream, otherwise
     /// re-describe and republish the endpoint.
     void NotifyDeviceConfigChanged(uint64_t guid) noexcept;
+    /// The audio driver under `guid`'s nub failed to start (ASFWAudioNub).
+    void OnAudioDriverStartFailed(uint64_t guid, IOReturn status) noexcept {
+        host_.OnAudioDriverStartFailed(guid, status);
+    }
 
     [[nodiscard]] ASFWAudioNub* GetNub(uint64_t guid) const noexcept { return publisher_.GetNub(guid); }
 

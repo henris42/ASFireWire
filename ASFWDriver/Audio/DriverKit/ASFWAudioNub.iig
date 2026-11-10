@@ -141,6 +141,10 @@ public:
     // driver is listening, so the caller restarts in place instead.
     bool NotifyIoRestartRequired(uint32_t reason) LOCALONLY;
 
+    // The audio driver under this nub failed to start. The publisher retires
+    // the nub, so the next publication creates a fresh one.
+    void AudioDriverStartFailed(kern_return_t status) LOCALONLY;
+
     // Host-side belief of the device rate (updated on publish and on every
     // successful RequestSampleRateChange). Used by the transport side to
     // detect device-initiated clock moves.

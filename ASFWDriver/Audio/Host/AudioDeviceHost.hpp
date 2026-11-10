@@ -75,6 +75,7 @@ enum class HostOutcome : uint8_t {
     RefusedDescribe,
     RefusedGeometryChanged,
     KeptCommittedFormation,
+    AudioDriverStartFailed,  // the nub's audio driver failed to start; nub retired
     // Rebind / RuntimeFault
     Queued,
     Deduped,
@@ -132,6 +133,10 @@ public:
     void OnRuntimeFault(uint64_t guid, DuplexRestartReason reason) noexcept;
     /// DeviceEventSink: an adapter's neutral event.
     void OnDeviceEvent(uint64_t guid, DeviceEvent event, uint32_t detail) noexcept override;
+    /// The audio driver under `guid`'s nub failed to start. The nub is retired
+    /// (off the caller's queue), so the next publication creates a fresh one
+    /// instead of refreshing an endpoint Core Audio never saw.
+    void OnAudioDriverStartFailed(uint64_t guid, IOReturn status) noexcept;
     /// The device is gone: remember the configuration it had (its endpoint's
     /// rate, its settings as last read), drop its queued work and stored state.
     void CancelRemoteDeviceWork(uint64_t guid) noexcept;
