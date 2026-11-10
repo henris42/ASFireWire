@@ -664,12 +664,14 @@ std::expected<RunningSession, RestartFailure> RestartRoutine::Run(const Request&
         }
         if (elapsed >= readiness.timeoutMs) {
             // No timing and no rate to blame: on an external clock the unit
-            // could not lock at this rate (b149: the clock signal itself is
-            // sound, so never send the user to check it).
+            // could not lock at this rate. Either nothing reaches the input
+            // (b208 bench: a unit left on Word clock with no cable) or the
+            // clock there runs in another rate family. (b149: the clock signal
+            // itself is sound, so never send the user to check its quality.)
             if (const char* source = family.ExternalClockSourceName()) {
                 ASFW_LOG_ERROR(Audio,
-                               "[Session] the unit could not lock at %u Hz to its %{public}s input; the "
-                               "external clock may be running at a different rate family GUID=%llx",
+                               "[Session] the unit could not lock at %u Hz to its %{public}s input: nothing "
+                               "is connected there, or the clock there runs in a different rate family GUID=%llx",
                                clock.sampleRateHz, source, guid);
             }
             return rollback(kIOReturnTimeout, "TransmitTimingReady");
