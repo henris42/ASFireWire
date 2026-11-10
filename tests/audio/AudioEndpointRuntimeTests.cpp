@@ -437,3 +437,56 @@ TEST(AudioEndpointRuntime, AnOpticalSwitchFitsTheCapacityAllocatedAtPublication)
     }
 }
 
+
+// The optical change in place: staged by the host, installed in the window.
+TEST(AudioEndpointRuntime, AStagedLayoutIsInstalledOnlyWhileStoppedAndInTheSameMemory) {
+    ASFW::Audio::AudioEndpointRuntime runtime(0x0001f2000001f717ULL);
+    auto spdif = MakeDeviceConfig();
+    spdif.currentSampleRate = 96000;
+    spdif.inputChannelCount = spdif.outputChannelCount = spdif.channelCount = 14;
+    spdif.rateFormationCandidates = MotuFormations(14, 14, 14, 14);
+    spdif.inputChannelCapacity = spdif.outputChannelCapacity = 22;
+    runtime.UpdateConfig(spdif);
+    ASSERT_EQ(runtime.EnsureDirectAudioMemory(), kIOReturnSuccess);
+    ASFW::Audio::Runtime::DirectAudioBindingSnapshot before{};
+    ASSERT_TRUE(runtime.CopyDirectAudioBinding(before));
+
+    auto adat = spdif;
+    adat.inputChannelCount = adat.channelCount = 18;
+    adat.rateFormationCandidates = MotuFormations(22, 18, 14, 14);
+    ASFW::Audio::Model::ASFWAudioDevice staged{};
+    EXPECT_FALSE(runtime.CopyStagedConfig(staged));
+    runtime.StageConfig(adat);
+    ASSERT_TRUE(runtime.CopyStagedConfig(staged));
+    EXPECT_EQ(staged.inputChannelCount, 18U);
+
+    runtime.MarkStreaming(true);
+    EXPECT_EQ(runtime.ReplaceConfigWhileStopped(adat, nullptr), kIOReturnBusy);
+    runtime.MarkStreaming(false);
+
+    ASFW::Audio::Model::ASFWAudioDevice prior{};
+    ASSERT_EQ(runtime.ReplaceConfigWhileStopped(adat, &prior), kIOReturnSuccess);
+    EXPECT_EQ(prior.inputChannelCount, 14U);
+    EXPECT_FALSE(runtime.CopyStagedConfig(staged));  // consumed
+    ASFW::Audio::Runtime::DirectAudioBindingSnapshot after{};
+    ASSERT_TRUE(runtime.CopyDirectAudioBinding(after));
+    EXPECT_EQ(after.inputBase, before.inputBase);
+    EXPECT_EQ(after.outputBase, before.outputBase);
+    EXPECT_EQ(after.inputChannels, 18U);
+    ASFW::Audio::Model::ASFWAudioDevice now{};
+    ASSERT_TRUE(runtime.CopyConfig(now));
+    EXPECT_EQ(now.inputChannelCount, 18U);
+
+    // A layout wider than the memory holds at the largest ring (96 kHz) is
+    // refused and the prior one stays. (At 48 kHz the active ring is half the
+    // allocation, so the bytes, not the channel count, are the limit.)
+    auto tooWide = adat;
+    tooWide.inputChannelCount = tooWide.channelCount = 30;
+    tooWide.rateFormationCandidates = MotuFormations(22, 30, 14, 14);
+    tooWide.inputChannelCapacity = 22;
+    EXPECT_NE(runtime.ReplaceConfigWhileStopped(tooWide, nullptr), kIOReturnSuccess);
+    ASSERT_TRUE(runtime.CopyConfig(now));
+    EXPECT_EQ(now.inputChannelCount, 18U);
+    ASSERT_TRUE(runtime.CopyDirectAudioBinding(after));
+    EXPECT_EQ(after.inputChannels, 18U);
+}

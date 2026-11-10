@@ -56,6 +56,10 @@ public:
     // The transport must restart the streams while IO runs: ask the host for a
     // configuration change so StopIO -> StartIO rebuilds the TX queue.
     kern_return_t RequestIoRestart(uint32_t reason) LOCALONLY;
+    // The endpoint's stream layout changed (a MOTU optical mode) and the new
+    // one is staged on the nub's endpoint: install it inside a configuration
+    // window, on this same Core Audio device.
+    kern_return_t RequestGeometryChange() LOCALONLY;
     // Driver stop with a wire kept across StopIO: no StopIO will come, so
     // release it here as StopIO would (stream stop, TX slabs, TX isoch).
     kern_return_t ReleaseKeptWireForDriverStop() LOCALONLY;

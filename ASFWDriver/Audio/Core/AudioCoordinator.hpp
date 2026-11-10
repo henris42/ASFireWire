@@ -113,8 +113,9 @@ public:
     [[nodiscard]] IOReturn MotuCaptureCommand(uint64_t guid, uint32_t stream,
                                             uint32_t command, std::string& output) noexcept;
     /// The host changed a setting that alters the device's stream layout
-    /// (DeviceSettings.hpp optical modes): restart a running stream, otherwise
-    /// re-describe and republish the endpoint.
+    /// (DeviceSettings.hpp optical modes): re-describe the endpoint; a changed
+    /// layout is installed in place by the audio driver (AudioDeviceHost).
+    /// Families the host does not serve restart a running stream instead.
     void NotifyDeviceConfigChanged(uint64_t guid) noexcept;
     /// The audio driver under `guid`'s nub failed to start (ASFWAudioNub).
     void OnAudioDriverStartFailed(uint64_t guid, IOReturn status) noexcept {

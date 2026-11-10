@@ -12,6 +12,7 @@
 #include "../Protocols/Backends/IsochDuplexHostTransport.hpp"
 #include "../Protocols/Duplex/FamilyDriver.hpp"
 #include "../Protocols/IDeviceProtocol.hpp"
+#include "../Runtime/IoRestartReasons.hpp"
 #include "../Session/AudioSessions.hpp"
 #include "../../Discovery/DeviceRegistry.hpp"
 #include "../../Logging/Logging.hpp"
@@ -91,6 +92,7 @@ const char* ToString(HostOutcome outcome) noexcept {
         case HostOutcome::RefusedGeometryChanged: return "RefusedGeometryChanged";
         case HostOutcome::KeptCommittedFormation: return "KeptCommittedFormation";
         case HostOutcome::AudioDriverStartFailed: return "AudioDriverStartFailed";
+        case HostOutcome::GeometryStaged: return "GeometryStaged";
         case HostOutcome::Queued: return "Queued";
         case HostOutcome::Deduped: return "Deduped";
         case HostOutcome::NotStreaming: return "NotStreaming";
@@ -412,6 +414,29 @@ void AudioDeviceHost::RefreshPublication(uint64_t guid) noexcept {
                            detailText);
                     return;
                 }
+                // The layout changes in place when an audio driver runs the
+                // endpoint: the new description waits on the endpoint, and the
+                // driver installs it inside an ADK configuration window, where
+                // the HAL has stopped IO for every client (aggregates
+                // included) and restarts it on the same Core Audio device. A
+                // MOTU switched to ADAT gets its new channels without a new
+                // device ID (b214: recreating it lost the unit).
+                if (auto* nub = publisher_.GetNub(guid)) {
+                    if (const auto endpoint = runtime_.FindEndpointRuntime(guid)) {
+                        endpoint->StageConfig(value);
+                        if (nub->NotifyIoRestartRequired(Runtime::kIoRestartReasonGeometryChange)) {
+                            Record(guid, family, HostEvent::Publish, HostOutcome::GeometryStaged,
+                                   kIOReturnSuccess, 0, detailText);
+                            ASFW_LOG(Audio,
+                                     "[AudioHost] guid=%016llx family=%{public}s layout changed: in=%u out=%u "
+                                     "staged for the audio driver's configuration window",
+                                     guid, family, value.inputChannelCount, value.outputChannelCount);
+                            return;
+                        }
+                        endpoint->ClearStagedConfig();
+                    }
+                }
+                // No audio driver runs the endpoint: the fallbacks below.
                 // The device's stream geometry changed under a live endpoint
                 // (an optical mode switched on an idle 828mkII, 2026-10-28).
                 // The Core Audio device cannot change its channel count in

@@ -76,6 +76,7 @@ enum class HostOutcome : uint8_t {
     RefusedGeometryChanged,
     KeptCommittedFormation,
     AudioDriverStartFailed,  // the nub's audio driver failed to start; nub retired
+    GeometryStaged,          // a new layout waits for the audio driver's window
     // Rebind / RuntimeFault
     Queued,
     Deduped,

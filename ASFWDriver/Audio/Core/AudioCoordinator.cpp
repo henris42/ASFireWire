@@ -524,6 +524,15 @@ IOReturn AudioCoordinator::StartStreaming(uint64_t guid, AudioClockConfig clock)
 
 void AudioCoordinator::NotifyDeviceConfigChanged(uint64_t guid) noexcept {
     if (guid == 0) return;
+    // A host-served endpoint re-describes whether or not it streams: the new
+    // layout is staged and installed in the audio driver's configuration
+    // window, which stops and restarts IO itself. Restarting the session here
+    // as well left Core Audio on the old layout and latched every later start
+    // refused (the in-use case of the b214 optical test plan).
+    if (ServedByHost(guid)) {
+        host_.RefreshPublication(guid);
+        return;
+    }
     if (sessions_.IsStreaming(guid) || sessions_.IsReconciling(guid)) {
         host_.OnDeviceEvent(guid, Host::DeviceEvent::kStreamConfigChanged, 0);
         return;

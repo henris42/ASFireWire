@@ -554,6 +554,30 @@ void ASFWAudioNub::AudioDriverStartFailed(kern_return_t status)
     }
 }
 
+bool ASFWAudioNub::CopyStagedGeometry(void* outConfig)
+{
+    const auto endpoint = FindEndpointRuntime(ivars);
+    return endpoint && outConfig &&
+           endpoint->CopyStagedConfig(*static_cast<ASFW::Audio::Model::ASFWAudioDevice*>(outConfig));
+}
+
+kern_return_t ASFWAudioNub::InstallGeometry(const void* config, void* outPrior)
+{
+    if (!ivars || !config) return kIOReturnBadArgument;
+    const auto endpoint = FindEndpointRuntime(ivars);
+    if (!endpoint) return kIOReturnNotReady;
+    const auto& next = *static_cast<const ASFW::Audio::Model::ASFWAudioDevice*>(config);
+    const kern_return_t kr = endpoint->ReplaceConfigWhileStopped(
+        next, static_cast<ASFW::Audio::Model::ASFWAudioDevice*>(outPrior));
+    if (kr == kIOReturnSuccess) {
+        ivars->inputChannelCount = next.inputChannelCount;
+        ivars->outputChannelCount = next.outputChannelCount;
+        ivars->channelCount = next.channelCount;
+        ivars->currentSampleRateHz = next.currentSampleRate;
+    }
+    return kr;
+}
+
 uint32_t ASFWAudioNub::GetCurrentSampleRateHz() const
 {
     return ivars ? ivars->currentSampleRateHz : 0;

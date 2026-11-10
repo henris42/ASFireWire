@@ -8,6 +8,7 @@
 #include "../../Logging/Logging.hpp"
 #include "Config/AudioProfileRegistry.hpp"
 #include "../../Common/DriverKitOwnership.hpp"
+#include "../Runtime/IoRestartReasons.hpp"
 #include <DriverKit/DriverKit.h>
 
 using ASFW::Audio::DriverKit::BuildAudioGraph;
@@ -193,7 +194,9 @@ void IMPL(ASFWAudioDriver, IoRestartRequired)
     if (!ivars || !ivars->audioDevice) {
         return;
     }
-    const kern_return_t kr = ivars->audioDevice->RequestIoRestart(reason);
+    const kern_return_t kr = reason == ASFW::Audio::Runtime::kIoRestartReasonGeometryChange
+        ? ivars->audioDevice->RequestGeometryChange()
+        : ivars->audioDevice->RequestIoRestart(reason);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG_WARNING(Audio, "ASFWAudioDriver: IO restart request failed: 0x%x (%{public}s)", kr, ASFW::Logging::IOReturnName(kr));
     }

@@ -21,6 +21,7 @@
 #endif
 
 #include <algorithm>
+#include <optional>
 #include <atomic>
 #include <cstring>
 #include <cstdint>
@@ -105,6 +106,61 @@ public:
         if (lock_) {
             IOLockUnlock(lock_);
         }
+    }
+
+    // --- Layout change in place (a MOTU optical mode) -----------------------
+    // The host stages the new description; the audio driver installs it inside
+    // an ADK configuration window, where the HAL has stopped IO for every
+    // client, so the Core Audio device keeps its identity.
+
+    void StageConfig(const Model::ASFWAudioDevice& config) noexcept {
+        if (!lock_) return;
+        IOLockLock(lock_);
+        staged_ = config;
+        IOLockUnlock(lock_);
+    }
+
+    [[nodiscard]] bool CopyStagedConfig(Model::ASFWAudioDevice& outConfig) const noexcept {
+        if (!lock_) return false;
+        IOLockLock(lock_);
+        const bool staged = staged_.has_value();
+        if (staged) outConfig = *staged_;
+        IOLockUnlock(lock_);
+        return staged;
+    }
+
+    void ClearStagedConfig() noexcept {
+        if (!lock_) return;
+        IOLockLock(lock_);
+        staged_.reset();
+        IOLockUnlock(lock_);
+    }
+
+    /// Install `next` with both directions stopped and re-lay the binding in
+    /// the memory allocated at publication (Model::ASFWAudioDevice's channel
+    /// capacity), so the ADK device's mappings stay valid. On failure the prior
+    /// configuration and binding stay. `outPrior` (may be null) receives the
+    /// configuration that was replaced, for a rollback.
+    [[nodiscard]] kern_return_t ReplaceConfigWhileStopped(const Model::ASFWAudioDevice& next,
+                                                          Model::ASFWAudioDevice* outPrior) noexcept {
+        if (!lock_) return kIOReturnNotReady;
+        IOLockLock(lock_);
+        if (streaming_.load(std::memory_order_acquire) || !configValid_.load(std::memory_order_acquire)) {
+            IOLockUnlock(lock_);
+            return streaming_.load(std::memory_order_acquire) ? kIOReturnBusy : kIOReturnNotReady;
+        }
+        const Model::ASFWAudioDevice prior = config_;
+        config_ = next;
+        kern_return_t kr = EnsureDirectAudioMemoryLocked();
+        if (kr != kIOReturnSuccess) {
+            config_ = prior;
+            (void)EnsureDirectAudioMemoryLocked();
+        } else {
+            staged_.reset();
+        }
+        IOLockUnlock(lock_);
+        if (outPrior) *outPrior = prior;
+        return kr;
     }
 
     [[nodiscard]] bool CopyConfig(Model::ASFWAudioDevice& outConfig) const noexcept {
@@ -746,6 +802,7 @@ private:
     uint64_t guid_{0};
     mutable IOLock* lock_{nullptr};
     Model::ASFWAudioDevice config_{};
+    std::optional<Model::ASFWAudioDevice> staged_{};
     std::atomic<bool> configValid_{false};
     std::atomic<bool> streaming_{false};
 

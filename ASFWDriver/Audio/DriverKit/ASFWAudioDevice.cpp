@@ -10,6 +10,9 @@
 #include "../Runtime/Configuration/DeviceConfigurationStateMachine.hpp"
 #include "../Runtime/RateValidation.hpp"
 #include "../Runtime/WireRetention.hpp"
+#include "../Model/ASFWAudioDevice.hpp"
+#include "../Model/RateConfiguration.hpp"
+#include "Config/AudioDriverConfig.hpp"
 
 #include "ASFWAudioDevice.h"
 #include "ASFWAudioDriverPrivate.hpp"
@@ -25,6 +28,7 @@
 
 #include <DriverKit/DriverKit.h>
 #include <DriverKit/IOLib.h>
+#include <DriverKit/OSDictionary.h>
 
 // The audio completion group (frames per interrupt, input-safety floor, ZTS
 // tiling) and the transport's IOC cadence must be the same number of cycles.
@@ -1241,6 +1245,12 @@ constexpr uint64_t kConfigChangeActionSampleRate = 0x4153465752415445ULL;
 // the transmit prime then refused (hardware: bus-reset burst while playing).
 constexpr uint64_t kConfigChangeActionIoRestart = 0x41534657494F5253ULL;
 
+// A stream layout change at the current rate ("ASFWGEOM"): a MOTU optical
+// mode switched. The host staged the new description on the endpoint; the
+// window installs it (PerformGeometryChange). The device keeps its ID, so
+// aggregates and open clients follow the new channel count.
+constexpr uint64_t kConfigChangeActionGeometry = 0x4153465747454F4DULL;
+
 constexpr uint64_t kAvcRateActionPrefix = 0xA54C000000000000ULL;
 constexpr uint64_t kAvcRateTokenMask = 0x0000FFFFFFFFFFFFULL;
 
@@ -1490,6 +1500,134 @@ void RemoveNamesPastCount(IOUserAudioDevice& device,
     return kIOReturnSuccess;
 }
 
+[[nodiscard]] kern_return_t SetAvailableFormats(ASFWAudioDriver_IVars& driver) noexcept {
+    using ASFW::Audio::DriverKit::kMaxStreamFormats;
+    IOUserAudioStreamBasicDescription inputFormats[kMaxStreamFormats] = {};
+    IOUserAudioStreamBasicDescription outputFormats[kMaxStreamFormats] = {};
+    uint32_t count = 0;
+    uint32_t current = 0;
+    kern_return_t kr = ASFW::Audio::DriverKit::BuildStreamFormats(driver.device, inputFormats, outputFormats,
+                                                                  count, current);
+    if (kr == kIOReturnSuccess && driver.inputStream)
+        kr = driver.inputStream->SetAvailableStreamFormats(inputFormats, count);
+    if (kr == kIOReturnSuccess && driver.outputStream)
+        kr = driver.outputStream->SetAvailableStreamFormats(outputFormats, count);
+    return kr;
+}
+
+// The configuration window for a stream layout change (kConfigChangeActionGeometry).
+// The HAL has stopped IO for every client of this device, aggregates included.
+// The staged description becomes the endpoint's configuration (same memory,
+// sized for the widest layout at publication), the driver takes its formation
+// list exactly as it reads one at graph creation (through the nub property
+// serialization), and the stream formats, channel names and the IO handler's
+// view move with the same commit a rate change uses, without touching the
+// hardware rate. Any failure puts the prior layout back on both sides.
+[[nodiscard]] kern_return_t PerformGeometryChange(ASFWAudioDevice& device,
+                                                  ASFWAudioDevice_IVars& local) noexcept {
+    using namespace ASFW::Configuration;
+    namespace Model = ASFW::Audio::Model;
+    if (!local.driverIvars) return kIOReturnNotReady;
+    auto& driver = *local.driverIvars;
+    auto* nub = driver.device.audioNub;
+    if (!nub || driver.device.rateFormationCandidates.empty()) return kIOReturnUnsupported;
+
+    IOLockLock(local.rateLock);
+    const bool ratePending = !std::holds_alternative<Idle>(local.rateMachine.state) &&
+        !std::holds_alternative<Uninitialized>(local.rateMachine.state);
+    const auto* idle = std::get_if<Idle>(&local.rateMachine.state);
+    const uint64_t revision = idle ? idle->committed.revision + 1 : 0;
+    IOLockUnlock(local.rateLock);
+    if (ratePending) {
+        // A rate transaction owns the window machinery; the layout stays staged.
+        ASFW_LOG_WARNING(Audio, "[Geometry] phase=refused reason=rate-transaction guid=%016llx", driver.device.guid);
+        return kIOReturnBusy;
+    }
+
+    Model::ASFWAudioDevice staged{};
+    if (!nub->CopyStagedGeometry(&staged)) {
+        ASFW_LOG(Audio, "[Geometry] phase=none guid=%016llx (nothing staged)", driver.device.guid);
+        return kIOReturnSuccess;
+    }
+    const auto rate = static_cast<uint32_t>(driver.device.currentSampleRate);
+    // Read at the device's rate; the endpoint holds the one Core Audio runs.
+    Model::ASFWAudioDevice next = staged;
+    if (staged.usesRateFormations && staged.currentSampleRate != rate) {
+        const auto projected = Model::WithRateFormation(staged, rate);
+        if (!projected) return kIOReturnUnsupported;
+        next = *projected;
+    }
+
+    ASFW::Isoch::Audio::ParsedAudioDriverConfig parsed{};
+    ASFW::Isoch::Audio::InitializeAudioDriverConfigDefaults(parsed);
+    auto properties = OSSharedPtr(OSDictionary::withCapacity(48), OSNoRetain);
+    if (!properties || !next.PopulateNubProperties(properties.get())) return kIOReturnNoMemory;
+    ASFW::Isoch::Audio::ParseAudioDriverConfigFromProperties(properties.get(), parsed);
+    for (uint32_t i = 0; i < driver.device.sampleRateCount; ++i) {
+        if (std::ranges::find(parsed.rateFormationCandidates, static_cast<uint32_t>(driver.device.sampleRates[i]),
+                              &ASFW::Audio::Runtime::RateFormation::sampleRateHz) ==
+            parsed.rateFormationCandidates.end()) {
+            ASFW_LOG_ERROR(Audio, "[Geometry] phase=refused reason=rate-without-formation rate=%.0f guid=%016llx",
+                           driver.device.sampleRates[i], driver.device.guid);
+            return kIOReturnUnsupported;
+        }
+    }
+
+    const auto priorResolved = ResolveRate(driver, rate, revision ? revision - 1 : 0, true);
+    if (!priorResolved) return priorResolved.error();
+    const auto priorFormations = driver.device.rateFormationCandidates;
+    const uint32_t priorIn = driver.device.inputChannelCount;
+    const uint32_t priorOut = driver.device.outputChannelCount;
+    std::array<char, sizeof(driver.device.inputChannelNames)> priorInputNames{};
+    std::array<char, sizeof(driver.device.outputChannelNames)> priorOutputNames{};
+    memcpy(priorInputNames.data(), driver.device.inputChannelNames, priorInputNames.size());
+    memcpy(priorOutputNames.data(), driver.device.outputChannelNames, priorOutputNames.size());
+
+    driver.device.rateFormationCandidates = parsed.rateFormationCandidates;
+    const auto resolved = ResolveRate(driver, rate, revision, true);
+    if (!resolved) {
+        driver.device.rateFormationCandidates = priorFormations;
+        return resolved.error();
+    }
+    Model::ASFWAudioDevice priorConfig{};
+    kern_return_t kr = nub->InstallGeometry(&next, &priorConfig);
+    if (kr != kIOReturnSuccess) {
+        driver.device.rateFormationCandidates = priorFormations;
+        ASFW_LOG_ERROR(Audio, "[Geometry] phase=refused reason=endpoint guid=%016llx kr=0x%x (%{public}s)",
+                       driver.device.guid, kr, ASFW::Logging::IOReturnName(kr));
+        return kr;
+    }
+    InstallDriverFormation(driver, *resolved->resolved);
+    local.projectingRate.store(true, std::memory_order_release);
+    kr = SetAvailableFormats(driver);
+    if (kr == kIOReturnSuccess) kr = CommitSampleRate(device, driver, resolved->resolved->timing, false);
+    local.projectingRate.store(false, std::memory_order_release);
+    if (kr != kIOReturnSuccess) {
+        driver.device.rateFormationCandidates = priorFormations;
+        (void)nub->InstallGeometry(&priorConfig, nullptr);
+        InstallDriverFormation(driver, *priorResolved->resolved);
+        memcpy(driver.device.inputChannelNames, priorInputNames.data(), priorInputNames.size());
+        memcpy(driver.device.outputChannelNames, priorOutputNames.data(), priorOutputNames.size());
+        local.projectingRate.store(true, std::memory_order_release);
+        const kern_return_t restored = SetAvailableFormats(driver) == kIOReturnSuccess
+            ? CommitSampleRate(device, driver, priorResolved->resolved->timing, false) : kIOReturnError;
+        local.projectingRate.store(false, std::memory_order_release);
+        ASFW_LOG_ERROR(Audio, "[Geometry] phase=rollback guid=%016llx kr=0x%x (%{public}s) restore=0x%x",
+                       driver.device.guid, kr, ASFW::Logging::IOReturnName(kr), restored);
+        return kr;
+    }
+    IOLockLock(local.rateLock);
+    if (auto* committed = std::get_if<Idle>(&local.rateMachine.state)) {
+        // The next rate change starts from the new layout.
+        committed->committed = {driver.device.guid, driver.device.rateBusGeneration, revision, *resolved};
+    }
+    IOLockUnlock(local.rateLock);
+    ASFW_LOG(Audio, "[Geometry] phase=commit guid=%016llx rate=%u in %u -> %u, out %u -> %u",
+             driver.device.guid, rate, priorIn, driver.device.inputChannelCount, priorOut,
+             driver.device.outputChannelCount);
+    return kIOReturnSuccess;
+}
+
 } // namespace
 
 kern_return_t ASFWAudioDevice::RequestAvcStreamFormat(IOUserAudioStream* stream,
@@ -1681,8 +1819,31 @@ kern_return_t ASFWAudioDevice::RequestIoRestart(uint32_t reason) {
     return RequestDeviceConfigurationChange(kConfigChangeActionIoRestart, nullptr);
 }
 
+kern_return_t ASFWAudioDevice::RequestGeometryChange() {
+    ASFW_LOG(Audio, "ASFWAudioDevice: stream layout staged -- requesting configuration-change window");
+    if (ivars && ivars->driverIvars) {
+        // The wire carries the old layout: an idle kept wire goes now, a live
+        // one at the StopIO inside the window (as for an IO restart).
+        auto& local = *ivars;
+        RunOnWorkQueue(*local.driverIvars, ^{
+            if (local.wire.MustReleaseOnInvalidation()) {
+                (void)ReleaseKeptWire(*local.driverIvars, local.transportStopStatus, local.wire,
+                                      ASFW::Audio::Runtime::WireReleaseReason::kIoRestart);
+            } else {
+                local.wire.OnIoRestartRequested();
+            }
+        });
+    }
+    return RequestDeviceConfigurationChange(kConfigChangeActionGeometry, nullptr);
+}
+
 kern_return_t ASFWAudioDevice::PerformDeviceConfigurationChange(
     uint64_t change_action, OSObject* in_change_info) {
+    if (change_action == kConfigChangeActionGeometry) {
+        const kern_return_t kr = ivars ? PerformGeometryChange(*this, *ivars) : kIOReturnNotReady;
+        const kern_return_t superKr = super::PerformDeviceConfigurationChange(change_action, in_change_info);
+        return kr != kIOReturnSuccess ? kr : superKr;
+    }
     if ((change_action & ~kAvcRateTokenMask) == kAvcRateActionPrefix) {
         using namespace ASFW::Configuration;
         if (!ivars || !ivars->driverIvars) return kIOReturnNotReady;
@@ -1893,6 +2054,9 @@ kern_return_t ASFWAudioDevice::AbortDeviceConfigurationChange(
     }
     if (change_action == kConfigChangeActionIoRestart) {
         ASFW_LOG(Audio, "ASFWAudioDevice: IO restart aborted by host");
+    }
+    if (change_action == kConfigChangeActionGeometry) {
+        ASFW_LOG_WARNING(Audio, "ASFWAudioDevice: layout change aborted by host; the new layout stays staged");
     }
     if (change_action == kConfigChangeActionSampleRate) {
         if (ivars && ivars->driverIvars) {

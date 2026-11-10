@@ -145,6 +145,16 @@ public:
     // the nub, so the next publication creates a fresh one.
     void AudioDriverStartFailed(kern_return_t status) LOCALONLY;
 
+    // Layout change in place (a MOTU optical mode), called by the audio
+    // driver inside its configuration window with both directions stopped.
+    // The pointers are ASFW::Audio::Model::ASFWAudioDevice (the iig carries
+    // no C++ types). CopyStagedGeometry: the layout the host staged, if any.
+    // InstallGeometry: make `config` the endpoint's configuration and re-lay
+    // its binding in the same memory; `outPrior` (may be null) gets the one
+    // it replaced.
+    bool CopyStagedGeometry(void* outConfig) LOCALONLY;
+    kern_return_t InstallGeometry(const void* config, void* outPrior) LOCALONLY;
+
     // Host-side belief of the device rate (updated on publish and on every
     // successful RequestSampleRateChange). Used by the transport side to
     // detect device-initiated clock moves.
