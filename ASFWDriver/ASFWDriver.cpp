@@ -869,6 +869,7 @@ kern_return_t ASFWDriver::StartRuntime(IOService* provider) {
         return failStart(kIOReturnError, "runtime start completion rejected");
     }
     ctx.irqEntriesAtStart = ctx.irqEntries.load(std::memory_order_acquire);
+    ctx.ticksSinceStartComplete = 0;
     ctx.startCompleteNs = ASFW::Timing::hostTicksToNanos(mach_absolute_time());
     ctx.irqArrivalChecked = false;
 
@@ -1322,6 +1323,13 @@ constexpr uint32_t kSpuriousInterruptStormLimit = 2000;
 // quiesced, the service stays claimed, the machine goes on. (b205: checking
 // this inside Start cannot work, the handler runs on the queue Start holds.)
 constexpr uint64_t kInterruptArrivalBudgetNs = 1'000'000'000ull;
+// ... and the watchdog must itself have run this many times since start
+// complete. It shares the work queue with the interrupt handler: after a
+// system-wide stall (the B760's AMD framebuffer handover stalls everything
+// for ~1 s, with start complete inside it) the second is up but neither has
+// run, and the watchdog could be served first and see no interrupt. Between
+// 200 of its own runs a pending interrupt is served.
+constexpr uint32_t kInterruptArrivalMinTicks = 200;
 } // namespace
 
 void ASFWDriver::InterruptOccurred_Impl(ASFWDriver_InterruptOccurred_Args) {
@@ -1456,6 +1464,7 @@ void ASFWDriver::AsyncWatchdogTimerFired_Impl(ASFWDriver_AsyncWatchdogTimerFired
         // real kill switch is the timer disable in watchdog.Stop()/Reset().
         if (ctx.lifecycle && ctx.lifecycle->AdmitsNormalWork()) {
             if (!ctx.irqArrivalChecked && ctx.startCompleteNs != 0 &&
+                ++ctx.ticksSinceStartComplete >= kInterruptArrivalMinTicks &&
                 ASFW::Timing::hostTicksToNanos(mach_absolute_time()) - ctx.startCompleteNs >=
                     kInterruptArrivalBudgetNs) {
                 ctx.irqArrivalChecked = true;
