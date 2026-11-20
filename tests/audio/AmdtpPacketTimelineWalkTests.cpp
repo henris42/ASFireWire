@@ -509,4 +509,101 @@ TEST(AmdtpPacketTimelineWalkTests, AmdtpWriterMatchesThePerFrameScan) {
     }
 }
 
+// A stream's start and a cursor jump: runs of frames no packet carries, which
+// the writers pass in one step. Same bytes and counters as frame by frame.
+std::vector<FillCall> MakeStartCalls(const Ring& ring, uint64_t firstFrame) {
+    std::vector<FillCall> calls;
+    uint32_t n = 0;
+    for (uint64_t frame = firstFrame; frame < ring.nextFrame + 100; frame += 64, ++n) {
+        // Every third call overlaps the one before, as a second client's does.
+        const uint64_t first = n % 3 == 2 ? frame - 30 : frame;
+        calls.push_back({first, 64, n % 5 == 0 ? 0 : StartingRing::kFirstPacket + n / 2});
+    }
+    return calls;
+}
+
+void PrepareStartWithAJump(StartingRing& ring) {
+    ring.Prepare(400);
+    ring.JumpFrames(700);
+    ring.Prepare(400);
+}
+
+TEST(AmdtpPacketTimelineWalkTests, MotuWriterPassesFramesWithoutAPacketInOneStep) {
+    using namespace ASFW::Encoding::Motu;
+    constexpr uint32_t kChunks = 14;
+    constexpr uint32_t kDbs = DataBlockQuadlets(kChunks);
+    constexpr uint32_t kHostFrames = 24576;
+    constexpr uint32_t kHostChannels = 16;
+    StartingRing actualRing{1512, 16, kDbs};
+    StartingRing referenceRing{1512, 16, kDbs};
+    PrepareStartWithAJump(actualRing);
+    PrepareStartWithAJump(referenceRing);
+    const MotuPayloadStreamConfig config{.pcmChunks = kChunks,
+                                         .sourceChannelOffset = 0,
+                                         .ports = kV2Playback};
+    MotuPayloadWriter writer{};
+    writer.Configure(config);
+    writer.BindTimeline(&actualRing.timeline);
+    const std::vector<float> host = MakeHostRing(kHostFrames, kHostChannels);
+    ReferenceCounters reference{};
+    for (const FillCall& call : MakeStartCalls(actualRing, StartingRing::kFirstFrame - 3000)) {
+        HostAudioBufferView view{};
+        view.interleavedFloat32 = host.data();
+        view.firstFrame = call.firstFrame;
+        view.frameCount = call.frameCount;
+        view.frameCapacity = kHostFrames;
+        view.channels = kHostChannels;
+        writer.WriteFloat32Interleaved(view, call.firstWritable);
+        ReferenceMotuWrite(referenceRing.timeline, config, view, call.firstWritable, reference);
+    }
+    EXPECT_EQ(actualRing.bytes, referenceRing.bytes);
+    const auto& counters = writer.Counters();
+    EXPECT_EQ(counters.framesVisited.load(), reference.visited);
+    EXPECT_EQ(counters.framesWritten.load(), reference.written);
+    EXPECT_EQ(counters.framesWithoutPacket.load(), reference.without);
+    EXPECT_EQ(counters.framesOutsidePacket.load(), reference.outside);
+    EXPECT_EQ(counters.framesMissedFinality.load(), reference.missed);
+    EXPECT_GT(reference.written, 0U);
+    EXPECT_GT(reference.outside, 3000U);  // before the first packet, and the jump
+    EXPECT_GT(reference.without, 0U);
+}
+
+TEST(AmdtpPacketTimelineWalkTests, AmdtpWriterPassesFramesWithoutAPacketInOneStep) {
+    constexpr uint32_t kChannels = 10;
+    constexpr uint32_t kHostFrames = 24576;
+    StartingRing actualRing{1512, 8, kChannels};
+    StartingRing referenceRing{1512, 8, kChannels};
+    PrepareStartWithAJump(actualRing);
+    PrepareStartWithAJump(referenceRing);
+    AmdtpStreamConfig config{};
+    config.dbs = kChannels;
+    config.pcmChannels = kChannels;
+    const AmdtpTxPolicy policy{};
+    AmdtpPayloadWriter writer{};
+    writer.Configure(config, policy);
+    writer.BindTimeline(&actualRing.timeline);
+    const std::vector<float> host = MakeHostRing(kHostFrames, kChannels);
+    ReferenceCounters reference{};
+    for (const FillCall& call : MakeStartCalls(actualRing, StartingRing::kFirstFrame - 3000)) {
+        HostAudioBufferView view{};
+        view.interleavedFloat32 = host.data();
+        view.firstFrame = call.firstFrame;
+        view.frameCount = call.frameCount;
+        view.frameCapacity = kHostFrames;
+        view.channels = kChannels;
+        writer.WriteFloat32Interleaved(view, call.firstWritable);
+        ReferenceAmdtpWrite(referenceRing.timeline, config, policy, view, call.firstWritable,
+                            reference);
+    }
+    EXPECT_EQ(actualRing.bytes, referenceRing.bytes);
+    const auto& counters = writer.Counters();
+    EXPECT_EQ(counters.framesVisited.load(), reference.visited);
+    EXPECT_EQ(counters.framesWritten.load(), reference.written);
+    EXPECT_EQ(counters.framesWithoutPacket.load(), reference.without);
+    EXPECT_EQ(counters.framesOutsidePacket.load(), reference.outside);
+    EXPECT_EQ(counters.framesMissedFinality.load(), reference.missed);
+    EXPECT_GT(reference.written, 0U);
+    EXPECT_GT(reference.outside, 3000U);
+}
+
 } // namespace
