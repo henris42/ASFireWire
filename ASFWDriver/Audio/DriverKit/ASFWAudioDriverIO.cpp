@@ -32,6 +32,10 @@ constexpr uint64_t kRxPullMaxBudgetNanos = 100'000;
     return std::clamp(bufferNanos / 8, kRxPullMinBudgetNanos, kRxPullMaxBudgetNanos);
 }
 
+// The IO operation that returned last, on any device of this process
+// (IoOpTiming.hpp, "follow").
+ASFW::Audio::Runtime::IoOpLastReturn gLastIoReturn;
+
 template <typename T>
 void RecordMax(std::atomic<T>& slot, T value) noexcept {
     if (value > slot.load(std::memory_order_relaxed)) {
@@ -333,22 +337,66 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
             }
 
             const bool timeIo = ASFW_LOG_ENABLED(DirectAudio, Debug);
-            const uint64_t ioStartTicks = timeIo ? mach_absolute_time() : 0;
+            // The handler's own time is measured at every log level
+            // (IoOpTiming.hpp): this clock read and one at the return.
+            const uint64_t ioStartTicks = mach_absolute_time();
             // The IO thread's tag, taken here where every operation on a
             // thread has the same frame (GlitchEventLog.hpp).
             const uint16_t threadTag = ASFW::Audio::Runtime::CurrentThreadTag();
-            // Debug level only: the operation goes into the IO trace at the end.
-            const auto traceOp = [&](uint64_t entryTicks) noexcept {
-                return ASFW::Audio::Runtime::IoOp{
-                    .entryTicks = entryTicks,
-                    .sampleTime = sampleTime,
-                    .hostTime = hostTime,
-                    .frames = ioBufferFrameSize,
-                    .durationNanos = static_cast<uint32_t>(std::min<uint64_t>(
-                        ASFW::Timing::hostTicksToNanos(mach_absolute_time() - entryTicks), UINT32_MAX)),
-                    .operation = static_cast<uint16_t>(operation),
-                    .thread = threadTag,
-                };
+            auto& ioTiming = driverIvars->runtime.ioTiming;
+            const bool isWriteEnd = operation == IOUserAudioIOOperationWriteEnd;
+            // How soon this operation began after the same operation returned
+            // on another device (an aggregate runs them back to back).
+            {
+                const uintptr_t previousTag = gLastIoReturn.tag.load(std::memory_order_relaxed);
+                const uint64_t previousTicks = gLastIoReturn.ticks.load(std::memory_order_relaxed);
+                if (ASFW::Audio::Runtime::IoOpFollows(previousTag, driverIvars, isWriteEnd) &&
+                    ioStartTicks > previousTicks) {
+                    ioTiming.RecordFollow(ioStartTicks - previousTicks);
+                }
+            }
+            // The operation's return: its time, with its pull's or its fill's
+            // (`partTicks`), into the figures; a slow one is kept whole, and at
+            // debug level every one goes into the IO trace (`capture`: with
+            // the trace before it captured for the [IoOps] lines). Returns the
+            // operation's time.
+            const auto finishOp = [&](ASFW::Audio::Runtime::IoStepTiming& step, uint64_t partTicks,
+                                      bool capture) noexcept {
+                const uint64_t endTicks = mach_absolute_time();
+                const uint64_t took = endTicks - ioStartTicks;
+                step.Record(took);
+                const bool slow = took >= ioTiming.slowTicks;
+                if (slow || timeIo) {
+                    const auto nanos = [](uint64_t ticks) noexcept {
+                        return static_cast<uint32_t>(
+                            std::min<uint64_t>(ASFW::Timing::hostTicksToNanos(ticks), UINT32_MAX));
+                    };
+                    const ASFW::Audio::Runtime::IoOp op{
+                        .entryTicks = ioStartTicks,
+                        .sampleTime = sampleTime,
+                        .hostTime = hostTime,
+                        .frames = ioBufferFrameSize,
+                        .durationNanos = nanos(took),
+                        .partNanos = nanos(partTicks),
+                        .operation = static_cast<uint16_t>(operation),
+                        .thread = threadTag,
+                    };
+                    if (slow) {
+                        ioTiming.RecordSlow(op);
+                    }
+                    if (timeIo) {
+                        auto& runtime = driverIvars->runtime;
+                        if (capture) {
+                            (void)runtime.ioOpTraceCapture.TryCapture(runtime.ioOpTrace, op);
+                        }
+                        runtime.ioOpTrace.Record(op);
+                    }
+                }
+                gLastIoReturn.tag.store(
+                    ASFW::Audio::Runtime::IoOpFollowTag(driverIvars, isWriteEnd),
+                    std::memory_order_relaxed);
+                gLastIoReturn.ticks.store(endTicks, std::memory_order_relaxed);
+                return took;
             };
             if (operation == IOUserAudioIOOperationBeginRead) {
                 // ADK permits operation spans that differ from the nominal IO
@@ -358,7 +406,7 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                     return returnError(kIOReturnBadArgument);
                 }
                 auto& runtime = driverIvars->runtime;
-                const uint64_t entryTicks = timeIo ? ioStartTicks : mach_absolute_time();
+                const uint64_t entryTicks = ioStartTicks;
                 const BeginReadContext readContext{
                     .sampleTime = sampleTime,
                     .frames = ioBufferFrameSize,
@@ -387,12 +435,10 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                     RecordReadEvent(*driverIvars, readContext, {}, readContext.writeBefore,
                                     ASFW::Audio::Runtime::GlitchEventKind::ReadAhead);
                     control->counters.CountBeginRead();
+                    const uint64_t took = finishOp(ioTiming.beginRead, 0, /*capture=*/true);
                     if (timeIo) {
                         runtime.ioAheadReads.fetch_add(1, std::memory_order_relaxed);
-                        RecordMax(runtime.ioBeginReadMaxTicks, mach_absolute_time() - ioStartTicks);
-                        const ASFW::Audio::Runtime::IoOp op = traceOp(ioStartTicks);
-                        (void)runtime.ioOpTraceCapture.TryCapture(runtime.ioOpTrace, op);
-                        runtime.ioOpTrace.Record(op);
+                        RecordMax(runtime.ioBeginReadMaxTicks, took);
                     }
                     return kIOReturnSuccess;
                 }
@@ -409,15 +455,18 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                 };
                 ASFW::Audio::Runtime::RxPullResult pull{
                     .outcome = ASFW::Audio::Runtime::RxPullOutcome::Covered};
+                uint64_t pullTicks = 0;
                 if (readContext.writeBefore < pullTarget.readEnd) {
                     const uint64_t budgetNanos = RxPullBudgetNanos(
                         ioBufferFrameSize, runtime.directAudioGraph.sampleRateHz);
+                    const uint64_t pullStarted = mach_absolute_time();
                     pull = control->rxPull.Pull({
                         .enough = &RxPullTarget::Covered,
                         .context = &pullTarget,
-                        .deadlineTicks = mach_absolute_time() +
-                                         ASFW::Timing::nanosToHostTicks(budgetNanos),
+                        .deadlineTicks = pullStarted + ASFW::Timing::nanosToHostTicks(budgetNanos),
                     });
+                    pullTicks = mach_absolute_time() - pullStarted;
+                    ioTiming.pull.Record(pullTicks);
                 }
                 const CaptureRead read = PrepareCaptureRingForBeginRead(
                     runtime.directAudioGraph, *control, sampleTime, ioBufferFrameSize);
@@ -426,24 +475,26 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                                     ASFW::Audio::Runtime::GlitchEventKind::ShortCaptureRead);
                 }
                 control->counters.CountBeginRead();
+                const uint64_t took = finishOp(ioTiming.beginRead, pullTicks, /*capture=*/false);
                 if (timeIo) {
                     RecordInputTiming(*driverIvars, sampleTime, ioBufferFrameSize, hostTime,
                                       ioStartTicks);
-                    RecordMax(driverIvars->runtime.ioBeginReadMaxTicks,
-                              mach_absolute_time() - ioStartTicks);
-                    runtime.ioOpTrace.Record(traceOp(ioStartTicks));
+                    RecordMax(runtime.ioBeginReadMaxTicks, took);
                 }
             } else if (operation == IOUserAudioIOOperationWriteEnd) {
                 // See BeginRead above: CoreAudio may choose a larger span than
                 // kHalIoPeriodFrames while remaining within the stream ring.
-                const uint64_t entryTicks = timeIo ? ioStartTicks : mach_absolute_time();
+                ioTiming.lastFillTicks.store(0, std::memory_order_relaxed);
                 if (!HandleOutputWriteEnd(*driverIvars, *control, sampleTime, hostTime,
-                                          ioBufferFrameSize, entryTicks, threadTag)) {
+                                          ioBufferFrameSize, ioStartTicks, threadTag)) {
                     return returnError(kIOReturnBadArgument);
                 }
+                const uint64_t took =
+                    finishOp(ioTiming.writeEnd, ioTiming.lastFillTicks.load(std::memory_order_relaxed),
+                             /*capture=*/false);
                 if (timeIo) {
                     auto& runtime = driverIvars->runtime;
-                    RecordMax(runtime.ioWriteEndMaxTicks, mach_absolute_time() - ioStartTicks);
+                    RecordMax(runtime.ioWriteEndMaxTicks, took);
                     // The HAL's margin: its presentation time for the write's
                     // first frame against our entry ([HalIoTime] outMarginUs).
                     if (hostTime != 0) {
@@ -453,7 +504,6 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                                 : -static_cast<int64_t>(ASFW::Timing::hostTicksToNanos(ioStartTicks - hostTime));
                         RecordMin(runtime.ioOutMarginMinNanos, marginNanos);
                     }
-                    runtime.ioOpTrace.Record(traceOp(ioStartTicks));
                 }
             } else {
                 return returnError(kIOReturnBadArgument);

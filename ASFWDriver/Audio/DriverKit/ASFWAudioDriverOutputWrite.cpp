@@ -315,6 +315,8 @@ void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars, const OutputWriteContext
 
     const uint64_t fillEnded = TxHostNow();
     const uint64_t fillDuration = fillEnded - fillStarted;
+    ivars.runtime.ioTiming.fill.Record(fillDuration);
+    ivars.runtime.ioTiming.lastFillTicks.store(fillDuration, std::memory_order_relaxed);
     for (auto* maxDuration : {&ivars.runtime.txFillMaxDurationTicks, &ivars.runtime.glitchFillMaxTicks}) {
         uint64_t observed = maxDuration->load(std::memory_order_relaxed);
         while (fillDuration > observed &&

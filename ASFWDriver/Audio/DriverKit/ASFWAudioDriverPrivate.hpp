@@ -11,6 +11,7 @@
 #include "Runtime/AudioTransportControlBlock.hpp"
 #include "Runtime/DirectAudioDebugSnapshot.hpp"
 #include "Runtime/GlitchEventLog.hpp"
+#include "Runtime/IoOpTiming.hpp"
 #include "Runtime/MotuTxPhaseTracePublisher.hpp"
 #include "../Config/AudioConstants.hpp"
 #include "../Protocols/BeBoB/MAudioInternalTxTiming.hpp"
@@ -296,6 +297,9 @@ struct AudioDriverRuntimeState {
     // the [Glitch] report; and the previous BeginRead on this device (any IO
     // thread), for an event's "prev" deltas.
     ASFW::Audio::Runtime::GlitchEventLog glitchEvents;
+    // The IO handler's own time per operation, at every log level
+    // ([IoTime], IoOpTiming.hpp). Reset when the TX producer is armed.
+    ASFW::Audio::Runtime::IoOpTiming ioTiming;
     std::atomic<uint64_t> lastBeginReadFrame{0};
     std::atomic<uint64_t> lastBeginReadTicks{0};
     std::atomic<bool> txActive{false};
@@ -492,6 +496,14 @@ struct OutputWriteContext final {
 // CoreAudio's IO thread, its only owner; RT-safe.
 void FillTransmitPayloads(ASFWAudioDriver_IVars& ivars,
                           const OutputWriteContext& write = {}) noexcept;
+// [IoTime] (ASFWAudioDriverTxProducer.cpp): the IO handler's own time, per
+// interval on the TX preparation queue (a warning when an operation was slow,
+// otherwise debug), and for the whole stream at info level when it stops,
+// after the TX preparation has quiesced.
+void ReportIoTiming(ASFWAudioDriver_IVars& ivars,
+                    const ASFW::Audio::Runtime::AudioTransportControlBlock& control,
+                    uint64_t now) noexcept;
+void LogIoTimingSummary(ASFWAudioDriver_IVars& ivars) noexcept;
 // The packet the hardware is sending now. Exact from the newest completion
 // stamp (which packet went out in which bus cycle) and the clock pair (which
 // cycle it is now); while the stream has no completion yet, projected from

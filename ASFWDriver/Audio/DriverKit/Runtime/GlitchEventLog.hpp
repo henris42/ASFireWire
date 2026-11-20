@@ -140,13 +140,15 @@ private:
     uint64_t tail_{0};
 };
 
-// One IO operation as the HAL asked for it (debug level only).
+// One IO operation as the HAL asked for it: every operation at debug level
+// (IoOpTrace), the slow ones at any level (IoOpTiming.hpp).
 struct IoOp {
     uint64_t entryTicks{0};   // mach_absolute_time at the IO handler's entry
     uint64_t sampleTime{0};   // the HAL's sample time for the operation
     uint64_t hostTime{0};     // the HAL's host time for that sample time
     uint32_t frames{0};
     uint32_t durationNanos{0};  // the handler's time
+    uint32_t partNanos{0};      // of it, a BeginRead's pull / a WriteEnd's fill
     uint16_t operation{0};    // IOUserAudioIOOperation: 0 BeginRead, 1 WriteEnd
     uint16_t thread{0};       // CurrentThreadTag
 };

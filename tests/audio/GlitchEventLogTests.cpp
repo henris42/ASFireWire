@@ -8,6 +8,7 @@
 #include <gtest/gtest.h>
 
 #include "Audio/DriverKit/Runtime/GlitchEventLog.hpp"
+#include "Audio/DriverKit/Runtime/IoOpTiming.hpp"
 
 #include <array>
 #include <atomic>
@@ -22,7 +23,12 @@ using ASFW::Audio::Runtime::GlitchEventKind;
 using ASFW::Audio::Runtime::GlitchEventLog;
 using ASFW::Audio::Runtime::IoOp;
 using ASFW::Audio::Runtime::IoOpTrace;
+using ASFW::Audio::Runtime::IoOpFollows;
+using ASFW::Audio::Runtime::IoOpFollowTag;
+using ASFW::Audio::Runtime::IoOpTiming;
 using ASFW::Audio::Runtime::IoOpTraceCapture;
+using ASFW::Audio::Runtime::IoStepSpan;
+using ASFW::Audio::Runtime::IoStepTiming;
 
 GlitchEvent ShortRead(uint64_t frame) {
     GlitchEvent event{};
@@ -176,6 +182,84 @@ TEST(IoOpTraceTests, OneCaptureWaitsForTheReportWithTheReadAheadLast) {
     EXPECT_TRUE(capture.TryCapture(trace, Op(6, 0)));
     capture.Reset();
     EXPECT_EQ(capture.Take(out.data(), out.size()), 0U);
+}
+
+// IoOpTiming: a step counts every operation; a report takes what came since
+// the last one, with that interval's longest, and the stream keeps its own.
+TEST(IoOpTimingTests, AReportTakesItsIntervalAndTheStreamKeepsItsTotals) {
+    IoStepTiming step;
+    step.Record(10);
+    step.Record(30);
+    IoStepSpan span = step.Take();
+    EXPECT_EQ(span.count, 2U);
+    EXPECT_EQ(span.ticks, 40U);
+    EXPECT_EQ(span.maxTicks, 30U);
+    step.Record(5);
+    span = step.Take();
+    EXPECT_EQ(span.count, 1U);
+    EXPECT_EQ(span.ticks, 5U);
+    EXPECT_EQ(span.maxTicks, 5U) << "the interval's longest, not the stream's";
+    span = step.Take();
+    EXPECT_EQ(span.count, 0U);
+    EXPECT_EQ(span.maxTicks, 0U);
+    const IoStepSpan stream = step.Stream();
+    EXPECT_EQ(stream.count, 3U);
+    EXPECT_EQ(stream.ticks, 45U);
+    EXPECT_EQ(stream.maxTicks, 30U);
+    step.Reset();
+    EXPECT_EQ(step.Stream().count, 0U);
+    EXPECT_EQ(step.Take().count, 0U);
+}
+
+// Before a stream starts no operation is slow; after, the threshold is the
+// one the start gave, and a slow operation is kept whole.
+TEST(IoOpTimingTests, SlowOperationsAreCountedAndKept) {
+    IoOpTiming timing;
+    EXPECT_EQ(timing.slowTicks, UINT64_MAX);
+    timing.Reset(/*nowTicks=*/100, /*slowThresholdTicks=*/50, /*followLimitTicks=*/200,
+                 /*pullWaits=*/7, /*pullBusy=*/3);
+    EXPECT_EQ(timing.slowTicks, 50U);
+    EXPECT_EQ(timing.streamStartTicks, 100U);
+    EXPECT_EQ(timing.reportedPullWaits, 7U);
+    EXPECT_EQ(timing.streamStartPullBusy, 3U);
+    IoOp op = Op(1234, 0);
+    op.durationNanos = 61'000;
+    op.partNanos = 55'000;
+    timing.RecordSlow(op);
+    EXPECT_EQ(timing.slow.load(), 1U);
+    std::array<IoOp, 4> out{};
+    ASSERT_EQ(timing.slowOps.Snapshot(out.data(), out.size()), 1U);
+    EXPECT_EQ(out[0].entryTicks, 1234U);
+    EXPECT_EQ(out[0].partNanos, 55'000U);
+    // The next stream starts from nothing; the operations kept from the last
+    // one are behind what a report has covered.
+    timing.Reset(200, 50, 200, 7, 3);
+    EXPECT_EQ(timing.slow.load(), 0U);
+    EXPECT_EQ(timing.reportedSlowOps, timing.slowOps.Recorded());
+}
+
+// "Follow": only the same operation on another device counts, and only a gap
+// short enough to be two operations back to back.
+TEST(IoOpTimingTests, AnOperationFollowsTheSameOperationOnAnotherDevice) {
+    alignas(8) uint64_t deviceA = 0;
+    alignas(8) uint64_t deviceB = 0;
+    const uintptr_t readA = IoOpFollowTag(&deviceA, /*writeEnd=*/false);
+    const uintptr_t writeA = IoOpFollowTag(&deviceA, /*writeEnd=*/true);
+    EXPECT_TRUE(IoOpFollows(readA, &deviceB, false));
+    EXPECT_TRUE(IoOpFollows(writeA, &deviceB, true));
+    EXPECT_FALSE(IoOpFollows(readA, &deviceB, true)) << "a WriteEnd after a BeginRead is the client's time";
+    EXPECT_FALSE(IoOpFollows(readA, &deviceA, false)) << "the same device: the next cycle, or a second client";
+    EXPECT_FALSE(IoOpFollows(0, &deviceB, false)) << "nothing returned yet";
+
+    IoOpTiming timing;
+    timing.Reset(0, 50, /*followLimitTicks=*/200, 0, 0);
+    timing.RecordFollow(40);
+    timing.RecordFollow(25);
+    timing.RecordFollow(200);  // the IO cycle itself
+    const IoStepSpan follow = timing.follow.Stream();
+    EXPECT_EQ(follow.count, 2U);
+    EXPECT_EQ(follow.ticks, 65U);
+    EXPECT_EQ(timing.followMinTicks.load(), 25U);
 }
 
 } // namespace

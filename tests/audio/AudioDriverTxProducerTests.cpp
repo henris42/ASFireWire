@@ -1590,6 +1590,59 @@ TEST(TxOwnershipGolden, LateHostWritesAreReportedAtWarn) {
     EXPECT_GT(CountLogLines("[Glitch]"), before);
 }
 
+// The IO handler's own time ([IoTime], IoOpTiming.hpp): the fill inside
+// WriteEnd is timed at every level; an interval in which an operation took
+// kSlowIoOpNanos or longer is a warning with that operation ([IoSlow]), an
+// interval without one says nothing at the default level.
+TEST(TxOwnershipGolden, SlowIoOperationsAreReportedAtWarn) {
+    using ASFW::Audio::Runtime::IoOp;
+    const ASFW::Isoch::Audio::DICE::DiceProfile profile{{.name = "Focusrite Saffire (DICE)"}};
+    ASFW::Logging::LogRing::Shared().Initialize();
+    TxProducerRig rig;
+    rig.SetResolvedPlayback({.pcmChannels = 8, .am824Slots = 9, .midiPorts = 1});
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::FocusriteSPro24Dsp, 48000));
+    rig.FeedBlockingRx(8);
+    rig.EnableHostOutput({});
+    ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets)) << rig.DescribeFault();
+    auto& timing = rig.Ivars().runtime.ioTiming;
+    EXPECT_GT(timing.fill.Stream().count, 0U) << "every fill is timed";
+    EXPECT_EQ(timing.slowTicks, ASFW::Timing::nanosToHostTicks(ASFW::Audio::Runtime::kSlowIoOpNanos));
+
+    // The default level of a release build (host tests log everything).
+    struct WarnLevel {
+        WarnLevel() {
+            ASFW::Logging::ApplyLogLevel({.global = ASFW::Logging::Verbosity::Warn},
+                                         ASFW::Logging::LogLevelSource::CommandLine);
+        }
+        ~WarnLevel() { ASFW::Logging::ResetLogLevelForTesting(); }
+    } warnLevel;
+    const uint64_t interval = ASFW::Timing::nanosToHostTicks(6'000'000'000ULL);
+    uint64_t now = mach_absolute_time() + interval;
+    timing.nextReportTicks = 0;
+    ASFW::Audio::DriverKit::ReportIoTiming(rig.Ivars(), rig.Control(), now);  // opens the interval
+    const uint32_t timeBefore = CountLogLines("[IoTime]");
+    const uint32_t slowBefore = CountLogLines("[IoSlow]");
+    timing.beginRead.Record(timing.slowTicks / 10);
+    timing.writeEnd.Record(timing.slowTicks / 10);
+    now += interval;
+    ASFW::Audio::DriverKit::ReportIoTiming(rig.Ivars(), rig.Control(), now);
+    EXPECT_EQ(CountLogLines("[IoTime]"), timeBefore) << "nothing slow: not a warning";
+
+    const IoOp slow{.entryTicks = now,
+                    .sampleTime = 4800,
+                    .frames = 64,
+                    .durationNanos = 61'000,
+                    .partNanos = 55'000,
+                    .operation = static_cast<uint16_t>(IOUserAudioIOOperationBeginRead)};
+    timing.beginRead.Record(timing.slowTicks + 1);
+    timing.RecordSlow(slow);
+    now += interval;
+    ASFW::Audio::DriverKit::ReportIoTiming(rig.Ivars(), rig.Control(), now);
+    EXPECT_EQ(CountLogLines("[IoTime]"), timeBefore + 2) << "the BeginRead and the WriteEnd line";
+    EXPECT_EQ(CountLogLines("[IoSlow]"), slowBefore + 1);
+    EXPECT_EQ(CountLogLines("took 61 us, of it the pull 55 us"), 1U);
+}
+
 TEST(TxOwnershipGolden, MAudio1814Clean48k) {
     RecordMAudioTxGolden({"tx/maudio-1814/clean-48k-io512.txt",
                           {.ioFrames = 512, .leadFrames = 560, .clockFromZts = true}});

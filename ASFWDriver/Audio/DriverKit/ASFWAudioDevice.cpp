@@ -323,6 +323,8 @@ kern_return_t ReleaseWireTransport(ASFWAudioDriver_IVars& ivars,
                    fill.framesOutsidePacket.load(std::memory_order_relaxed),
                    fill.framesMissedFinality.load(std::memory_order_relaxed));
 
+    ASFW::Audio::DriverKit::LogIoTimingSummary(ivars);
+
     if (ivars.runtime.directAudioGraph.control) {
         const auto* control = ivars.runtime.directAudioGraph.control;
         ASFW_LOG_DEBUG(DirectAudio,

@@ -391,6 +391,86 @@ void ReportTransportGlitches(ASFWAudioDriver_IVars& ivars,
     LogGlitchEvents(ivars, now);
 }
 
+// [IoTime]: the IO handler's own time per operation (IoOpTiming.hpp), which
+// CoreAudio waits for inside its IO cycle. Per unit, every
+// kIoTimeReportIntervalNanos: a warning when an operation of the interval took
+// kSlowIoOpNanos or longer, with the latest of those one by one ([IoSlow]: @
+// is CoreAudio's sample time, as in [GlitchEvent]); otherwise at debug. When
+// the stream stops, the whole stream at info level (LogIoTimingSummary).
+// "waited": pulls that found the interrupt's poll in the receive context and
+// spun for it. "after the other unit's": IoOpTiming.hpp, follow.
+struct IoTimeFigures {
+    ASFW::Audio::Runtime::IoStepSpan beginRead;
+    ASFW::Audio::Runtime::IoStepSpan writeEnd;
+    ASFW::Audio::Runtime::IoStepSpan pull;
+    ASFW::Audio::Runtime::IoStepSpan fill;
+    ASFW::Audio::Runtime::IoStepSpan follow;
+    uint64_t followMinTicks{UINT64_MAX};  // this stream's
+    uint64_t pullWaits{0};
+    uint64_t pullBusy{0};
+    uint64_t slow{0};
+};
+
+// A step for a line: how many, their mean in microseconds with one decimal,
+// the longest in microseconds.
+struct IoStepLine {
+    unsigned long long count;
+    unsigned long long avgUs;
+    unsigned long long avgTenths;
+    unsigned long long maxUs;
+};
+
+IoStepLine StepLine(const ASFW::Audio::Runtime::IoStepSpan& span) noexcept {
+    const uint64_t avgNanos =
+        span.count != 0 ? ASFW::Timing::hostTicksToNanos(span.ticks) / span.count : 0;
+    return {span.count, avgNanos / 1000, (avgNanos % 1000) / 100,
+            ASFW::Timing::hostTicksToNanos(span.maxTicks) / 1000};
+}
+
+void LogIoTime(const ASFWAudioDriver_IVars& ivars, ::ASFW::Logging::LogLevel level,
+               const char* which, uint64_t spanTicks, const IoTimeFigures& figures) noexcept {
+    using ::ASFW::Logging::LogCategory;
+    if (!::ASFW::Logging::Allows(LogCategory::DirectAudio, level)) {
+        return;
+    }
+    const unsigned long long spanMs = ASFW::Timing::hostTicksToNanos(spanTicks) / 1'000'000;
+    const IoStepLine beginRead = StepLine(figures.beginRead);
+    const IoStepLine pull = StepLine(figures.pull);
+    const IoStepLine writeEnd = StepLine(figures.writeEnd);
+    const IoStepLine fill = StepLine(figures.fill);
+    ::ASFW::Logging::EmitLine(
+        LogCategory::DirectAudio, level,
+        "[DirectAudio] [IoTime] 0x%016llx %{public}s %llu.%llu s: BeginRead %llu, avg %llu.%llu us, "
+        "max %llu us; pull %llu, avg %llu.%llu us, max %llu us; %llu waited for the interrupt's "
+        "poll, %llu gave up",
+        ivars.device.guid, which, spanMs / 1000, (spanMs % 1000) / 100, beginRead.count,
+        beginRead.avgUs, beginRead.avgTenths, beginRead.maxUs, pull.count, pull.avgUs,
+        pull.avgTenths, pull.maxUs, static_cast<unsigned long long>(figures.pullWaits),
+        static_cast<unsigned long long>(figures.pullBusy));
+    ::ASFW::Logging::EmitLine(
+        LogCategory::DirectAudio, level,
+        "[DirectAudio] [IoTime] 0x%016llx %{public}s: WriteEnd %llu, avg %llu.%llu us, max %llu us; "
+        "fill %llu, avg %llu.%llu us, max %llu us; %llu operations took %llu us or more",
+        ivars.device.guid, which, writeEnd.count, writeEnd.avgUs, writeEnd.avgTenths,
+        writeEnd.maxUs, fill.count, fill.avgUs, fill.avgTenths, fill.maxUs,
+        static_cast<unsigned long long>(figures.slow),
+        static_cast<unsigned long long>(ASFW::Audio::Runtime::kSlowIoOpNanos / 1000));
+    if (figures.follow.count == 0) {
+        return;
+    }
+    const IoStepLine follow = StepLine(figures.follow);
+    const uint64_t leastNanos = figures.followMinTicks != UINT64_MAX
+                                    ? ASFW::Timing::hostTicksToNanos(figures.followMinTicks)
+                                    : 0;
+    ::ASFW::Logging::EmitLine(
+        LogCategory::DirectAudio, level,
+        "[DirectAudio] [IoTime] 0x%016llx %{public}s: %llu began after the other unit's same "
+        "operation returned: avg %llu.%llu us later, at most %llu us; this stream's least %llu.%llu us",
+        ivars.device.guid, which, follow.count, follow.avgUs, follow.avgTenths, follow.maxUs,
+        static_cast<unsigned long long>(leastNanos / 1000),
+        static_cast<unsigned long long>((leastNanos % 1000) / 100));
+}
+
 void LogMotuSphSummary(const ASFWAudioDriver_IVars& ivars) noexcept {
     const auto servo = ivars.runtime.motuTxTimingStamper.ServoTelemetrySnapshot();
     ASFW::Audio::Runtime::MotuRxSphClockSample bridge{};
@@ -424,6 +504,101 @@ void LogMotuSphSummary(const ASFWAudioDriver_IVars& ivars) noexcept {
 }
 
 } // namespace
+
+void ReportIoTiming(ASFWAudioDriver_IVars& ivars,
+                    const ASFW::Audio::Runtime::AudioTransportControlBlock& control,
+                    uint64_t now) noexcept {
+    constexpr uint64_t kIoTimeReportIntervalNanos = 5'000'000'000ULL;
+    constexpr uint32_t kIoSlowLines = 8;
+    auto& timing = ivars.runtime.ioTiming;
+    if (now < timing.nextReportTicks) {
+        return;
+    }
+    const bool first = timing.nextReportTicks == 0;
+    timing.nextReportTicks = now + ASFW::Timing::nanosToHostTicks(kIoTimeReportIntervalNanos);
+    if (first) {
+        return;  // the stream's first interval starts here
+    }
+    const uint64_t slowTotal = timing.slow.load(std::memory_order_relaxed);
+    const uint64_t pullWaits = control.rxPull.waited.load(std::memory_order_relaxed);
+    const uint64_t pullBusy = control.rxPull.busy.load(std::memory_order_relaxed);
+    const IoTimeFigures figures{
+        .beginRead = timing.beginRead.Take(),
+        .writeEnd = timing.writeEnd.Take(),
+        .pull = timing.pull.Take(),
+        .fill = timing.fill.Take(),
+        .follow = timing.follow.Take(),
+        .followMinTicks = timing.followMinTicks.load(std::memory_order_relaxed),
+        .pullWaits = pullWaits - std::min(pullWaits, timing.reportedPullWaits),
+        .pullBusy = pullBusy - std::min(pullBusy, timing.reportedPullBusy),
+        .slow = slowTotal - std::min(slowTotal, timing.reportedSlow),
+    };
+    const uint64_t since = timing.lastReportTicks;
+    timing.reportedSlow = slowTotal;
+    timing.reportedPullWaits = pullWaits;
+    timing.reportedPullBusy = pullBusy;
+    timing.lastReportTicks = now;
+    if (figures.beginRead.count == 0 && figures.writeEnd.count == 0) {
+        return;  // no IO in the interval
+    }
+    LogIoTime(ivars,
+              figures.slow != 0 ? ::ASFW::Logging::LogLevel::Warning : ::ASFW::Logging::LogLevel::Debug,
+              "last", now - std::min(now, since), figures);
+
+    // The slow operations themselves, the latest kIoSlowLines of the interval.
+    using ASFW::Audio::Runtime::IoOp;
+    const uint64_t slowOpsTotal = timing.slowOps.Recorded();
+    const uint64_t slowOps = slowOpsTotal - std::min(slowOpsTotal, timing.reportedSlowOps);
+    timing.reportedSlowOps = slowOpsTotal;
+    if (slowOps == 0) {
+        return;
+    }
+    std::array<IoOp, kIoSlowLines> ops{};
+    const uint32_t count = timing.slowOps.Snapshot(
+        ops.data(), static_cast<uint32_t>(std::min<uint64_t>(slowOps, kIoSlowLines)));
+    for (uint32_t index = 0; index < count; ++index) {
+        const IoOp& op = ops[index];
+        const bool read = op.operation == IOUserAudioIOOperationBeginRead;
+        ASFW_LOG_WARNING(DirectAudio,
+                         "[IoSlow] 0x%016llx %llu ms ago: %{public}s @%llu, %u frames, took %u us, of it "
+                         "%{public}s %u us, thr %04x",
+                         ivars.device.guid,
+                         now > op.entryTicks
+                             ? ASFW::Timing::hostTicksToNanos(now - op.entryTicks) / 1'000'000
+                             : 0ULL,
+                         read ? "BeginRead" : "WriteEnd", op.sampleTime, op.frames,
+                         op.durationNanos / 1000, read ? "the pull" : "the fill", op.partNanos / 1000,
+                         op.thread);
+    }
+    if (slowOps > count) {
+        ASFW_LOG_WARNING(DirectAudio, "[IoSlow] 0x%016llx: the latest %u of %llu", ivars.device.guid,
+                         count, slowOps);
+    }
+}
+
+void LogIoTimingSummary(ASFWAudioDriver_IVars& ivars) noexcept {
+    auto& timing = ivars.runtime.ioTiming;
+    const auto* control = ivars.runtime.directAudioGraph.control;
+    const uint64_t pullWaits = control ? control->rxPull.waited.load(std::memory_order_relaxed) : 0;
+    const uint64_t pullBusy = control ? control->rxPull.busy.load(std::memory_order_relaxed) : 0;
+    const IoTimeFigures figures{
+        .beginRead = timing.beginRead.Stream(),
+        .writeEnd = timing.writeEnd.Stream(),
+        .pull = timing.pull.Stream(),
+        .fill = timing.fill.Stream(),
+        .follow = timing.follow.Stream(),
+        .followMinTicks = timing.followMinTicks.load(std::memory_order_relaxed),
+        .pullWaits = pullWaits - std::min(pullWaits, timing.streamStartPullWaits),
+        .pullBusy = pullBusy - std::min(pullBusy, timing.streamStartPullBusy),
+        .slow = timing.slow.load(std::memory_order_relaxed),
+    };
+    if (figures.beginRead.count == 0 && figures.writeEnd.count == 0) {
+        return;
+    }
+    const uint64_t now = mach_absolute_time();
+    LogIoTime(ivars, ::ASFW::Logging::LogLevel::Info, "stream",
+              now - std::min(now, timing.streamStartTicks), figures);
+}
 
 uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                              uint64_t startPacketIndex,
@@ -1290,6 +1465,12 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
     ivars.runtime.glitchReportedPullCut = control->rxPull.cut.load(std::memory_order_relaxed);
     ivars.runtime.glitchFillMaxTicks.store(0, std::memory_order_relaxed);
     ivars.runtime.glitchEvents.Reset();
+    ivars.runtime.ioTiming.Reset(
+        mach_absolute_time(),
+        ASFW::Timing::nanosToHostTicks(ASFW::Audio::Runtime::kSlowIoOpNanos),
+        ASFW::Timing::nanosToHostTicks(ASFW::Audio::Runtime::kIoOpFollowMaxNanos),
+        control->rxPull.waited.load(std::memory_order_relaxed),
+        control->rxPull.busy.load(std::memory_order_relaxed));
     ivars.runtime.lastBeginReadFrame.store(0, std::memory_order_relaxed);
     ivars.runtime.lastBeginReadTicks.store(0, std::memory_order_relaxed);
     ivars.runtime.txReplayReader.Reset();
@@ -1656,6 +1837,7 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
 
         // Before the heartbeat below takes the interval maxima it reports.
         ASFW::Audio::DriverKit::ReportTransportGlitches(*ivars, *directControl, now);
+        ASFW::Audio::DriverKit::ReportIoTiming(*ivars, *directControl, now);
 
         // [TxPrep] Surface the cross-queue preparation health to the log. The
         // refill ISR trips kUnderrunFatal once committedMargin falls to the
