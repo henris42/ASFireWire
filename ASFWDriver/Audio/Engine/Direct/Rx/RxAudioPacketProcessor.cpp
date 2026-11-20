@@ -52,6 +52,8 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(
         result.fdf = cip->fdf;
         result.dbc = cip->dataBlockCounter;
         result.dbs = cip->dataBlockSize;
+        result.sid = cip->sourceNodeId;
+        result.fmt = cip->format;
         cipDBS = cip->dataBlockSize;
         data += 8;
         payloadBytes -= 8;

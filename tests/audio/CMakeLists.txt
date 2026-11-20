@@ -262,6 +262,11 @@ target_compile_definitions(AudioTelemetryWireTests PRIVATE
 
 
 
+# Link metrics: receive status classes, header length check, DBC continuity
+add_audio_test(IsochLinkCountersTests
+    IsochLinkCountersTests.cpp
+)
+
 # RX packet decode outcome split.
 add_audio_test(RxAudioPacketProcessorTests
     AudioEngineDirect/RxAudioPacketProcessorTests.cpp

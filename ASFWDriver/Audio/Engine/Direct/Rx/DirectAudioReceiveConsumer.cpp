@@ -89,6 +89,7 @@ void DirectAudioReceiveConsumer::OnReceiveActivated() noexcept {
     pendingTimingLoss_ = false;
     pendingZtsAnchor_ = false;
     lastDbcValid_ = false;
+    cipContinuity_.Reset();
     secondaryAnchored_ = false;
     secondaryAnchorEpoch_ = 0;
     absoluteFrameCursor_ = 0;
@@ -341,6 +342,17 @@ void DirectAudioReceiveConsumer::ConsumePacket(
     if (primeDelayLine && result.framesDecoded != 0) {
         primeCaptureDelayLine_ = false;
     }
+    // Link metrics: every packet with a CIP header, bound or not, before any
+    // branch below returns.
+    if (!configuration_.isSecondary && result.hasValidCip && batch.link != nullptr) {
+        cipContinuity_.Observe({.dbc = result.dbc,
+                                .dbs = result.dbs,
+                                .sid = result.sid,
+                                .fmt = result.fmt,
+                                .fdf = result.fdf,
+                                .blocks = result.framesDecoded},
+                               *batch.link);
+    }
     // Attribute every decoded packet before the reject branch returns; the
     // master stream only, so a second slice cannot double-count.
     if (!configuration_.isSecondary && inputView_.control) {
@@ -541,6 +553,13 @@ void DirectAudioReceiveConsumer::ConsumePacket(
             // still report the loss.
             constexpr uint32_t kTolerableCycleGap = 8;
             const bool dropout = cycleDelta <= kTolerableCycleGap && !headerless;
+            if (!headerless && batch.link != nullptr && cycleDelta >= 2U &&
+                cycleDelta <= ::ASFW::Timing::kCyclesPerSecond) {
+                // A CIP stream has a packet in every cycle. A step of more
+                // than a second (or backwards) is a restart, not a count.
+                ::ASFW::Isoch::IsochRxLinkCounters::Add(batch.link->cyclesMissed,
+                                                        cycleDelta - 1U);
+            }
             if (dropout && inputView_.control) {
                 const uint64_t gaps = inputView_.control->counters.rxDiscontinuities.fetch_add(
                                           1, std::memory_order_relaxed) + 1;

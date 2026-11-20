@@ -33,6 +33,8 @@ struct RxAudioPacketProcessorResult final {
     uint32_t peakQ24{0};
     uint32_t firstSampleWord{0};
     uint8_t dbc{0};
+    uint8_t sid{0};
+    uint8_t fmt{0};
     bool mapRejected{false};
 };
 

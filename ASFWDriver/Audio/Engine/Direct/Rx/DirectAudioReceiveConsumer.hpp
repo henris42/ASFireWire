@@ -11,6 +11,7 @@
 #include "../AudioClockPublisher.hpp"
 #include "../DirectInputWriter.hpp"
 #include "RxAudioPacketProcessor.hpp"
+#include "RxCipContinuity.hpp"
 #include "../../../Wire/AM824/Am824PayloadCodec.hpp"
 #include "../../../Wire/RawPcm24In32/RawPcm24In32PayloadCodec.hpp"
 #include "../../../Wire/RawPcm24In32/RawPcm24Upper24In32LEPayloadCodec.hpp"
@@ -183,6 +184,8 @@ class DirectAudioReceiveConsumer final : public ::ASFW::Isoch::IIsochReceiveCons
     uint8_t lastDbc_{0};
     uint32_t lastBlocks_{0};
     bool lastDbcValid_{false};
+    // Link metrics: block continuity of the master stream, every packet.
+    RxCipContinuity cipContinuity_{};
     uint32_t headerlessContinuousCycles_{0};
     ::ASFW::Isoch::Rx::ZtsTelemetryLogGate ztsTelemetryLogGate_{};
     uint64_t prevLoggedAnchorFrame_{0};
