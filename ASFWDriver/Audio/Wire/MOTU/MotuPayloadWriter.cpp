@@ -81,9 +81,15 @@ void MotuPayloadWriter::WriteFloat32Interleaved(
     const bool dump = ASFW_LOG_ENABLED(DirectAudio, Trace);
     // A short block means the configured chunk count disagrees with the packet
     // geometry; writing anyway would corrupt the next block's SPH.
-    const uint32_t requiredBytes =
-        streamConfig_.pcmByteOffset + streamConfig_.pcmChunks * kBytesPerChunk;
+    // Locals: the loop below stores bytes, which the compiler must assume
+    // could alias the members and would otherwise reload them per sample.
+    const uint32_t pcmChunks = streamConfig_.pcmChunks;
+    const uint32_t pcmByteOffset = streamConfig_.pcmByteOffset;
+    const uint32_t requiredBytes = pcmByteOffset + pcmChunks * kBytesPerChunk;
     const uint32_t srcOffset = streamConfig_.sourceChannelOffset;
+    const uint32_t hostChannels = hostBuffer.channels;
+    const float* const hostFrames = hostBuffer.interleavedFloat32;
+    const uint64_t hostCapacity = hostBuffer.frameCapacity;
 
     // Packet by packet: one timeline lookup per packet, starting where the
     // previous call stopped (or at the finality frontier), then every frame
@@ -144,13 +150,11 @@ void MotuPayloadWriter::WriteFloat32Interleaved(
             continue;
         }
 
-        uint64_t sourceFrame = hostBuffer.frameCapacity != 0
-                                   ? frame % hostBuffer.frameCapacity
-                                   : frame - hostBuffer.firstFrame;
+        uint64_t sourceFrame = hostCapacity != 0 ? frame % hostCapacity
+                                                 : frame - hostBuffer.firstFrame;
         for (; frame < runEnd; ++frame) {
-            const float* const source =
-                hostBuffer.interleavedFloat32 + sourceFrame * hostBuffer.channels;
-            if (++sourceFrame == hostBuffer.frameCapacity) {
+            const float* const source = hostFrames + sourceFrame * hostChannels;
+            if (++sourceFrame == hostCapacity) {
                 sourceFrame = 0;
             }
             const uint32_t frameInPacket = static_cast<uint32_t>(frame - snap.firstAudioFrame);
@@ -158,13 +162,14 @@ void MotuPayloadWriter::WriteFloat32Interleaved(
 
             // Walk host channels rather than chunks: the port map is a permutation of the
             // chunk range, so every chunk is still written exactly once.
-            for (uint32_t hostCh = 0; hostCh < streamConfig_.pcmChunks; ++hostCh) {
+            uint8_t* const pcm = block + pcmByteOffset;
+            for (uint32_t hostCh = 0; hostCh < pcmChunks; ++hostCh) {
                 const uint32_t chunk = ChunkForHostChannel(ports, hostCh);
                 const uint32_t srcCh = srcOffset + hostCh;
                 // Chunks beyond the host buffer encode PCM zero -- MOTU's fixed chunk count
                 // always covers every physical port, including ones CoreAudio is not
                 // driving, and those must carry silence rather than stale bytes.
-                const float sample = (!muted && srcCh < hostBuffer.channels) ? source[srcCh] : 0.0f;
+                const float sample = (!muted && srcCh < hostChannels) ? source[srcCh] : 0.0f;
                 const int32_t encoded = Float32ToMotuSample(sample);
                 // The 24 significant bits sit in the high bytes; their magnitude is the meter.
                 if (meter) {
@@ -174,10 +179,8 @@ void MotuPayloadWriter::WriteFloat32Interleaved(
                         peakQ24 = magnitude;
                     }
                 }
-                WritePcmSample(
-                    std::span<uint8_t>(block + streamConfig_.pcmByteOffset + chunk * kBytesPerChunk,
-                                       kBytesPerChunk),
-                    encoded);
+                WritePcmSample(std::span<uint8_t>(pcm + chunk * kBytesPerChunk, kBytesPerChunk),
+                               encoded);
             }
         }
         written += runFrames;
