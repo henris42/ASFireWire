@@ -19,7 +19,7 @@ struct ControllerCard: Identifiable, Hashable {
     /// lives; not stable across boots.
     let registryEntryID: UInt64
     /// IOService-plane path of the IOPCIDevice under it, e.g.
-    /// `IOService:/AppleACPIPlatformExpert/PCI0@0/AppleACPIPCI/RP10@1D/IOPP/PXSX@0/IOPP/pci104c,8025@0`.
+    /// `IOService:/AppleACPIPlatformExpert/PCI0@0/AppleACPIPCI/RP10@1D/IOPP/PXSX@0/IOPP/pci104c,823f@0`.
     /// Stable across boots on one machine.
     let pciPath: String
     let vendorID: UInt16?
@@ -27,15 +27,16 @@ struct ControllerCard: Identifiable, Hashable {
 
     var id: UInt64 { registryEntryID }
 
-    /// Last path component, e.g. `pci104c,8025@0`.
+    /// Last path component, e.g. `pci104c,823f@0`.
     var pciName: String {
         pciPath.split(separator: "/").last.map(String.init) ?? pciPath
     }
 
     var chipName: String {
         switch (vendorID, deviceID) {
-        case (0x104c, 0x8025): return "TI XIO2213B"
-        case (0x104c, 0x8235): return "TI XIO2213A"
+        case (0x104c, 0x823f): return "TI XIO2213"
+        case (0x104c, 0x8025): return "TI TSB82AA2"
+        case (0x104c, 0x8235): return "TI XIO2200A"
         case (0x104c, _): return "Texas Instruments OHCI"
         case (0x11c1, 0x5901): return "LSI/Agere FW643"
         case (0x11c1, _): return "LSI/Agere OHCI"
