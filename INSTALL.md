@@ -169,6 +169,24 @@ debug` adds the controller property `asfw-log-level` (a String), which the drive
 its first start step; `--no-log-level` removes it. The login agent leaves a level set that way
 alone until the app or the command line sets another.
 
+## CPU idle limit while audio runs
+
+While a device runs IO the driver holds a limit on how long the CPUs may take to leave an idle
+state (5 µs by default), so the system stays out of the deep idle states and the threads of an
+audio cycle start without their exit delay. Audio at small buffers needs it; the price is idle
+power while audio runs, and none when it does not. To see or change it:
+
+- `/usr/local/libexec/asfw-config-agent --bus-stall` shows the limit and how many devices hold
+  one now;
+- `/usr/local/libexec/asfw-config-agent --bus-stall off` (or `5`, `10`, `20`, `25`, `30`, `40`,
+  in µs; `default` goes back to 5) sets it, and the login agent sets it again after each driver
+  start. A new limit holds from the next time a device starts IO: stop and start the audio
+  client.
+
+`ioreg -l -w0 | grep IOPlatformMaxBusDelay` shows the value the kernel has in force, in
+nanoseconds, and the registry ID of its holder (`(4294967295,0)`: no limit). At log level
+`info` each IO start logs `[BusStall] device … CPU idle limit 5 us held while IO runs`.
+
 Every start logs numbered steps, `[StartStep] #01 start …` to `bring-up ends: bus up`, at every
 level from warn up. At login the agent saves the boot's steps to
 `~/Library/Logs/ASFW/start-<boot time>.log`, and appends any later driver start; the newest ten

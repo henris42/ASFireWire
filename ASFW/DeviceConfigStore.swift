@@ -3,7 +3,7 @@
 //  ASFW
 //
 //  Remembered device settings (clock source, optical modes, analog input
-//  switches) per device GUID, and the driver log level.
+//  switches) per device GUID, the driver log level and its CPU idle limit.
 //  Kept in the app's UserDefaults, which the sandbox allows and which the
 //  login agent (`ASFW --apply-config`, same bundle) shares, so a choice made in
 //  the app is applied again after every login and whenever the device
@@ -20,7 +20,8 @@ struct DeviceConfigStore {
     /// The sandboxed app keeps its defaults in its container; a process outside
     /// the sandbox (asfw-config-agent) reads that file directly.
     private let fileURL: URL?
-    /// Both of the app's preference files, for the log level (see logLevel).
+    /// Both of the app's preference files, for the log level and the CPU idle
+    /// limit (see logLevel).
     private let candidateURLs: [URL]
 
     static let appBundleID = "net.asfw.app"
@@ -125,15 +126,24 @@ struct DeviceConfigStore {
     /// newer one that has the key wins, since `defaults write` and the agent
     /// write ~/Library/Preferences while a sandboxed app writes its container.
     static let logLevelKey = "logLevel"
-    var logLevel: String? {
+    var logLevel: String? { savedString(forKey: Self.logLevelKey) }
+
+    /// The CPU idle limit the login agent sets after each driver start: "off"
+    /// or microseconds ("5"), saved by `asfw-config-agent --bus-stall` or by
+    /// `defaults write net.asfw.app busStall -string off`. nil: the driver's
+    /// default. Read as the log level is.
+    static let busStallKey = "busStall"
+    var busStall: String? { savedString(forKey: Self.busStallKey) }
+
+    private func savedString(forKey key: String) -> String? {
         guard fileURL != nil else {
-            return defaults.string(forKey: Self.logLevelKey)
+            return defaults.string(forKey: key)
         }
         var newest: (date: Date, spec: String)?
         for url in candidateURLs {
             guard let data = try? Data(contentsOf: url),
                   let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
-                  let spec = plist[Self.logLevelKey] as? String, !spec.isEmpty else { continue }
+                  let spec = plist[key] as? String, !spec.isEmpty else { continue }
             let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
                 .contentModificationDate ?? .distantPast
             if newest == nil || modified > newest!.date {
@@ -153,6 +163,11 @@ struct DeviceConfigStore {
     /// ~/Library/Preferences, which it reads back as one of its candidates.
     static func saveLogLevelForApp(_ spec: String?) {
         CFPreferencesSetAppValue(logLevelKey as CFString, spec as CFString?, appBundleID as CFString)
+        CFPreferencesAppSynchronize(appBundleID as CFString)
+    }
+
+    static func saveBusStallForApp(_ spec: String?) {
+        CFPreferencesSetAppValue(busStallKey as CFString, spec as CFString?, appBundleID as CFString)
         CFPreferencesAppSynchronize(appBundleID as CFString)
     }
 }

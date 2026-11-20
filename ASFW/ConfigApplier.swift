@@ -7,10 +7,11 @@
 //  FireWire controller the driver claims, and whenever a device with
 //  remembered settings (DeviceConfigStore) appears or comes back with a new
 //  bus generation, reads the device's current settings and writes the ones
-//  that differ. It sets the remembered driver log level on each new driver
-//  instance, and saves the driver's start steps to ~/Library/Logs/ASFW
-//  (StartTraceLog). The app itself applies a change immediately; this makes
-//  it hold across reboots, re-plugs and power cycles of the device.
+//  that differ. It sets the remembered driver log level and CPU idle limit on
+//  each new driver instance, and saves the driver's start steps to
+//  ~/Library/Logs/ASFW (StartTraceLog). The app itself applies a change
+//  immediately; this makes it hold across reboots, re-plugs and power cycles
+//  of the device.
 //
 
 import Combine
@@ -39,6 +40,8 @@ final class ConfigApplier {
     /// The remembered log level last handled per controller (registry entry
     /// ID); "" when nothing is remembered.
     private var levelHandled: [UInt64: String] = [:]
+    /// The same for the remembered CPU idle limit.
+    private var stallHandled: [UInt64: String] = [:]
     private let startedAt = Date()
     /// IOKit notifications for driver instances coming and going, so a new
     /// one gets its log level at once rather than at the next poll.
@@ -64,6 +67,7 @@ final class ConfigApplier {
             ? "No remembered device settings yet; waiting for the app to save some."
             : "Remembered settings for \(remembered.count) device(s): \(remembered.map { String(format: "%016llX", $0) }.joined(separator: ", "))")
         say("Driver log level to set: \(applier.store.logLevel ?? "none remembered (the driver's default, warn)").")
+        say("CPU idle limit to set: \(applier.store.busStall ?? "none remembered (the driver's default, 5 us)").")
         StartTraceLog.saveBoot { say($0) }
         applier.registryWatch = applier.registry.$cards.dropFirst().sink { [weak applier] _ in
             applier?.reconcileControllers()
@@ -78,6 +82,7 @@ final class ConfigApplier {
         reconcileControllers()
         for (id, connector) in connectors where connector.isConnected {
             applyLogLevel(to: connector, id: id)
+            applyBusStall(to: connector, id: id)
             checkDevices(on: connector)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.pollInterval) { [weak self] in
@@ -122,6 +127,7 @@ final class ConfigApplier {
             return
         }
         applyLogLevel(to: connector, id: id)
+        applyBusStall(to: connector, id: id)
     }
 
     /// Sets the remembered log level unless it is in force already, or the
@@ -147,6 +153,27 @@ final class ConfigApplier {
         if applied.spec != current.spec {
             Self.say("Log level \(current.spec) -> \(applied.spec).")
         }
+    }
+
+    /// Sets the remembered CPU idle limit (DriverConnector+BusStall.swift)
+    /// unless it is the one set already. A driver without the selector
+    /// (before b226) is asked once.
+    private func applyBusStall(to connector: ASFWDriverConnector, id: UInt64) {
+        let wanted = store.busStall ?? ""
+        guard stallHandled[id] != wanted else { return }
+        stallHandled[id] = wanted
+        guard !wanted.isEmpty else { return }
+        guard let nanos = ASFWDriverConnector.busStallNanos(wanted) else {
+            Self.say("The remembered CPU idle limit '\(wanted)' is not one (off, 5, 10, 20, 25, 30 or 40); ignored.")
+            return
+        }
+        guard let current = connector.busStall() else { return }
+        guard current.limitNanos != nanos else { return }
+        guard let applied = connector.setBusStall(nanos: nanos) else {
+            Self.say("The driver did not take the remembered CPU idle limit '\(wanted)'.")
+            return
+        }
+        Self.say("CPU idle limit \(current.spec) -> \(applied.spec), from each device's next IO start.")
     }
 
     private func checkDevices(on connector: ASFWDriverConnector) {

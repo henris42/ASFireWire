@@ -67,6 +67,9 @@ final class ASFWDriverConnector: ObservableObject {
         // The runtime bring-up and its quiesce on request (DriverConnector+BringUp.swift).
         case bringUp = 74
         case bringDown = 75
+        // The CPU idle limit held while audio runs (DriverConnector+BusStall.swift): set, and read back.
+        case setBusStallLimit = 76
+        case getBusStallLimit = 77
         // Device controls (UserClient/Handlers/ControlsHandler.hpp): the
         // "asfw.controls.v1" snapshot, paged; an asynchronous write and its
         // hardware-confirmed result.
