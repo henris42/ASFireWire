@@ -10,6 +10,8 @@ namespace {
 
 using ASFW::Audio::Runtime::BusStallHold;
 using ASFW::Audio::Runtime::BusStallLimitNanos;
+using ASFW::Audio::Runtime::BusStallWire;
+using ASFW::Audio::Runtime::CopyBusStallState;
 using ASFW::Audio::Runtime::BusStallHolders;
 using ASFW::Audio::Runtime::IsBusStallLimit;
 using ASFW::Audio::Runtime::kBusStallNone;
@@ -65,6 +67,22 @@ TEST_F(BusStallLimitTests, HoldFollowsTheSettingAtEachStart) {
     EXPECT_FALSE(second.End());
     EXPECT_EQ(first.Begin(), kBusStallNone);
     EXPECT_EQ(BusStallHolders(), 0u);
+}
+
+// Selectors 76 and 77 answer with the limit set and the devices holding one.
+TEST_F(BusStallLimitTests, WireCarriesTheLimitAndTheHolders) {
+    BusStallHold device;
+    ASSERT_TRUE(SetBusStallLimitNanos(25'000));
+    EXPECT_EQ(device.Begin(), 25'000u);
+
+    BusStallWire state{};
+    CopyBusStallState(state);
+    EXPECT_EQ(state.limitNanos, 25'000u);
+    EXPECT_EQ(state.holders, 1u);
+
+    EXPECT_TRUE(device.End());
+    CopyBusStallState(state);
+    EXPECT_EQ(state.holders, 0u);
 }
 
 } // namespace

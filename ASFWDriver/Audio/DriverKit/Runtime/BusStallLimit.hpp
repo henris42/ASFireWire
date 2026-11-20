@@ -13,8 +13,9 @@
 // The limit costs idle power while audio runs and nothing in the IO path: it
 // is asked for at StartDevice and given up at StopDevice.
 //
-// One limit for the process, kDefaultBusStallNanos unless set otherwise. A new
-// limit holds from a device's next IO start. The kernel keeps one requirement per
+// One limit for the process, kDefaultBusStallNanos unless set through the
+// user client (selectors 76/77, asfw-config-agent --bus-stall). A new limit
+// holds from a device's next IO start. The kernel keeps one requirement per
 // service and applies the strictest; its value and holder are the
 // IOPlatformMaxBusDelay property in the registry.
 //
@@ -102,5 +103,19 @@ public:
 private:
     std::atomic<uint32_t> held_{kBusStallNone};
 };
+
+// User-client wire format, selectors 76 (set: the limit in nanoseconds as the
+// first scalar) and 77 (get). Both answer with the limit set and how many
+// devices hold one now.
+struct __attribute__((packed)) BusStallWire {
+    uint32_t limitNanos{0};
+    uint32_t holders{0};
+};
+static_assert(sizeof(BusStallWire) == 8, "bus stall wire layout is frozen");
+
+inline void CopyBusStallState(BusStallWire& out) noexcept {
+    out.limitNanos = BusStallLimitNanos();
+    out.holders = BusStallHolders();
+}
 
 } // namespace ASFW::Audio::Runtime

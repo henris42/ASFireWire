@@ -7,6 +7,7 @@
 //
 
 #include "ASFWDriverUserClient.h"
+#include "../../Audio/DriverKit/Runtime/BusStallLimit.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Shared/DriverVersionInfo.hpp"
 #include "../../Version/DriverVersion.hpp"
@@ -87,6 +88,10 @@ enum {
     // quiesce on request (a controller claimed with asfw-start = manual).
     kMethodBringUp = 74,
     kMethodBringDown = 75,
+    // The CPU idle limit held while audio runs
+    // (Audio/DriverKit/Runtime/BusStallLimit.hpp): set, and read back.
+    kMethodSetBusStallLimit = 76,
+    kMethodGetBusStallLimit = 77,
     // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
     kMethodTestIRMAllocation = 26,
     kMethodTestIRMRelease = 27,
@@ -281,6 +286,27 @@ kern_return_t HandleLogLevel(IOUserClientMethodArguments* arguments, bool set) {
     return kIOReturnSuccess;
 }
 
+// Selectors 76 and 77: both answer with the limit set (BusStallWire).
+kern_return_t HandleBusStallLimit(IOUserClientMethodArguments* arguments, bool set) {
+    if (set) {
+        if (arguments->scalarInput == nullptr || arguments->scalarInputCount < 1 ||
+            !ASFW::Audio::Runtime::SetBusStallLimitNanos(arguments->scalarInput[0])) {
+            return kIOReturnBadArgument;
+        }
+        ASFW_LOG(UserClient, "[BusStall] CPU idle limit set to %u us, from each device's next IO start",
+                 ASFW::Audio::Runtime::BusStallLimitNanos() / 1000);
+    }
+    ASFW::Audio::Runtime::BusStallWire state{};
+    ASFW::Audio::Runtime::CopyBusStallState(state);
+    OSData* data = OSData::withBytes(&state, sizeof(state));
+    if (data == nullptr) {
+        return kIOReturnNoMemory;
+    }
+    arguments->structureOutput = data;
+    arguments->structureOutputDescriptor = nullptr;
+    return kIOReturnSuccess;
+}
+
 MethodDispatchResult DispatchDriverControlMethods(ASFWDriver& driver,
                                                   IOUserClientMethodArguments* arguments,
                                                   uint64_t selector) {
@@ -302,6 +328,9 @@ MethodDispatchResult DispatchDriverControlMethods(ASFWDriver& driver,
     case kMethodSetLogLevel:
     case kMethodGetLogLevel:
         return HandleLogLevel(arguments, selector == kMethodSetLogLevel);
+    case kMethodSetBusStallLimit:
+    case kMethodGetBusStallLimit:
+        return HandleBusStallLimit(arguments, selector == kMethodSetBusStallLimit);
     case kMethodBringUp:
         return MethodDispatchResult{driver.RequestBringUp()};
     case kMethodBringDown:
