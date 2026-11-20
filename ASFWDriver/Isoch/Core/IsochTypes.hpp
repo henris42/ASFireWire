@@ -12,6 +12,7 @@
 #include <span>
 #include <TargetConditionals.h>
 
+#include "IsochLinkCounters.hpp"
 #include "IsochReceivePollSource.hpp"
 
 namespace ASFW::Isoch {
@@ -27,6 +28,9 @@ struct IsochReceiveBatch final {
     // watchdog. A consumer keeps that batch to its own state and leaves side
     // effects that reach other subsystems to the next regular poll.
     bool readerPull{false};
+    // The stream's link counters, for what only the content side can tell
+    // (block continuity, missing cycles). Valid for the batch; may be null.
+    IsochRxLinkCounters* link{nullptr};
 };
 
 // Payload-opaque result of one IR descriptor. `payload` is valid only for the

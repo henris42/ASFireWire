@@ -99,6 +99,9 @@ class IsochReceiveContext final
         rxLock_.clear(std::memory_order_release);
     }
 #endif
+    // What the link reported for this stream's packets since its last start.
+    // Kept after a stop, so a summary can still be read.
+    [[nodiscard]] const IsochRxLinkCounters& LinkCounters() const noexcept { return linkCounters_; }
     void DrainZtsTelemetry(uint32_t maxRecords);
     void ServiceConsumerDiagnostics();
 
@@ -124,6 +127,7 @@ class IsochReceiveContext final
     IsochReceiveCallback callback_{nullptr};
     IIsochReceiveConsumer* receiveConsumer_{nullptr};
     std::atomic_flag rxLock_ = ATOMIC_FLAG_INIT;
+    IsochRxLinkCounters linkCounters_{};
 
     Registers GetRegisters(uint8_t index) const;
     bool PollOnce(uint32_t& processed, const IsochReceiveDrainLimit* readerLimit) noexcept;

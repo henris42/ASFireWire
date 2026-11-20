@@ -122,6 +122,7 @@ kern_return_t IsochReceiveContext::Start() {
     Transition(IRPolicy::State::Running, 0, "Start");
     IOLockUnlock(lock_);
     rxRing_.ResetForStart();
+    linkCounters_.Reset();
     pollRunning_.store(true, std::memory_order_release);
 
     if (receiveConsumer_) {
@@ -274,6 +275,7 @@ bool IsochReceiveContext::PollOnce(uint32_t& processed,
         .drainCycleTimer = drainCycleTimer,
         .drainHostTicks = drainHostTicks,
         .readerPull = readerPull,
+        .link = &linkCounters_,
     };
     if (receiveConsumer_) {
         receiveConsumer_->BeginReceiveBatch(receiveBatch);
@@ -282,6 +284,7 @@ bool IsochReceiveContext::PollOnce(uint32_t& processed,
     const auto onPacket = [this, drainHostTicks, drainCycleTimer, receiveBatch](
             const Rx::IsochRxDmaRing::CompletedPacket& pkt) {
         uint64_t callbackTimestamp = 0;
+        linkCounters_.CountPacket(pkt.xferStatus, pkt.payload, pkt.actualLength);
         if (receiveConsumer_) {
             receiveConsumer_->ConsumePacket(
                 receiveBatch,
