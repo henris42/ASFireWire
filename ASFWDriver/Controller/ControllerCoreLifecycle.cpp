@@ -815,8 +815,8 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
     }
     // Per Linux ohci_enable(): Don't pre-write NodeID; bus reset will assign it from Self-ID
     // The kProvisionalNodeId value would be immediately overwritten anyway
-    hw.BringUpTrace().Step("config ROM staged; LinkControlSet 0x%08x",
-                           ASFW::Driver::kDefaultLinkControl);
+    hw.BringUpTrace().Step("config ROM staged, controller GUID 0x%08x%08x; LinkControlSet 0x%08x",
+                           guidHi, guidLo, ASFW::Driver::kDefaultLinkControl);
     hw.SetLinkControlBits(ASFW::Driver::kDefaultLinkControl);
     ASFW_LOG(Hardware,
              "LinkControl: rcvSelfID | rcvPhyPkt | cycleTimerEnable "
