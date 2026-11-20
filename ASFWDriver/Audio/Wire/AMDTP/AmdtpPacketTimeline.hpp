@@ -87,9 +87,23 @@ public:
     // first packet not prepared yet, or the first one already overwritten by
     // a newer lap. A slot mid-rewrite, or frames out of packet order, fall
     // back to the scan.
+    //
+    // On a miss `resumeFrame` is the first frame the walk saw a packet carry
+    // above absoluteFrame, or 0 when it saw none: no packet carries the frames
+    // from absoluteFrame up to it either, so a caller with a run of frames
+    // goes on from there. Without it every frame ahead of the stream's first
+    // packet repeats the walk to the ring's edge (b220: 230 us for a 64-frame
+    // write, through the first 0.2 s of a stream).
     [[nodiscard]] bool SnapshotSlotForAudioFrameNear(uint64_t absoluteFrame,
                                                      uint64_t hintPacket,
-                                                     PacketSlotSnapshot& out) const noexcept;
+                                                     PacketSlotSnapshot& out,
+                                                     uint64_t& resumeFrame) const noexcept;
+    [[nodiscard]] bool SnapshotSlotForAudioFrameNear(uint64_t absoluteFrame,
+                                                     uint64_t hintPacket,
+                                                     PacketSlotSnapshot& out) const noexcept {
+        uint64_t resumeFrame = 0;
+        return SnapshotSlotForAudioFrameNear(absoluteFrame, hintPacket, out, resumeFrame);
+    }
 
     PacketTimelineSlot* SlotByIndex(uint64_t packetIndex) noexcept;
     const PacketTimelineSlot* SlotByIndex(uint64_t packetIndex) const noexcept;

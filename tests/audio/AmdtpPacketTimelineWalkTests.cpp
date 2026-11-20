@@ -188,6 +188,79 @@ TEST(AmdtpPacketTimelineWalkTests, FramesOutOfPacketOrderAgreeWithTheScan) {
     }
 }
 
+// A stream's first packets, as the fill meets them while CoreAudio already
+// writes: the ring starts at a packet index with nothing before it, and the
+// first DATA packet carries a frame above CoreAudio's first writes.
+struct StartingRing : Ring {
+    static constexpr uint64_t kFirstPacket = 300;
+    static constexpr uint64_t kFirstFrame = 5000;
+    StartingRing(uint32_t slotCount, uint32_t framesPerPacketIn, uint32_t dbsIn)
+        : Ring(slotCount, framesPerPacketIn, dbsIn) {
+        nextPacket = kFirstPacket;
+        nextFrame = kFirstFrame;
+    }
+};
+
+TEST(AmdtpPacketTimelineWalkTests, AFrameBeforeTheFirstPacketMissesAtTheRingsBeginning) {
+    StartingRing ring{512, 8, 4};
+    ring.Prepare(100);  // packets 300..399, never lapped: 0..299 were never prepared
+    for (uint64_t frame = StartingRing::kFirstFrame - 200; frame < ring.nextFrame + 8; ++frame) {
+        for (uint64_t hint : {uint64_t{300}, uint64_t{301}, uint64_t{350}, uint64_t{399},
+                              uint64_t{400}, uint64_t{430}, uint64_t{250}, uint64_t{0}}) {
+            ExpectSameAsScan(ring.timeline, frame, hint);
+        }
+    }
+    // The last prepared packet (399) is NO-DATA and the next is not prepared:
+    // the walk still turns back for a frame before it.
+    PacketSlotSnapshot snap{};
+    ASSERT_TRUE(ring.timeline.SnapshotSlotForAudioFrameNear(ring.nextFrame - 1, 399, snap));
+    EXPECT_EQ(snap.packetIndex, 398U);
+}
+
+TEST(AmdtpPacketTimelineWalkTests, AMissSaysWhereTheFramesResume) {
+    PacketSlotSnapshot snap{};
+    uint64_t resume = 99;
+
+    // Before the stream's first packet: its first frame, from any hint in the ring.
+    StartingRing ring{512, 8, 4};
+    ring.Prepare(100);
+    for (uint64_t hint : {uint64_t{300}, uint64_t{350}, uint64_t{399}, uint64_t{430}}) {
+        EXPECT_FALSE(ring.timeline.SnapshotSlotForAudioFrameNear(4000, hint, snap, resume));
+        EXPECT_EQ(resume, StartingRing::kFirstFrame) << "hint " << hint;
+        EXPECT_FALSE(ring.timeline.SnapshotSlotForAudioFrameNear(4999, hint, snap, resume));
+        EXPECT_EQ(resume, StartingRing::kFirstFrame) << "hint " << hint;
+    }
+    // Past the exposed end no packet carries a later frame.
+    EXPECT_FALSE(ring.timeline.SnapshotSlotForAudioFrameNear(ring.nextFrame + 3, 399, snap, resume));
+    EXPECT_EQ(resume, 0U);
+    // A hit leaves nothing to resume.
+    EXPECT_TRUE(ring.timeline.SnapshotSlotForAudioFrameNear(5001, 350, snap, resume));
+    EXPECT_EQ(resume, 0U);
+
+    // A ring that starts at packet 0, and one that has lapped: the oldest
+    // DATA packet's first frame.
+    Ring fromZero{64, 8, 4};
+    fromZero.nextFrame = 1000;
+    fromZero.Prepare(40);
+    EXPECT_FALSE(fromZero.timeline.SnapshotSlotForAudioFrameNear(10, 20, snap, resume));
+    EXPECT_EQ(resume, 1000U);
+    Ring lapped{64, 8, 4};
+    lapped.Prepare(200);  // packets 136..199 are live; 136 carries frame 816
+    EXPECT_FALSE(lapped.timeline.SnapshotSlotForAudioFrameNear(10, 190, snap, resume));
+    EXPECT_EQ(resume, 816U);
+
+    // Frames a cursor jump left out: the first frame after the jump, from
+    // either side.
+    Ring jump{64, 8, 4};
+    jump.Prepare(20);  // frames 0..119
+    jump.JumpFrames(100);
+    jump.Prepare(20);  // from frame 220
+    for (uint64_t hint : {uint64_t{5}, uint64_t{19}, uint64_t{20}, uint64_t{39}}) {
+        EXPECT_FALSE(jump.timeline.SnapshotSlotForAudioFrameNear(150, hint, snap, resume));
+        EXPECT_EQ(resume, 220U) << "hint " << hint;
+    }
+}
+
 // --- The writers against the per-frame scan they replaced -------------------
 
 [[nodiscard]] int32_t Float32ToMotuSample(float sample) {
