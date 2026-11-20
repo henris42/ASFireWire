@@ -2,15 +2,14 @@
 
 namespace ASFW::Protocols::Audio::AMDTP {
 
-// Float [-1.0, +1.0] → signed 24-bit, symmetric scale by 2^23-1, round half
-// away from zero. No libm dependency (DriverKit-safe).
+// Float32ToSigned24 (PcmSlotCodec.hpp) and the conversions here use no libm
+// (DriverKit-safe).
 //
 // Encodings return logical quadlet values; serialization to bus byte order
 // happens at payload write time. The LE variant pre-swaps so that big-endian
 // serialization yields little-endian sample bytes inside the slot.
 
 namespace {
-constexpr float kScale24 = 8388607.0f; // 2^23 - 1
 constexpr float kScale32 = 2147483648.0f;      // 2^31
 constexpr float kMaxBelowScale32 = 2147483520.0f;  // largest float below 2^31
 
@@ -21,17 +20,6 @@ constexpr float kMaxBelowScale32 = 2147483520.0f;  // largest float below 2^31
            ((v & 0xFF000000u) >> 24);
 }
 } // namespace
-
-int32_t PcmSlotCodec::Float32ToSigned24(float sample) noexcept {
-    if (sample > 1.0f) {
-        sample = 1.0f;
-    } else if (sample < -1.0f) {
-        sample = -1.0f;
-    }
-    const float scaled = sample * kScale24;
-    return (scaled >= 0.0f) ? static_cast<int32_t>(scaled + 0.5f)
-                            : static_cast<int32_t>(scaled - 0.5f);
-}
 
 int32_t PcmSlotCodec::Float32ToSigned32(float sample) noexcept {
     // Float x 2^31, truncated: the RME 3.41 conversion (clipOutputSamples
