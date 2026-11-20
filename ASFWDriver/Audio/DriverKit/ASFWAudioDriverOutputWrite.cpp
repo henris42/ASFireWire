@@ -116,6 +116,17 @@ namespace {
 #endif
 }
 
+// The time to project the clock pair to. A refill that ran beside the caller
+// can publish a pair taken after the caller read its clock: the pair is good,
+// and now is then its time at the earliest. b220: such a pair, 2 us newer than
+// the fill's clock read, was taken for no correlation at all; the fill assumed
+// a whole interrupt group gone and left 38 frames of a write that had arrived
+// 1.3 ms ahead of its presentation out of their packets.
+[[nodiscard]] uint64_t PairTime(uint64_t nowHost,
+                                const ASFW::Isoch::IsochTxClockPairSample& pair) noexcept {
+    return nowHost > pair.hostTimeMid ? nowHost : pair.hostTimeMid;
+}
+
 // The packet the hardware is sending now, projected from the last refill:
 // completionCursor was recorded with the clock pair of that refill, and IT
 // sends one packet per bus cycle, so the packets since then are the elapsed
@@ -127,11 +138,13 @@ namespace {
                                              uint64_t nowHost) noexcept {
     const uint64_t completion = queue.completionCursor.load(std::memory_order_acquire);
     ASFW::Isoch::IsochTxClockPairSample pair{};
-    if (!queue.clockPair.TryRead(pair) || pair.hostTimeMid == 0 || nowHost < pair.hostTimeMid) {
+    if (!queue.clockPair.TryRead(pair) || pair.hostTimeMid == 0) {
         // No usable correlation: assume a whole interrupt group has gone out.
         return completion + ASFW::IsochTransport::AudioTimingGeometry::kTxPacketsPerGroup;
     }
-    const uint64_t elapsedNanos = ASFW::Timing::hostTicksToNanos(nowHost - pair.hostTimeMid);
+    // A pair newer than `nowHost` (PairTime): nothing has elapsed since it.
+    const uint64_t elapsedNanos =
+        ASFW::Timing::hostTicksToNanos(PairTime(nowHost, pair) - pair.hostTimeMid);
     constexpr uint64_t kCycleNanos = 125'000;
     return completion + (elapsedNanos + kCycleNanos - 1) / kCycleNanos;
 }
@@ -213,10 +226,11 @@ uint64_t TransmitPacketOnTheWire(const ASFW::Isoch::IsochTxQueueControl& queue,
     uint32_t stampCycleTimer = 0;
     ASFW::Isoch::IsochTxClockPairSample pair{};
     if (stamps == 0 || !queue.ReadCompletionStamp(stamps - 1, stampedPacket, stampCycleTimer) ||
-        !queue.clockPair.TryRead(pair) || pair.hostTimeMid == 0 || nowHost < pair.hostTimeMid) {
+        !queue.clockPair.TryRead(pair) || pair.hostTimeMid == 0) {
         return ProjectHardwarePacket(queue, nowHost);
     }
-    const uint64_t sinceRefillNanos = ASFW::Timing::hostTicksToNanos(nowHost - pair.hostTimeMid);
+    const uint64_t sinceRefillNanos =
+        ASFW::Timing::hostTicksToNanos(PairTime(nowHost, pair) - pair.hostTimeMid);
     if (sinceRefillNanos > kPairAgeLimitNanos) {
         return ProjectHardwarePacket(queue, nowHost);
     }

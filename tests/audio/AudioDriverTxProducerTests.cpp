@@ -1885,6 +1885,28 @@ TEST(TxWirePacket, WithoutAStampTheProjectionStandsIn) {
     EXPECT_EQ(TransmitPacketOnTheWire(queue, kHost + 5'000'000'000ULL), 40U + 40'000U);
 }
 
+// A refill beside the fill can publish a clock pair taken after the fill read
+// its clock (b220: 2 us after). The pair holds: the wire is where the pair
+// puts it at its own time, not a whole interrupt group further on.
+TEST(TxWirePacket, AClockPairNewerThanTheCallersClockReadStillHolds) {
+    (void)ASFW::Timing::initializeHostTimebase();  // host ticks are nanoseconds
+    IsochTxQueueControl queue{};
+    constexpr uint64_t kHost = 5'000'000'000ULL;
+    constexpr uint32_t kCycle = 1000;
+    queue.completionCursor.store(500);
+    queue.PushCompletionStamp(499, ASFW::Timing::encodeCycleTimer(0, kCycle - 1, 0));
+    queue.clockPair.Publish({.hostTimeMid = kHost, .cycleTimer32 = ASFW::Timing::encodeCycleTimer(0, kCycle, 983)});
+    using ASFW::Audio::DriverKit::TransmitPacketOnTheWire;
+    EXPECT_EQ(TransmitPacketOnTheWire(queue, kHost - 2'000), 500U);
+    EXPECT_EQ(TransmitPacketOnTheWire(queue, kHost), 500U);
+
+    // The same without a stamp: the projection from the pair's own time.
+    IsochTxQueueControl unstamped{};
+    unstamped.completionCursor.store(40);
+    unstamped.clockPair.Publish({.hostTimeMid = kHost, .cycleTimer32 = ASFW::Timing::encodeCycleTimer(0, 100, 0)});
+    EXPECT_EQ(TransmitPacketOnTheWire(unstamped, kHost - 2'000), 40U);
+}
+
 // T6: a restart resets every piece of per-stream TX state together. StartIO
 // re-arms the producer on fresh TX memory; nothing from the previous stream --
 // fill position, frame-cursor alignment, replay reader, the per-stream
