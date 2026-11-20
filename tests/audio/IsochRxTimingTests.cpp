@@ -14,7 +14,9 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <cstdio>
 
 namespace {
 
@@ -916,4 +918,33 @@ TEST(IsochRxTimingTests, Motu828mk2CaptureLandsInTheInputRingWithContentTelemetr
     EXPECT_NEAR(rig.input[12], static_cast<float>(static_cast<int32_t>(0xfff9511a)) / 8388607.0f, 1e-5f);
     // Frame 9 (second packet) too.
     EXPECT_NEAR(rig.input[9 * kMk2Channels + 0], 0.5f, 1e-5f);
+}
+
+// What one received packet costs on the thread that drains it: the BeginRead
+// pull runs this on AudioDriverKit's IO thread, inside the HAL's IO cycle.
+// Disabled: a measurement, not a check. Run an optimized build with
+// --gtest_also_run_disabled_tests --gtest_filter='*CostOfOneReceivedPacket*'.
+TEST(IsochRxTimingTests, DISABLED_CostOfOneReceivedPacket) {
+    Mk2ReceiveRig rig;
+    rig.consumer.OnReceiveActivated();
+    constexpr uint32_t kPasses = 200;
+    constexpr uint32_t kFirstCycle = 100;
+    constexpr uint32_t kLastCycle = 7900;
+    uint64_t packets = 0;
+    const auto started = std::chrono::steady_clock::now();
+    for (uint32_t pass = 0; pass < kPasses; ++pass) {
+        int64_t ticks = 0;
+        for (uint32_t cycle = kFirstCycle; cycle < kLastCycle; ++cycle) {
+            rig.Consume(cycle, ticks);
+            ticks += 4096;
+            ++packets;
+        }
+    }
+    const auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                           std::chrono::steady_clock::now() - started).count();
+    EXPECT_EQ(rig.control.counters.rxDecodedFrames.load(), packets * kMotuFramesPerPacket);
+    std::printf("[bench] rx packet (%zu frames x %zu channels): %lld ns, %llu resets\n",
+                kMotuFramesPerPacket, kMk2Channels,
+                static_cast<long long>(nanos / static_cast<long long>(packets)),
+                static_cast<unsigned long long>(rig.control.rxReplayEpochResets.load()));
 }

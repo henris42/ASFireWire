@@ -39,6 +39,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -332,6 +333,8 @@ public:
     [[nodiscard]] uint32_t PcmChannels() const { return pcmChannels_; }
     [[nodiscard]] uint32_t Dbs() const { return dbs_; }
     [[nodiscard]] uint64_t WriteEnds() const { return writeEnds_; }
+    // Wall time spent inside HandleOutputWriteEnd, all calls together.
+    [[nodiscard]] uint64_t WriteEndNanos() const { return writeEndNanos_; }
     // The HAL's sample time as the rig's CoreAudio sees it at a packet time.
     [[nodiscard]] bool HalNow(uint64_t atPacket, uint64_t& now) const {
         return NowSampleTime(atPacket, now);
@@ -483,8 +486,13 @@ private:
             const uint32_t reported = (writeEnds_ == 0 && plan.firstWriteReportsFrames != 0)
                                           ? plan.firstWriteReportsFrames
                                           : plan.ioFrames;
-            EXPECT_TRUE(ASFW::Audio::DriverKit::HandleOutputWriteEnd(
-                ivars_, *control_, nextWrite_, HostTicksFor(atPacket), reported));
+            const auto writeEndStarted = std::chrono::steady_clock::now();
+            const bool written = ASFW::Audio::DriverKit::HandleOutputWriteEnd(
+                ivars_, *control_, nextWrite_, HostTicksFor(atPacket), reported);
+            writeEndNanos_ += static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now() - writeEndStarted).count());
+            EXPECT_TRUE(written);
             ++writeEnds_;
             nextWrite_ += plan.ioFrames;
             // The producer is woken by the transport interrupts only: WriteEnd
@@ -619,6 +627,7 @@ private:
     uint32_t ringFrames_{0};
     uint64_t nextWrite_{0};
     uint64_t writeEnds_{0};
+    uint64_t writeEndNanos_{0};
     bool stalled_{false};
     bool clockFromZts_{false};
 
@@ -1534,6 +1543,33 @@ TEST(TxOwnershipGolden, SmallBufferFillDoesNotWaitForTheQueue) {
     ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets / 2)) << rig.DescribeFault();
     EXPECT_EQ(rig.Ivars().runtime.txStreamEngine.PayloadWriterCounters().framesMissedFinality.load(),
               missedAfterStart);
+}
+
+// What one WriteEnd costs: it runs on AudioDriverKit's IO thread, inside the
+// HAL's IO cycle (96 kHz / 64 frames leaves the client and the driver 760 us
+// together). Disabled: a measurement, not a check. Run an optimized build with
+// --gtest_also_run_disabled_tests --gtest_filter='*CostOfOneWriteEnd*'.
+TEST(TxOwnershipGolden, DISABLED_CostOfOneWriteEnd) {
+    const ASFW::Isoch::Audio::MOTU::Profiles::MotuProfile profile{0x3};
+    TxProducerRig rig;
+    ASSERT_TRUE(rig.Start(profile, ProfileBuilderId::Motu828mk2, 48000));
+    rig.FeedMotuRx(8);
+    rig.EnableHostOutput({.ioFrames = 64, .leadFrames = 112});
+    ASSERT_TRUE(rig.RunPackets(kSteadyStatePackets)) << rig.DescribeFault();
+    const uint64_t warmWrites = rig.WriteEnds();
+    const uint64_t warmNanos = rig.WriteEndNanos();
+    ASSERT_TRUE(rig.RunPackets(40 * kSteadyStatePackets)) << rig.DescribeFault();
+    const uint64_t writes = rig.WriteEnds() - warmWrites;
+    ASSERT_GT(writes, 0u);
+    const auto& counters = rig.Ivars().runtime.motuPayloadWriter.Counters();
+    std::printf("[bench] WriteEnd (64 frames x %u channels): %llu ns over %llu writes, "
+                "written=%llu missed=%llu muted=%llu\n",
+                rig.PcmChannels(),
+                static_cast<unsigned long long>((rig.WriteEndNanos() - warmNanos) / writes),
+                static_cast<unsigned long long>(writes),
+                static_cast<unsigned long long>(counters.framesWritten.load()),
+                static_cast<unsigned long long>(counters.framesMissedFinality.load()),
+                static_cast<unsigned long long>(counters.framesMuted.load()));
 }
 
 // Lost audio shows up at the default level: CoreAudio writing too late for
