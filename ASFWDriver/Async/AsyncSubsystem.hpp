@@ -176,6 +176,9 @@ class AsyncSubsystem : public IAsyncControllerPort {
     void OnTimeoutTick() override;
 
     [[nodiscard]] AsyncWatchdogStats GetWatchdogStats() const override;
+    [[nodiscard]] const AsyncLinkCounters* GetLinkCounters() const override {
+        return tracking_ ? tracking_->LinkCounters() : nullptr;
+    }
 
     void StopATContextsOnly() override;
 

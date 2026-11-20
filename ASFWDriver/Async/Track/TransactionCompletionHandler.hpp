@@ -3,6 +3,7 @@
 #include "../Core/Transaction.hpp"
 #include "../Core/TransactionManager.hpp"
 #include "TxCompletion.hpp"
+#include "AsyncLinkCounters.hpp"
 #include "../../Bus/Timing/SplitTimeout.hpp"
 #include <memory>
 #include "LabelAllocator.hpp"
@@ -133,6 +134,9 @@ public:
                 postResult.transitionTag2 = "OnATCompletion: phy";
                 return;
             }
+
+            linkCounters_.CountCompletion(txn->nodeID().value,
+                                          static_cast<uint8_t>(comp.eventCode));
 
             // A final ack_busy: the controller has spent its ATRetries and the node
             // never took the request, so no response will follow. End it now —
@@ -321,6 +325,7 @@ public:
         if (shouldFail) {
             auto txnPtr = txnMgr_->Extract(label);
             if (txnPtr) {
+                linkCounters_.CountSplitTimeout(txnPtr->nodeID().value);
                 txnPtr->TransitionTo(TransactionState::TimedOut, "OnTimeout");
                 // Protect a timed-out split label before making it available again.
                 if (labelAllocator_) {
@@ -339,7 +344,11 @@ public:
         }
     }
 
+    // How the requests to each node ended at the link (link metrics).
+    [[nodiscard]] const AsyncLinkCounters& LinkCounters() const noexcept { return linkCounters_; }
+
 private:
+    AsyncLinkCounters linkCounters_{};
     uint16_t lastResponseStamp_{0};
     uint64_t lastResponseUs_{0};
     enum class ATPostAction {

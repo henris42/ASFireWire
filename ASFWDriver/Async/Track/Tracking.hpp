@@ -415,6 +415,9 @@ public:
     }
 
     // Accessors
+    [[nodiscard]] const AsyncLinkCounters* LinkCounters() const noexcept {
+        return txnHandler_ ? &txnHandler_->LinkCounters() : nullptr;
+    }
     TransactionManager* GetTransactionManager() const { return txnMgr_; }  // Phase 2.0
     // Payload registry access (owned by tracking actor)
     PayloadRegistry* Payloads() const { return payloads_.get(); }

@@ -13,6 +13,8 @@ struct ASFWDiagInboundCSRStats;
 
 namespace ASFW::Async {
 
+struct AsyncLinkCounters;
+
 struct AsyncWatchdogStats {
     uint64_t tickCount{0};
     uint64_t expiredTransactions{0};
@@ -52,6 +54,8 @@ class IAsyncSubsystemPort {
     virtual void OnTimeoutTick() = 0;
 
     [[nodiscard]] virtual AsyncWatchdogStats GetWatchdogStats() const = 0;
+    // Per-node link results of transmitted requests; null when not kept.
+    [[nodiscard]] virtual const AsyncLinkCounters* GetLinkCounters() const { return nullptr; }
     [[nodiscard]] virtual Debug::BusResetPacketCapture* GetBusResetCapture() const = 0;
     [[nodiscard]] virtual Debug::AsyncTraceCapture* GetAsyncTraceCapture() const = 0;
     [[nodiscard]] virtual ASFWDiagInboundCSRStats* GetInboundCSRStats() const = 0;
