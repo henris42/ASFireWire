@@ -412,6 +412,7 @@ struct IoTimeFigures {
     uint64_t pullWaits{0};
     uint64_t pullBusy{0};
     uint64_t slow{0};
+    uint64_t ringScans{0};  // lookups of a frame across the whole packet ring
     ASFW::Audio::Runtime::IoOffsetSpan readArrival;
     ASFW::Audio::Runtime::IoOffsetSpan writeMargin;
     ASFW::Audio::Runtime::IoStepSpan render;
@@ -510,11 +511,13 @@ void LogIoTime(const ASFWAudioDriver_IVars& ivars, ::ASFW::Logging::LogLevel lev
     ::ASFW::Logging::EmitLine(
         LogCategory::DirectAudio, level,
         "[DirectAudio] [IoTime] 0x%016llx %{public}s: WriteEnd %llu, avg %llu.%llu us, max %llu us; "
-        "fill %llu, avg %llu.%llu us, max %llu us; %llu operations took %llu us or more",
+        "fill %llu, avg %llu.%llu us, max %llu us; %llu operations took %llu us or more; "
+        "%llu ring scans",
         ivars.device.guid, which, writeEnd.count, writeEnd.avgUs, writeEnd.avgTenths,
         writeEnd.maxUs, fill.count, fill.avgUs, fill.avgTenths, fill.maxUs,
         static_cast<unsigned long long>(figures.slow),
-        static_cast<unsigned long long>(ASFW::Audio::Runtime::kSlowIoOpNanos / 1000));
+        static_cast<unsigned long long>(ASFW::Audio::Runtime::kSlowIoOpNanos / 1000),
+        static_cast<unsigned long long>(figures.ringScans));
     if (figures.follow.count == 0) {
         return;
     }
@@ -582,6 +585,7 @@ void ReportIoTiming(ASFWAudioDriver_IVars& ivars,
     const uint64_t slowTotal = timing.slow.load(std::memory_order_relaxed);
     const uint64_t pullWaits = control.rxPull.waited.load(std::memory_order_relaxed);
     const uint64_t pullBusy = control.rxPull.busy.load(std::memory_order_relaxed);
+    const uint64_t ringScans = ivars.runtime.txStreamEngine.Timeline().FullScans();
     const IoTimeFigures figures{
         .beginRead = timing.beginRead.Take(),
         .writeEnd = timing.writeEnd.Take(),
@@ -592,6 +596,7 @@ void ReportIoTiming(ASFWAudioDriver_IVars& ivars,
         .pullWaits = pullWaits - std::min(pullWaits, timing.reportedPullWaits),
         .pullBusy = pullBusy - std::min(pullBusy, timing.reportedPullBusy),
         .slow = slowTotal - std::min(slowTotal, timing.reportedSlow),
+        .ringScans = ringScans - std::min(ringScans, timing.reportedRingScans),
         .readArrival = timing.readArrival.Take(),
         .writeMargin = timing.writeMargin.Take(),
         .render = timing.render.Take(),
@@ -605,6 +610,7 @@ void ReportIoTiming(ASFWAudioDriver_IVars& ivars,
     timing.reportedSlow = slowTotal;
     timing.reportedPullWaits = pullWaits;
     timing.reportedPullBusy = pullBusy;
+    timing.reportedRingScans = ringScans;
     timing.lastReportTicks = now;
     if (figures.beginRead.count == 0 && figures.writeEnd.count == 0) {
         return;  // no IO in the interval
@@ -649,6 +655,7 @@ void LogIoTimingSummary(ASFWAudioDriver_IVars& ivars) noexcept {
     const auto* control = ivars.runtime.directAudioGraph.control;
     const uint64_t pullWaits = control ? control->rxPull.waited.load(std::memory_order_relaxed) : 0;
     const uint64_t pullBusy = control ? control->rxPull.busy.load(std::memory_order_relaxed) : 0;
+    const uint64_t ringScans = ivars.runtime.txStreamEngine.Timeline().FullScans();
     const IoTimeFigures figures{
         .beginRead = timing.beginRead.Stream(),
         .writeEnd = timing.writeEnd.Stream(),
@@ -659,6 +666,7 @@ void LogIoTimingSummary(ASFWAudioDriver_IVars& ivars) noexcept {
         .pullWaits = pullWaits - std::min(pullWaits, timing.streamStartPullWaits),
         .pullBusy = pullBusy - std::min(pullBusy, timing.streamStartPullBusy),
         .slow = timing.slow.load(std::memory_order_relaxed),
+        .ringScans = ringScans - std::min(ringScans, timing.streamStartRingScans),
         .readArrival = timing.readArrival.Stream(),
         .writeMargin = timing.writeMargin.Stream(),
         .render = timing.render.Stream(),
@@ -1546,6 +1554,8 @@ PrimaryTxArmResult ArmPrimaryTxProducer(
         ASFW::Timing::nanosToHostTicks(ASFW::Audio::Runtime::kIoOpFollowMaxNanos),
         control->rxPull.waited.load(std::memory_order_relaxed),
         control->rxPull.busy.load(std::memory_order_relaxed));
+    ivars.runtime.ioTiming.reportedRingScans = ivars.runtime.txStreamEngine.Timeline().FullScans();
+    ivars.runtime.ioTiming.streamStartRingScans = ivars.runtime.ioTiming.reportedRingScans;
     ivars.runtime.lastBeginReadFrame.store(0, std::memory_order_relaxed);
     ivars.runtime.lastBeginReadTicks.store(0, std::memory_order_relaxed);
     ivars.runtime.txReplayReader.Reset();

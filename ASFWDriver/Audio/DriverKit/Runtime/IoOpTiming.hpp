@@ -313,6 +313,10 @@ struct IoOpTiming {
     uint64_t reportedPullBusy{0};
     uint64_t streamStartPullWaits{0};
     uint64_t streamStartPullBusy{0};
+    // The packet timeline's whole-ring scans (they run on across streams):
+    // where the count stood at the last report and at the stream's start.
+    uint64_t reportedRingScans{0};
+    uint64_t streamStartRingScans{0};
     uint64_t lastReportTicks{0};
     uint64_t nextReportTicks{0};
 
