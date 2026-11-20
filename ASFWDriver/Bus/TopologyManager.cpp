@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <numeric>
 
+#include "../Diagnostics/LinkReport.hpp"
 #include "../Logging/Logging.hpp"
 #include "SelfIDStreamParser.hpp"
 #include "SelfIDTopologyNormalizer.hpp"
@@ -94,6 +95,32 @@ void LogTopologySummary(const TopologySnapshot& snapshot) {
                            "possible from this node",
                            node.physicalId, node.linkActive ? 1 : 0,
                            (node.baseRaw & (1u << 11)) ? 1 : 0);
+        }
+    }
+
+    // The bus as it stands after this reset, one line per node, in every log
+    // from warn up: what each PHY says of its speed and its ports. A node
+    // below S400 is named; nothing is slowed down for it.
+    if (ASFW_LOG_ENABLED(Metrics, Warning)) {
+        for (const auto& node : snapshot.physical.nodes) {
+            std::array<uint8_t, kMaxPhyPorts> ports{};
+            const size_t portCount = std::min<size_t>(node.portCount, ports.size());
+            for (size_t port = 0; port < portCount; ++port) {
+                ports[port] = static_cast<uint8_t>(node.reportedPorts[port]);
+            }
+            char line[224];
+            ASFW::Diagnostics::Link::FormatNode(line, sizeof(line), snapshot.generation, node.physicalId,
+                                                node.isLocal, node.isRoot, node.maxSpeedMbps, node.linkActive,
+                                                node.gapCount, ports.data(), portCount);
+            ASFW_LOG_WARNING(Metrics, "%{public}s", line);
+            if (node.maxSpeedMbps < 400) {
+                ASFW_LOG_WARNING(Metrics, "[Link] bus generation %u: node %u reports S%u, below S400",
+                                 snapshot.generation, node.physicalId, node.maxSpeedMbps);
+            }
+        }
+        if (!snapshot.gapCountConsistent) {
+            ASFW_LOG_WARNING(Metrics, "[Link] bus generation %u: the nodes' gap counts differ",
+                             snapshot.generation);
         }
     }
 }
