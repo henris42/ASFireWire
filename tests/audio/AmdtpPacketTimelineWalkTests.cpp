@@ -14,6 +14,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <cstdio>
 #include <random>
 #include <span>
 #include <vector>
@@ -224,14 +225,40 @@ TEST(AmdtpPacketTimelineWalkTests, AMissSaysWhereTheFramesResume) {
     // Before the stream's first packet: its first frame, from any hint in the ring.
     StartingRing ring{512, 8, 4};
     ring.Prepare(100);
-    for (uint64_t hint : {uint64_t{300}, uint64_t{350}, uint64_t{399}, uint64_t{430}}) {
+    // A hint before the ring's first packet as well: the fill's, while the
+    // stream has sent nothing and the packet on the wire is taken for 0.
+    for (uint64_t hint : {uint64_t{300}, uint64_t{350}, uint64_t{399}, uint64_t{430},
+                          uint64_t{299}, uint64_t{250}, uint64_t{3}, uint64_t{0}}) {
         EXPECT_FALSE(ring.timeline.SnapshotSlotForAudioFrameNear(4000, hint, snap, resume));
         EXPECT_EQ(resume, StartingRing::kFirstFrame) << "hint " << hint;
         EXPECT_FALSE(ring.timeline.SnapshotSlotForAudioFrameNear(4999, hint, snap, resume));
         EXPECT_EQ(resume, StartingRing::kFirstFrame) << "hint " << hint;
     }
-    // Past the exposed end no packet carries a later frame.
-    EXPECT_FALSE(ring.timeline.SnapshotSlotForAudioFrameNear(ring.nextFrame + 3, 399, snap, resume));
+    // Past the exposed end no packet carries a later frame, from any hint.
+    for (uint64_t hint : {uint64_t{399}, uint64_t{398}, uint64_t{350}, uint64_t{300},
+                          uint64_t{430}, uint64_t{250}, uint64_t{0}}) {
+        EXPECT_FALSE(
+            ring.timeline.SnapshotSlotForAudioFrameNear(ring.nextFrame + 3, hint, snap, resume));
+        EXPECT_EQ(resume, AmdtpPacketTimeline::kNoLaterFrame) << "hint " << hint;
+    }
+    // Nor in a ring with nothing prepared, or with NO-DATA packets only.
+    Ring empty{64, 8, 4};
+    for (uint64_t hint : {uint64_t{0}, uint64_t{5}, uint64_t{63}, uint64_t{500}}) {
+        EXPECT_FALSE(empty.timeline.SnapshotSlotForAudioFrameNear(10, hint, snap, resume));
+        EXPECT_EQ(resume, AmdtpPacketTimeline::kNoLaterFrame) << "hint " << hint;
+    }
+    empty.timeline.MarkNoDataPacket(0);
+    empty.timeline.MarkNoDataPacket(1);
+    for (uint64_t hint : {uint64_t{0}, uint64_t{1}, uint64_t{2}, uint64_t{9}}) {
+        EXPECT_FALSE(empty.timeline.SnapshotSlotForAudioFrameNear(10, hint, snap, resume));
+        EXPECT_EQ(resume, AmdtpPacketTimeline::kNoLaterFrame) << "hint " << hint;
+    }
+    // The scan says the same.
+    EXPECT_FALSE(ring.timeline.SnapshotSlotForAudioFrame(4000, snap, resume));
+    EXPECT_EQ(resume, StartingRing::kFirstFrame);
+    EXPECT_FALSE(ring.timeline.SnapshotSlotForAudioFrame(ring.nextFrame, snap, resume));
+    EXPECT_EQ(resume, AmdtpPacketTimeline::kNoLaterFrame);
+    EXPECT_TRUE(ring.timeline.SnapshotSlotForAudioFrame(5001, snap, resume));
     EXPECT_EQ(resume, 0U);
     // A hit leaves nothing to resume.
     EXPECT_TRUE(ring.timeline.SnapshotSlotForAudioFrameNear(5001, 350, snap, resume));
@@ -517,7 +544,11 @@ std::vector<FillCall> MakeStartCalls(const Ring& ring, uint64_t firstFrame) {
     for (uint64_t frame = firstFrame; frame < ring.nextFrame + 100; frame += 64, ++n) {
         // Every third call overlaps the one before, as a second client's does.
         const uint64_t first = n % 3 == 2 ? frame - 30 : frame;
-        calls.push_back({first, 64, n % 5 == 0 ? 0 : StartingRing::kFirstPacket + n / 2});
+        // No hint, one in the ring, and one before the ring's first packet
+        // (the packet on the wire taken for 0 while nothing was sent).
+        const uint64_t firstWritable =
+            n % 5 == 0 ? 0 : (n % 5 == 3 ? 3 : StartingRing::kFirstPacket + n / 2);
+        calls.push_back({first, 64, firstWritable});
     }
     return calls;
 }
@@ -566,6 +597,12 @@ TEST(AmdtpPacketTimelineWalkTests, MotuWriterPassesFramesWithoutAPacketInOneStep
     EXPECT_GT(reference.written, 0U);
     EXPECT_GT(reference.outside, 3000U);  // before the first packet, and the jump
     EXPECT_GT(reference.without, 0U);
+    // At most one read of every slot per call, where each frame without a
+    // packet used to cost one.
+    const size_t calls = MakeStartCalls(actualRing, StartingRing::kFirstFrame - 3000).size();
+    EXPECT_LE(actualRing.timeline.FullScans(), calls);
+    std::printf("full scans: %llu in %zu calls\n",
+                static_cast<unsigned long long>(actualRing.timeline.FullScans()), calls);
 }
 
 TEST(AmdtpPacketTimelineWalkTests, AmdtpWriterPassesFramesWithoutAPacketInOneStep) {
@@ -604,6 +641,12 @@ TEST(AmdtpPacketTimelineWalkTests, AmdtpWriterPassesFramesWithoutAPacketInOneSte
     EXPECT_EQ(counters.framesMissedFinality.load(), reference.missed);
     EXPECT_GT(reference.written, 0U);
     EXPECT_GT(reference.outside, 3000U);
+    // At most one read of every slot per call, where each frame without a
+    // packet used to cost one.
+    const size_t calls = MakeStartCalls(actualRing, StartingRing::kFirstFrame - 3000).size();
+    EXPECT_LE(actualRing.timeline.FullScans(), calls);
+    std::printf("full scans: %llu in %zu calls\n",
+                static_cast<unsigned long long>(actualRing.timeline.FullScans()), calls);
 }
 
 } // namespace

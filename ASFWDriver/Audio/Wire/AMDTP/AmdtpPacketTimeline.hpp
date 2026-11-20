@@ -72,11 +72,25 @@ public:
     PacketTimelineSlot* FindSlotForAudioFrame(uint64_t absoluteFrame) noexcept;
     const PacketTimelineSlot* FindSlotForAudioFrame(uint64_t absoluteFrame) const noexcept;
 
+    // A miss's resumeFrame when no packet carries any later frame either.
+    static constexpr uint64_t kNoLaterFrame = UINT64_MAX;
+
     // RT-safe lookup: seqlock-validated copy of the covering slot. Returns
     // false on miss or if the slot was being rewritten concurrently. Reads
     // every slot; the TX fill uses SnapshotSlotForAudioFrameNear instead.
+    // The three-argument form also says, on a miss, where the frames resume:
+    // the lowest first frame above absoluteFrame that a DATA packet carries,
+    // or kNoLaterFrame.
     [[nodiscard]] bool SnapshotSlotForAudioFrame(uint64_t absoluteFrame,
                                                  PacketSlotSnapshot& out) const noexcept;
+    [[nodiscard]] bool SnapshotSlotForAudioFrame(uint64_t absoluteFrame,
+                                                 PacketSlotSnapshot& out,
+                                                 uint64_t& resumeFrame) const noexcept;
+    // How many times every slot was read for one frame (about 6 us each on a
+    // 1512-slot ring): the lookups the walk below is there to avoid.
+    [[nodiscard]] uint64_t FullScans() const noexcept {
+        return fullScans_.load(std::memory_order_relaxed);
+    }
 
     // RT-safe lookup that starts at packet `hintPacket` and steps through the
     // ring by packet index to the DATA packet that carries absoluteFrame.
@@ -88,12 +102,14 @@ public:
     // a newer lap. A slot mid-rewrite, or frames out of packet order, fall
     // back to the scan.
     //
-    // On a miss `resumeFrame` is the first frame the walk saw a packet carry
-    // above absoluteFrame, or 0 when it saw none: no packet carries the frames
-    // from absoluteFrame up to it either, so a caller with a run of frames
-    // goes on from there. Without it every frame ahead of the stream's first
-    // packet repeats the walk to the ring's edge (b220: 230 us for a 64-frame
-    // write, through the first 0.2 s of a stream).
+    // On a miss `resumeFrame` is the first frame above absoluteFrame that a
+    // packet carries, or kNoLaterFrame when none does: no packet carries the
+    // frames from absoluteFrame up to it either, so a caller with a run of
+    // frames goes on from there. It is 0 (unknown: go on with the next frame)
+    // only when a slot was mid-rewrite. Without it every frame ahead of the
+    // stream's first packet repeats the walk to the ring's edge (b220: 230 us
+    // for a 64-frame write, through the first 0.2 s of a stream), or the scan
+    // when the hint lies before the ring's first packet (b223: 365 us).
     [[nodiscard]] bool SnapshotSlotForAudioFrameNear(uint64_t absoluteFrame,
                                                      uint64_t hintPacket,
                                                      PacketSlotSnapshot& out,
@@ -128,8 +144,12 @@ private:
     static void BeginSlotWrite(PacketTimelineSlot& slot) noexcept;
     static void EndSlotWrite(PacketTimelineSlot& slot) noexcept;
 
+    [[nodiscard]] bool ScanForAudioFrame(uint64_t absoluteFrame, PacketSlotSnapshot& out,
+                                         uint64_t* resumeFrame) const noexcept;
+
     PacketTimelineSlot* slots_{nullptr};
     uint32_t slotCount_{0};
+    mutable std::atomic<uint64_t> fullScans_{0};
     // Written by the pump, read by the RT writer for miss classification.
     std::atomic<uint64_t> exposedFrameEnd_{0};
 };

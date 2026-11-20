@@ -110,21 +110,21 @@ void MotuPayloadWriter::WriteFloat32Interleaved(
         const bool found = haveHint
                                ? timeline_->SnapshotSlotForAudioFrameNear(frame, hint, snap,
                                                                           resumeFrame)
-                               : timeline_->SnapshotSlotForAudioFrame(frame, snap);
+                               : timeline_->SnapshotSlotForAudioFrame(frame, snap, resumeFrame);
         if (!found) {
             // Past the exposed end means "no packet owns this yet" (normal lead);
             // behind it means the slot was retired or re-used under us, or the
             // frame is older than the stream's first packet. Nor does a packet
-            // carry the frames up to where the walk saw them resume: one step
-            // for all of them.
+            // carry the frames up to where the lookup saw them resume: one
+            // step for all of them.
             const uint64_t next = resumeFrame > frame
                                       ? (resumeFrame < endFrame ? resumeFrame : endFrame)
                                       : frame + 1;
-            if (frame >= timeline_->ExposedFrameEnd()) {
-                withoutPacket += next - frame;
-            } else {
-                outsidePacket += next - frame;
-            }
+            const uint64_t exposedEnd = timeline_->ExposedFrameEnd();
+            const uint64_t outsideEnd = exposedEnd < frame ? frame
+                                                           : (exposedEnd < next ? exposedEnd : next);
+            outsidePacket += outsideEnd - frame;
+            withoutPacket += next - outsideEnd;
             frame = next;
             continue;
         }

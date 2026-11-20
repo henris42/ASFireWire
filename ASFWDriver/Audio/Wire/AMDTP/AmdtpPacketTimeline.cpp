@@ -175,9 +175,25 @@ AmdtpPacketTimeline::FindSlotForAudioFrame(uint64_t absoluteFrame) noexcept {
 
 bool AmdtpPacketTimeline::SnapshotSlotForAudioFrame(
     uint64_t absoluteFrame, PacketSlotSnapshot& out) const noexcept {
+    return ScanForAudioFrame(absoluteFrame, out, nullptr);
+}
+
+bool AmdtpPacketTimeline::SnapshotSlotForAudioFrame(
+    uint64_t absoluteFrame, PacketSlotSnapshot& out, uint64_t& resumeFrame) const noexcept {
+    return ScanForAudioFrame(absoluteFrame, out, &resumeFrame);
+}
+
+bool AmdtpPacketTimeline::ScanForAudioFrame(
+    uint64_t absoluteFrame, PacketSlotSnapshot& out, uint64_t* resumeFrame) const noexcept {
+    if (resumeFrame != nullptr) {
+        *resumeFrame = kNoLaterFrame;
+    }
     if (slots_ == nullptr) {
         return false;
     }
+    fullScans_.fetch_add(1, std::memory_order_relaxed);
+    // The lowest first frame above absoluteFrame among the DATA packets.
+    uint64_t framesResume = kNoLaterFrame;
     for (uint32_t i = 0; i < slotCount_; ++i) {
         const PacketTimelineSlot& slot = slots_[i];
 
@@ -203,11 +219,16 @@ bool AmdtpPacketTimeline::SnapshotSlotForAudioFrame(
         if (state != PacketSlotState::ExposedForAudio || !isData) {
             continue;
         }
-        if (absoluteFrame < firstAudioFrame ||
-            absoluteFrame >= firstAudioFrame + framesInPacket) {
+        if (packetBytes == nullptr || dbs == 0) {
             continue;
         }
-        if (packetBytes == nullptr || dbs == 0) {
+        if (absoluteFrame < firstAudioFrame) {
+            if (framesInPacket != 0 && firstAudioFrame < framesResume) {
+                framesResume = firstAudioFrame;
+            }
+            continue;
+        }
+        if (absoluteFrame >= firstAudioFrame + framesInPacket) {
             continue;
         }
 
@@ -219,7 +240,13 @@ bool AmdtpPacketTimeline::SnapshotSlotForAudioFrame(
         out.firstAudioFrame = firstAudioFrame;
         out.framesInPacket = framesInPacket;
         out.dbs = dbs;
+        if (resumeFrame != nullptr) {
+            *resumeFrame = 0;
+        }
         return true;
+    }
+    if (resumeFrame != nullptr) {
+        *resumeFrame = framesResume;
     }
     return false;
 }
@@ -282,8 +309,10 @@ bool AmdtpPacketTimeline::SnapshotSlotForAudioFrameNear(
     int direction = 0;
     uint64_t packet = hintPacket;
     // The lowest first frame above absoluteFrame among the DATA packets seen:
-    // where the frames resume when the walk ends in a miss.
-    uint64_t framesResume = 0;
+    // where the frames resume when the walk ends in a miss. The walk goes
+    // back only from such a packet or from one not prepared yet, so none seen
+    // at the ring's beginning means no packet carries a later frame at all.
+    uint64_t framesResume = kNoLaterFrame;
     // A prepared packet was seen: an unprepared one further back is then the
     // ring's beginning, before the stream's first packet.
     bool sawPrepared = false;
@@ -295,21 +324,13 @@ bool AmdtpPacketTimeline::SnapshotSlotForAudioFrameNear(
             if (absoluteFrame < probe.firstAudioFrame) {
                 if (direction > 0) {
                     // Between two packets, when the scan finds none either.
-                    if (SnapshotSlotForAudioFrame(absoluteFrame, out)) {
-                        return true;
-                    }
-                    resumeFrame = probe.firstAudioFrame;
-                    return false;
+                    return SnapshotSlotForAudioFrame(absoluteFrame, out, resumeFrame);
                 }
                 framesResume = probe.firstAudioFrame;
                 direction = -1;
             } else if (absoluteFrame - probe.firstAudioFrame >= probe.framesInPacket) {
                 if (direction < 0) {
-                    if (SnapshotSlotForAudioFrame(absoluteFrame, out)) {
-                        return true;
-                    }
-                    resumeFrame = framesResume;
-                    return false;
+                    return SnapshotSlotForAudioFrame(absoluteFrame, out, resumeFrame);
                 }
                 direction = 1;
             } else {
@@ -323,6 +344,7 @@ bool AmdtpPacketTimeline::SnapshotSlotForAudioFrameNear(
         case SlotProbe::kNotYet:
             // This packet and every later one are still to be prepared.
             if (direction > 0) {
+                resumeFrame = kNoLaterFrame;
                 return false;
             }
             // Going back from a prepared packet: nothing was prepared before
@@ -342,13 +364,15 @@ bool AmdtpPacketTimeline::SnapshotSlotForAudioFrameNear(
             direction = 1;
             break;
         case SlotProbe::kBusy:
+            // The slot may be this frame's packet a moment from now: no word
+            // on where the frames resume.
             return SnapshotSlotForAudioFrame(absoluteFrame, out);
         }
         if (direction < 0) {
             if (packet == 0) {
                 if (!sawPrepared) {
                     // A hint before the ring's first packet: all of it is ahead.
-                    return SnapshotSlotForAudioFrame(absoluteFrame, out);
+                    return SnapshotSlotForAudioFrame(absoluteFrame, out, resumeFrame);
                 }
                 resumeFrame = framesResume;
                 return false;
@@ -358,7 +382,7 @@ bool AmdtpPacketTimeline::SnapshotSlotForAudioFrameNear(
             ++packet;
         }
     }
-    return SnapshotSlotForAudioFrame(absoluteFrame, out);
+    return SnapshotSlotForAudioFrame(absoluteFrame, out, resumeFrame);
 }
 
 const PacketTimelineSlot*

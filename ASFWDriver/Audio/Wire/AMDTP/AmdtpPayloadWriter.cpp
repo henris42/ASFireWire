@@ -121,18 +121,21 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
         const bool found =
             haveHint ? timeline_->SnapshotSlotForAudioFrameNear(absoluteFrame, hint, snap,
                                                                 resumeFrame)
-                     : timeline_->SnapshotSlotForAudioFrame(absoluteFrame, snap);
+                     : timeline_->SnapshotSlotForAudioFrame(absoluteFrame, snap, resumeFrame);
         if (!found) {
-            // No packet carries this frame, nor those up to where the walk
-            // saw the frames resume: one step for all of them.
+            // No packet carries this frame, nor those up to where the lookup
+            // saw the frames resume: one step for all of them, those below
+            // the exposed end counted as outside a packet, the rest as ahead
+            // of the packets.
             const uint64_t next = resumeFrame > absoluteFrame
                                       ? (resumeFrame < endFrame ? resumeFrame : endFrame)
                                       : absoluteFrame + 1;
-            if (absoluteFrame >= timeline_->ExposedFrameEnd()) {
-                withoutPacket += next - absoluteFrame;
-            } else {
-                outsidePacket += next - absoluteFrame;
-            }
+            const uint64_t exposedEnd = timeline_->ExposedFrameEnd();
+            const uint64_t outsideEnd =
+                exposedEnd < absoluteFrame ? absoluteFrame
+                                           : (exposedEnd < next ? exposedEnd : next);
+            outsidePacket += outsideEnd - absoluteFrame;
+            withoutPacket += next - outsideEnd;
             absoluteFrame = next;
             continue;
         }
