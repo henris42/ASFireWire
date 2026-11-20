@@ -110,6 +110,11 @@ public:
     }
     
     uint64_t PacketsAssembled() const noexcept { return packetsAssembled_; }
+    // Completion status and cycle continuity of the packets sent since the
+    // last start (link metrics). Kept after a stop.
+    [[nodiscard]] const Tx::IsochTxDmaRing::Counters& RingCounters() const noexcept {
+        return ring_.RTCounters();
+    }
     
     void DumpDescriptorRing(uint32_t startPacket = 0, uint32_t numPackets = 8) const noexcept;
 

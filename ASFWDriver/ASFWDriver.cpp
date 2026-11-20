@@ -1580,6 +1580,8 @@ void ASFWDriver::AsyncWatchdogTimerFired_Impl(ASFWDriver_AsyncWatchdogTimerFired
             ctx.watchdog.HandleTick(ctx.controller.get(), ctx.deps.asyncController.get(),
                                     ctx.isoch.ReceiveContext(), ctx.isoch.TransmitContext(),
                                     ctx.statusPublisher);
+            ctx.linkReporter.Tick(ASFW::Timing::hostTicksToNanos(mach_absolute_time()), ctx.isochLanes,
+                                  ctx.controller.get(), ctx.deps.asyncController.get());
         }
     }
 

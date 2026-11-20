@@ -165,6 +165,8 @@ class IsochService {
     kern_return_t GetCycleTimePair(uint64_t* outHostTimeMid, uint32_t* outCycleTimer,
                                    HardwareInterface& hardware);
 
+    // The unit this lane's streams belong to; 0 when none.
+    [[nodiscard]] uint64_t ActiveGuid() const noexcept { return activeGuid_; }
     ASFW::Isoch::IsochReceiveContext* ReceiveContext() const { return isochReceiveContext_.get(); }
     ASFW::Isoch::IsochTransmitContext* TransmitContext() const {
         return isochTransmitContext_.get();

@@ -15,6 +15,7 @@
 
 #include "../Controller/ControllerConfig.hpp"
 #include "../Controller/ControllerCore.hpp"
+#include "../Diagnostics/LinkReporter.hpp"
 #include "../Diagnostics/StatusPublisher.hpp"
 #include "../Hardware/InterruptDispatcher.hpp"
 #include "../Isoch/IsochService.hpp"
@@ -79,6 +80,7 @@ struct ServiceContext {
     ASFW::Driver::IsochService isoch;
     // Lane 0 is `isoch`; further lanes host further streaming devices.
     ASFW::Driver::IsochLanes isochLanes{isoch};
+    ASFW::Diagnostics::LinkReporter linkReporter;
     ASFW::Protocols::DV::DVCaptureService dvCapture;
     ASFW::Driver::InterruptDispatcher interruptDispatcher;
     std::shared_ptr<ASFW::Audio::AudioCoordinator> audioCoordinator;

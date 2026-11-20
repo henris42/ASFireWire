@@ -267,6 +267,11 @@ add_audio_test(IsochLinkCountersTests
     IsochLinkCountersTests.cpp
 )
 
+# Link metrics: figures per interval, the [Link] lines, the --link-stats layout
+add_audio_test(LinkReportTests
+    LinkReportTests.cpp
+)
+
 # RX packet decode outcome split.
 add_audio_test(RxAudioPacketProcessorTests
     AudioEngineDirect/RxAudioPacketProcessorTests.cpp
