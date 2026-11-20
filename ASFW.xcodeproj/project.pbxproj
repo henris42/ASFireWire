@@ -951,6 +951,7 @@
 		51F633B0544F08756AAAA430 /* ROMScanSession.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ROMScanSession.hpp; sourceTree = "<group>"; };
 		51FA6BF0E32CC73655F97151 /* SPro24DspTypes.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = SPro24DspTypes.cpp; sourceTree = "<group>"; };
 		521341B63E7AC9981BE350D1 /* ApogeeDuetDuplex.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ApogeeDuetDuplex.cpp; sourceTree = "<group>"; };
+		52F9EAFF1A15BFC7C00C96F6 /* BusStallLimit.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = BusStallLimit.hpp; sourceTree = "<group>"; };
 		5364BA023A0C10D7791261A1 /* ASFWDriverUserClient.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ASFWDriverUserClient.cpp; sourceTree = "<group>"; };
 		538814A3850B83410E4010EF /* AudioSubunitDescriptor.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AudioSubunitDescriptor.cpp; sourceTree = "<group>"; };
 		53B000743D25AA2FBEDB93A3 /* AvcNames.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AvcNames.hpp; sourceTree = "<group>"; };
@@ -3710,6 +3711,7 @@
 				601C29508A5C112F4157A708 /* AudioRtCounters.hpp */,
 				34AA51AFA01B0332C83FBD56 /* AudioStreamMemory.hpp */,
 				BB62DD3014CAB9486CEE30FF /* AudioTransportControlBlock.hpp */,
+				52F9EAFF1A15BFC7C00C96F6 /* BusStallLimit.hpp */,
 				7E750536702828DDB70B3B0A /* DirectAudioBindingSource.hpp */,
 				8A1E58C964900982CCFC790B /* DirectAudioDebugSnapshot.hpp */,
 				65BBA073B6759105AEC123B2 /* GlitchEventLog.hpp */,

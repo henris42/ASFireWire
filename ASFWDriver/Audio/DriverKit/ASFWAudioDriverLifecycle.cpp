@@ -202,12 +202,49 @@ void IMPL(ASFWAudioDriver, IoRestartRequired)
     }
 }
 
+namespace {
+
+// Runtime/BusStallLimit.hpp. Kernel calls, made where IO starts and stops,
+// never from the IO handler.
+void HoldBusStallLimit(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars, uint32_t deviceId) {
+    const uint32_t nanos = ivars.busStallHold.Begin();
+    const kern_return_t kr = driver.RequireMaxBusStall(nanos);
+    if (kr != kIOReturnSuccess) {
+        (void)ivars.busStallHold.End();
+        ASFW_LOG_WARNING(Audio,
+                         "[BusStall] device %u: CPU idle limit of %u us not taken: 0x%x (%{public}s)",
+                         deviceId, nanos / 1000, kr, ASFW::Logging::IOReturnName(kr));
+        return;
+    }
+    if (nanos == ASFW::Audio::Runtime::kBusStallNone) {
+        ASFW_LOG_INFO(Audio, "[BusStall] device %u: no CPU idle limit (set to off)", deviceId);
+    } else {
+        ASFW_LOG_INFO(Audio, "[BusStall] device %u: CPU idle limit %u us held while IO runs",
+                      deviceId, nanos / 1000);
+    }
+}
+
+void ReleaseBusStallLimit(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars) {
+    if (!ivars.busStallHold.End()) {
+        return;
+    }
+    const kern_return_t kr = driver.RequireMaxBusStall(ASFW::Audio::Runtime::kBusStallNone);
+    if (kr != kIOReturnSuccess) {
+        ASFW_LOG_WARNING(Audio, "[BusStall] CPU idle limit not given up: 0x%x (%{public}s)", kr,
+                         ASFW::Logging::IOReturnName(kr));
+    }
+}
+
+} // namespace
+
 kern_return_t IMPL(ASFWAudioDriver, Stop)
 {
     ASFW_LOG(Audio, "ASFWAudioDriver: Stop()");
 
     if (ivars) {
         ASFW::Audio::DriverKit::StopAudioDriverGraph(*this, *ivars);
+        // A device that left without a StopDevice.
+        ReleaseBusStallLimit(*this, *ivars);
     }
 
     return Stop(provider, SUPERDISPATCH);
@@ -264,6 +301,7 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
         ASFW_LOG_ERROR(Audio, "ASFWAudioDriver: super::StartDevice failed: 0x%x (%{public}s)", superStartKr, ASFW::Logging::IOReturnName(superStartKr));
         return superStartKr;
     }
+    HoldBusStallLimit(*this, *ivars, in_object_id);
     ASFW_LOG_DEBUG(DirectAudio, "ADK DBG IO super StartDevice ok id=%u", in_object_id);
 
     ASFW_LOG_DEBUG(Audio, "ASFWAudioDriver: Device started (transport via StartIO)");
@@ -278,6 +316,9 @@ kern_return_t ASFWAudioDriver::StopDevice(IOUserAudioObjectID in_object_id,
     // Transport teardown (stop streaming, free TX resources) is handled by
     // ASFWAudioDevice::StopIO, called by the framework via super::StopDevice.
     const kern_return_t superStopKr = super::StopDevice(in_object_id, in_flags);
+    if (ivars) {
+        ReleaseBusStallLimit(*this, *ivars);
+    }
     if (superStopKr != kIOReturnSuccess) {
         ASFW_LOG_ERROR(Audio, "ASFWAudioDriver: super::StopDevice failed: 0x%x (%{public}s)", superStopKr, ASFW::Logging::IOReturnName(superStopKr));
     }

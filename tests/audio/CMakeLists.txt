@@ -39,6 +39,11 @@ add_audio_test(GlitchEventLogTests
     GlitchEventLogTests.cpp
 )
 
+# CPU idle limit held while a device runs IO: values taken, hold accounting
+add_audio_test(BusStallLimitTests
+    BusStallLimitTests.cpp
+)
+
 # Isoch DMA Memory Manager Tests
 add_audio_test(IsochDMAMemoryManagerTests
     IsochDMAMemoryManagerTests.cpp

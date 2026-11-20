@@ -10,6 +10,7 @@
 #include "Runtime/AudioGraphBinding.hpp"
 #include "Runtime/AudioTransportControlBlock.hpp"
 #include "Runtime/DirectAudioDebugSnapshot.hpp"
+#include "Runtime/BusStallLimit.hpp"
 #include "Runtime/GlitchEventLog.hpp"
 #include "Runtime/IoOpTiming.hpp"
 #include "Runtime/MotuTxPhaseTracePublisher.hpp"
@@ -424,7 +425,8 @@ struct ASFWAudioDriver_IVars {
     OSSharedPtr<OSAction> ioRestartRequiredAction;
     // The HAL clock source control, when the device publishes clock sources.
     OSSharedPtr<ASFWClockSourceControl> clockSourceControl;
-
+    // The CPU idle limit held while the device runs IO (BusStallLimit.hpp).
+    ASFW::Audio::Runtime::BusStallHold busStallHold;
 
 
     AudioDriverDeviceState device;
