@@ -115,6 +115,7 @@ TEST(RxPullHookTests, APullDrainsThroughThePublishedSource) {
     EXPECT_EQ(result.outcome, RxPullOutcome::NotArrived) << "drained everything, nothing says enough";
     EXPECT_EQ(hook.pulls.load(), 1U);
     EXPECT_EQ(hook.pulledPackets.load(), 5U);
+    EXPECT_EQ(hook.waited.load(), 0U) << "no poll was in progress";
     EXPECT_EQ(hook.busy.load(), 0U);
     EXPECT_EQ(hook.cut.load(), 0U);
 }
@@ -154,6 +155,7 @@ TEST(RxPullHookTests, APullWaitsOutAPollInProgress) {
     hook.Publish(&source);
     EXPECT_EQ(hook.Pull(Within(1'000'000'000)).drained, 8U);
     EXPECT_EQ(source.tries, 4U);
+    EXPECT_EQ(hook.waited.load(), 1U) << "one pull waited, however many tries it took";
     EXPECT_EQ(hook.busy.load(), 0U);
 }
 

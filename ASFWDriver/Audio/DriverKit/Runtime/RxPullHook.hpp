@@ -37,10 +37,12 @@ struct RxPullHook final {
     std::atomic<::ASFW::Isoch::IIsochReceivePollSource*> source{nullptr};
     std::atomic<uint32_t> inFlight{0};
     // Since the hook was built: reads that pulled, the packets they drained,
-    // pulls that gave up waiting for a poll already in progress, and pulls
-    // whose own drain stopped at the deadline with the read not covered.
+    // pulls that found a poll already in progress (and spun for it), those of
+    // them that gave up waiting, and pulls whose own drain stopped at the
+    // deadline with the read not covered.
     std::atomic<uint64_t> pulls{0};
     std::atomic<uint64_t> pulledPackets{0};
+    std::atomic<uint64_t> waited{0};
     std::atomic<uint64_t> busy{0};
     std::atomic<uint64_t> cut{0};
 
@@ -74,6 +76,9 @@ struct RxPullHook final {
         RxPullResult result{};
         if (auto* pollSource = source.load(std::memory_order_seq_cst)) {
             bool polled = pollSource->TryPoll(result.drained, limit);
+            if (!polled) {
+                waited.fetch_add(1, std::memory_order_relaxed);
+            }
             while (!polled && limit.deadlineTicks != 0 && !limit.Reached(mach_absolute_time())) {
                 CpuRelax();
                 polled = pollSource->TryPoll(result.drained, limit);
