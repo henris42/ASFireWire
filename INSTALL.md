@@ -191,6 +191,36 @@ power while audio runs, and none when it does not. To see or change it:
 nanoseconds, and the registry ID of its holder (`(4294967295,0)`: no limit). At log level
 `info` each IO start logs `[BusStall] device … CPU idle limit 5 us held while IO runs`.
 
+## Link and cable check
+
+The driver counts the errors the FireWire link reports, so a bad cable or port shows as numbers
+and not only as clicks:
+
+```sh
+/usr/local/libexec/asfw-config-agent --link-stats
+```
+
+prints, per card: the controller's events since the driver started (lost cycles,
+`cycleInconsistent`, `cycleTooLong`, bus resets), each unit's counters since its stream last
+started (received packets, CRC errors, other bad packet statuses, wrong lengths, missing data
+blocks, cycles without a packet, sent packets and their errors), the outcome of the requests to
+each node, and the state of the card's own PHY ports (connected, speed, fault). The ports are
+read only while nothing streams. The last line gives the sum of the error counters; busy
+answers and bus resets are not counted as errors.
+
+The same counters go to the log as `[Link]` lines: every 5 s per running stream at level
+`info` (`--log-level "warn metrics=info"` shows only these), at once at `warn` when an error
+counter moved, once with the totals when a stream stops, and one line per node after every bus
+reset. To read them:
+
+```sh
+/usr/bin/log show --last 15m --predicate 'process == "kernel"' | grep -F '[Link]'
+```
+
+To test a cable, play and record for a minute and look at the counters; a cable or port that
+produces CRC errors or missing blocks at S400 should be replaced. What the counters cannot see:
+packets the device drops on its own input, and the ports of the device's PHY.
+
 Every start logs numbered steps, `[StartStep] #01 start …` to `bring-up ends: bus up`, at every
 level from warn up. At login the agent saves the boot's steps to
 `~/Library/Logs/ASFW/start-<boot time>.log`, and appends any later driver start; the newest ten
