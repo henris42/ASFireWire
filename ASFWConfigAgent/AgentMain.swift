@@ -6,7 +6,8 @@
 //  level (ConfigApplier), and saves the driver's start steps to
 //  ~/Library/Logs/ASFW. With --log-level it shows or sets the log level and
 //  exits (LogLevelCommand); with --bus-stall, the CPU idle limit held while
-//  audio runs (BusStallCommand).
+//  audio runs (BusStallCommand); with --link-stats, what the driver has counted
+//  of link, packet and bus errors (LinkStatsCommand).
 //  A plain command-line tool, not the app: launching the app bundle makes
 //  sysextd re-check its embedded system extension and, on macOS 12 with an
 //  ad-hoc signed build, re-stage and restart the running driver (b62 report
@@ -27,6 +28,9 @@ enum AgentMain {
         }
         if let flag = arguments.firstIndex(of: "--bus-stall") {
             exit(BusStallCommand.run(arguments.indices.contains(flag + 1) ? arguments[flag + 1] : nil))
+        }
+        if arguments.contains("--link-stats") {
+            exit(LinkStatsCommand.run())
         }
         if arguments.contains("--bring-up") {
             exit(BringUpCommand.run(up: true))
@@ -49,6 +53,8 @@ enum AgentMain {
                        asfw-config-agent --bus-stall LIMIT   set and save it: off, or 5, 10, 20, 25, 30 or 40
                                                              (us; the longest idle-state wake-up allowed
                                                              while a device runs IO); default forgets it
+                       asfw-config-agent --link-stats        show what the driver has counted of link, packet
+                                                             and bus errors, and the PHY's port status
                        asfw-config-agent --bring-up          run the controller bring-up now (a controller
                                                              armed with asfw-start = manual waits for this)
                        asfw-config-agent --bring-down        quiesce the runtime again, as for sleep

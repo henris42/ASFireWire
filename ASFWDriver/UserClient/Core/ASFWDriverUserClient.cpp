@@ -9,6 +9,7 @@
 #include "ASFWDriverUserClient.h"
 #include "../../Audio/DriverKit/Runtime/BusStallLimit.hpp"
 #include "../../Logging/Logging.hpp"
+#include "../../Service/DriverContext.hpp"
 #include "../../Shared/DriverVersionInfo.hpp"
 #include "../../Version/DriverVersion.hpp"
 #include "ASFWDriver.h"
@@ -92,6 +93,8 @@ enum {
     // (Audio/DriverKit/Runtime/BusStallLimit.hpp): set, and read back.
     kMethodSetBusStallLimit = 76,
     kMethodGetBusStallLimit = 77,
+    // The link metrics' totals (Diagnostics/LinkStatsWire.hpp).
+    kMethodGetLinkStats = 78,
     // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
     kMethodTestIRMAllocation = 26,
     kMethodTestIRMRelease = 27,
@@ -307,6 +310,23 @@ kern_return_t HandleBusStallLimit(IOUserClientMethodArguments* arguments, bool s
     return kIOReturnSuccess;
 }
 
+// Selector 78: the link metrics' totals for this controller.
+kern_return_t HandleLinkStats(ASFWDriver& driver, IOUserClientMethodArguments* arguments) {
+    auto* ctx = static_cast<ServiceContext*>(driver.GetServiceContext());
+    if (ctx == nullptr || !ctx->controller) {
+        return kIOReturnNotReady;
+    }
+    ASFW::Diagnostics::Link::StatsWire stats;
+    ctx->linkReporter.Collect(stats, ctx->isochLanes, ctx->controller.get(), ctx->deps.asyncController.get());
+    OSData* data = OSData::withBytes(stats.Words(), stats.ByteCount());
+    if (data == nullptr) {
+        return kIOReturnNoMemory;
+    }
+    arguments->structureOutput = data;
+    arguments->structureOutputDescriptor = nullptr;
+    return kIOReturnSuccess;
+}
+
 MethodDispatchResult DispatchDriverControlMethods(ASFWDriver& driver,
                                                   IOUserClientMethodArguments* arguments,
                                                   uint64_t selector) {
@@ -331,6 +351,8 @@ MethodDispatchResult DispatchDriverControlMethods(ASFWDriver& driver,
     case kMethodSetBusStallLimit:
     case kMethodGetBusStallLimit:
         return HandleBusStallLimit(arguments, selector == kMethodSetBusStallLimit);
+    case kMethodGetLinkStats:
+        return HandleLinkStats(driver, arguments);
     case kMethodBringUp:
         return MethodDispatchResult{driver.RequestBringUp()};
     case kMethodBringDown:

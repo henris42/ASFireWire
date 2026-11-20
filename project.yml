@@ -259,6 +259,7 @@ targets:
       - path: ASFW/DriverConnector+LogLevel.swift
       - path: ASFW/DriverConnector+BringUp.swift
       - path: ASFW/DriverConnector+BusStall.swift
+      - path: ASFW/DriverConnector+LinkStats.swift
       - path: ASFW/DriverConnectorTransport.swift
       - path: ASFW/DriverConnectorLogStore.swift
       - path: ASFW/DriverModels.swift
