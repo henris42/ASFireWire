@@ -174,6 +174,7 @@ bool ControllerCore::StartDiscoveryScan(const Discovery::ROMScanRequest& request
 void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
     // 1. Advance generation and notify role authority first
     currentGeneration_ = snap.generation;
+    linkCounters_.generation.store(snap.generation, std::memory_order_relaxed);
     roleCoordinator_.OnTopologyChanged(snap.generation, snap);
 
     // 2. Initialize/update Bus Manager/IRM runtime state (FW-14)

@@ -17,6 +17,7 @@
 #include "../Bus/BusManager/PowerLinkPolicyCoordinator.hpp"
 #include "../Discovery/DiscoveryTypes.hpp" // For Discovery::Generation
 #include "ControllerConfig.hpp"
+#include "ControllerLinkCounters.hpp"
 #include "ControllerTypes.hpp"
 
 class IOService;
@@ -186,6 +187,8 @@ class ControllerCore final : private Role::IPhyConfigReset,
     void Stop();
 
     [[nodiscard]] IsochContextEvents HandleInterrupt(const InterruptSnapshot& snapshot);
+    // Bus and controller error events counted since start (link metrics).
+    [[nodiscard]] const ControllerLinkCounters& LinkCounters() const noexcept { return linkCounters_; }
 
     const ControllerStateMachine& StateMachine() const;
     MetricsSink& Metrics() const;
@@ -285,6 +288,7 @@ class ControllerCore final : private Role::IPhyConfigReset,
     void HandleFaultInterrupts(uint32_t events);
     void HandleCycleTooLong();
     uint32_t cycleTooLongEvents_{0};
+    ControllerLinkCounters linkCounters_{};
     void NotifyBusResetCoordinator(uint32_t events, uint64_t timestamp) const;
     void DispatchAsyncInterrupts(uint32_t events) const;
     void LogBusResetCompletionEvents(uint32_t events, uint64_t timestamp) const;

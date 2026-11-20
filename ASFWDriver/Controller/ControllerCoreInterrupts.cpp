@@ -57,6 +57,19 @@ IsochContextEvents ControllerCore::HandleInterrupt(const InterruptSnapshot& snap
     const uint32_t currentMask = deps_.interrupts ? deps_.interrupts->EnabledMask() : 0xFFFFFFFF;
     const uint32_t events = rawEvents & currentMask;
     LogInterruptContext(snapshot, rawEvents, currentMask, events);
+    if ((rawEvents & IntEventBits::kCycleLost) != 0U) {
+        // Link metrics. cycleLost is masked outside the root probe's window,
+        // so it never interrupts and nothing acknowledges it: count it from
+        // the unmasked events and clear it here, or it reads set for ever.
+        // Unmasked, it is acknowledged with the other events below.
+        ControllerLinkCounters::Add(linkCounters_.cycleLost);
+        if ((events & IntEventBits::kCycleLost) == 0U) {
+            hw.ClearIntEvents(IntEventBits::kCycleLost);
+        }
+    }
+    if ((events & IntEventBits::kBusReset) != 0U) {
+        ControllerLinkCounters::Add(linkCounters_.busResets);
+    }
     HandleFaultInterrupts(events);
     NotifyBusResetCoordinator(events, snapshot.timestamp);
     if ((events & IntEventBits::kBusReset) != 0U) {
@@ -180,6 +193,7 @@ IsochContextEvents ControllerCore::HandleInterrupt(const InterruptSnapshot& snap
 // cause of a too-long cycle can be read next to the event.
 void ControllerCore::HandleCycleTooLong() {
     cycleTooLongEvents_++;
+    ControllerLinkCounters::Add(linkCounters_.cycleTooLong);
     const bool restoredByPolicy =
         cyclePolicy_ && cyclePolicy_->OnCycleTooLong(currentGeneration_, *this);
     bool restoredDirectly = false;
@@ -234,12 +248,14 @@ void ControllerCore::LogInterruptContext(const InterruptSnapshot& snapshot,
 
 void ControllerCore::HandleFaultInterrupts(uint32_t events) {
     if ((events & IntEventBits::kUnrecoverableError) != 0U) {
+        ControllerLinkCounters::Add(linkCounters_.unrecoverableError);
         ASFW_LOG_ERROR(Controller,
                        "❌ CRITICAL: UnrecoverableError interrupt - hardware fault detected!");
         DiagnoseUnrecoverableError();
     }
 
     if ((events & IntEventBits::kRegAccessFail) != 0U) {
+        ControllerLinkCounters::Add(linkCounters_.regAccessFail);
         ASFW_LOG_ERROR(Controller, "❌ CRITICAL: regAccessFail - CSR register access failed!");
         ASFW_LOG_ERROR(Controller,
                        "This indicates hardware could not complete a register read/write operation");
@@ -265,6 +281,7 @@ void ControllerCore::HandleFaultInterrupts(uint32_t events) {
                 busResetActive ? 1 : 0,
                 resetWindowEvent ? 1 : 0);
         } else {
+            ControllerLinkCounters::Add(linkCounters_.cycleInconsistent);
             ASFW_LOG_WARNING(
                 Controller,
                 "⚠️ WARNING: cycleInconsistent - cycle timer lost consistency; scheduling duplex recovery");
@@ -275,6 +292,7 @@ void ControllerCore::HandleFaultInterrupts(uint32_t events) {
     }
 
     if ((events & IntEventBits::kPostedWriteErr) != 0U) {
+        ControllerLinkCounters::Add(linkCounters_.postedWriteErr);
         ASFW_LOG_ERROR(Controller,
                        "❌ CRITICAL: Posted write error - DMA posted write to host memory failed!");
         ASFW_LOG_ERROR(Controller, "This indicates IOMMU mapping error or invalid DMA target address");
