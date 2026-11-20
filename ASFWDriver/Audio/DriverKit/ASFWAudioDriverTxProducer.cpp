@@ -399,6 +399,9 @@ void ReportTransportGlitches(ASFWAudioDriver_IVars& ivars,
 // the stream stops, the whole stream at info level (LogIoTimingSummary).
 // "waited": pulls that found the interrupt's poll in the receive context and
 // spun for it. "after the other unit's": IoOpTiming.hpp, follow.
+// When CoreAudio got here and the render between the two operations, with the
+// render by its position in 8192 written frames: at info level every interval
+// and for the stream.
 struct IoTimeFigures {
     ASFW::Audio::Runtime::IoStepSpan beginRead;
     ASFW::Audio::Runtime::IoStepSpan writeEnd;
@@ -409,6 +412,10 @@ struct IoTimeFigures {
     uint64_t pullWaits{0};
     uint64_t pullBusy{0};
     uint64_t slow{0};
+    ASFW::Audio::Runtime::IoOffsetSpan readArrival;
+    ASFW::Audio::Runtime::IoOffsetSpan writeMargin;
+    ASFW::Audio::Runtime::IoStepSpan render;
+    ASFW::Audio::Runtime::IoRenderPhaseSpan renderPhases;
 };
 
 // A step for a line: how many, their mean in microseconds with one decimal,
@@ -427,9 +434,62 @@ IoStepLine StepLine(const ASFW::Audio::Runtime::IoStepSpan& span) noexcept {
             ASFW::Timing::hostTicksToNanos(span.maxTicks) / 1000};
 }
 
+// Host ticks, signed, in microseconds.
+long long SignedMicros(int64_t ticks) noexcept {
+    return ticks >= 0
+               ? static_cast<long long>(ASFW::Timing::hostTicksToNanos(static_cast<uint64_t>(ticks)) / 1000)
+               : -static_cast<long long>(ASFW::Timing::hostTicksToNanos(static_cast<uint64_t>(-ticks)) / 1000);
+}
+
+// When CoreAudio got here, and the client's render: two lines of [IoTime].
+void LogIoArrival(const ASFWAudioDriver_IVars& ivars, ::ASFW::Logging::LogLevel level,
+                  const char* which, const IoTimeFigures& figures) noexcept {
+    using ::ASFW::Logging::LogCategory;
+    const auto& read = figures.readArrival;
+    const auto& write = figures.writeMargin;
+    if (read.count != 0 || write.count != 0) {
+        const auto mean = [](const ASFW::Audio::Runtime::IoOffsetSpan& span) noexcept {
+            return span.count != 0 ? SignedMicros(span.ticks / static_cast<int64_t>(span.count)) : 0LL;
+        };
+        ::ASFW::Logging::EmitLine(
+            LogCategory::DirectAudio, level,
+            "[DirectAudio] [IoTime] 0x%016llx %{public}s: BeginRead began avg %lld us after "
+            "CoreAudio's time for its first frame (%lld to %lld); WriteEnd began avg %lld us before "
+            "its first frame's presentation (%lld to %lld)",
+            ivars.device.guid, which, mean(read), SignedMicros(read.minTicks),
+            SignedMicros(read.maxTicks), mean(write), SignedMicros(write.minTicks),
+            SignedMicros(write.maxTicks));
+    }
+    if (figures.render.count == 0) {
+        return;
+    }
+    const IoStepLine render = StepLine(figures.render);
+    const auto& phases = figures.renderPhases;
+    const auto meanNanos = [](uint64_t ticks, uint64_t count) noexcept {
+        return count != 0 ? ASFW::Timing::hostTicksToNanos(ticks) / count : 0ULL;
+    };
+    const unsigned long long high = meanNanos(phases.highTicks, phases.highCount);
+    const unsigned long long low = meanNanos(phases.lowTicks, phases.lowCount);
+    ::ASFW::Logging::EmitLine(
+        LogCategory::DirectAudio, level,
+        "[DirectAudio] [IoTime] 0x%016llx %{public}s: render (BeginRead's return to WriteEnd) %llu, "
+        "avg %llu.%llu us, max %llu us; by position in %u written frames, %u positions: highest "
+        "mean %llu.%llu us at frame %u (%llu renders), lowest %llu.%llu us at frame %u",
+        ivars.device.guid, which, render.count, render.avgUs, render.avgTenths, render.maxUs,
+        ASFW::Audio::Runtime::kRenderPhaseFrames, phases.positions, high / 1000, (high % 1000) / 100,
+        phases.highFrame, static_cast<unsigned long long>(phases.highCount), low / 1000,
+        (low % 1000) / 100, phases.lowFrame);
+}
+
 void LogIoTime(const ASFWAudioDriver_IVars& ivars, ::ASFW::Logging::LogLevel level,
                const char* which, uint64_t spanTicks, const IoTimeFigures& figures) noexcept {
     using ::ASFW::Logging::LogCategory;
+    using ::ASFW::Logging::LogLevel;
+    // The arrival and render lines go out at info when the rest is at debug.
+    if (const LogLevel arrivalLevel = level == LogLevel::Debug ? LogLevel::Info : level;
+        ::ASFW::Logging::Allows(LogCategory::DirectAudio, arrivalLevel)) {
+        LogIoArrival(ivars, arrivalLevel, which, figures);
+    }
     if (!::ASFW::Logging::Allows(LogCategory::DirectAudio, level)) {
         return;
     }
@@ -532,6 +592,14 @@ void ReportIoTiming(ASFWAudioDriver_IVars& ivars,
         .pullWaits = pullWaits - std::min(pullWaits, timing.reportedPullWaits),
         .pullBusy = pullBusy - std::min(pullBusy, timing.reportedPullBusy),
         .slow = slowTotal - std::min(slowTotal, timing.reportedSlow),
+        .readArrival = timing.readArrival.Take(),
+        .writeMargin = timing.writeMargin.Take(),
+        .render = timing.render.Take(),
+        // Read only for a line that goes out; a later report covers the rest.
+        .renderPhases = ::ASFW::Logging::Allows(::ASFW::Logging::LogCategory::DirectAudio,
+                                                ::ASFW::Logging::LogLevel::Info)
+                            ? timing.renderPhases.Span(/*take=*/true)
+                            : ASFW::Audio::Runtime::IoRenderPhaseSpan{},
     };
     const uint64_t since = timing.lastReportTicks;
     timing.reportedSlow = slowTotal;
@@ -591,6 +659,13 @@ void LogIoTimingSummary(ASFWAudioDriver_IVars& ivars) noexcept {
         .pullWaits = pullWaits - std::min(pullWaits, timing.streamStartPullWaits),
         .pullBusy = pullBusy - std::min(pullBusy, timing.streamStartPullBusy),
         .slow = timing.slow.load(std::memory_order_relaxed),
+        .readArrival = timing.readArrival.Stream(),
+        .writeMargin = timing.writeMargin.Stream(),
+        .render = timing.render.Stream(),
+        .renderPhases = ::ASFW::Logging::Allows(::ASFW::Logging::LogCategory::DirectAudio,
+                                                ::ASFW::Logging::LogLevel::Info)
+                            ? timing.renderPhases.Span(/*take=*/false)
+                            : ASFW::Audio::Runtime::IoRenderPhaseSpan{},
     };
     if (figures.beginRead.count == 0 && figures.writeEnd.count == 0) {
         return;

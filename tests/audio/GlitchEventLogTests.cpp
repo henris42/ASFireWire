@@ -27,6 +27,8 @@ using ASFW::Audio::Runtime::IoOpFollows;
 using ASFW::Audio::Runtime::IoOpFollowTag;
 using ASFW::Audio::Runtime::IoOpTiming;
 using ASFW::Audio::Runtime::IoOpTraceCapture;
+using ASFW::Audio::Runtime::IoOffsetSpan;
+using ASFW::Audio::Runtime::IoRenderPhaseSpan;
 using ASFW::Audio::Runtime::IoStepSpan;
 using ASFW::Audio::Runtime::IoStepTiming;
 
@@ -260,6 +262,116 @@ TEST(IoOpTimingTests, AnOperationFollowsTheSameOperationOnAnotherDevice) {
     EXPECT_EQ(follow.count, 2U);
     EXPECT_EQ(follow.ticks, 65U);
     EXPECT_EQ(timing.followMinTicks.load(), 25U);
+}
+
+// When CoreAudio got to an operation: BeginRead after the host time of its
+// first frame, WriteEnd before the host time of its first frame, signed (a
+// write that arrives after its presentation time has a negative margin).
+TEST(IoOpTimingTests, ArrivalsAreMeasuredAgainstCoreAudiosHostTime) {
+    IoOpTiming timing;
+    timing.Reset(0, 50, 200, 0, 0);
+    timing.RecordArrival(/*isWriteEnd=*/false, 10'000, 8'600);
+    timing.RecordArrival(false, 20'000, 18'500);
+    timing.RecordArrival(false, 30'000, 0);  // no host time given
+    timing.RecordArrival(/*isWriteEnd=*/true, 10'700, 12'000);
+    timing.RecordArrival(true, 21'000, 20'800);  // late: 200 after its presentation
+    IoOffsetSpan read = timing.readArrival.Take();
+    EXPECT_EQ(read.count, 2U);
+    EXPECT_EQ(read.ticks, 2'900);
+    EXPECT_EQ(read.minTicks, 1'400);
+    EXPECT_EQ(read.maxTicks, 1'500);
+    IoOffsetSpan write = timing.writeMargin.Take();
+    EXPECT_EQ(write.count, 2U);
+    EXPECT_EQ(write.ticks, 1'100);
+    EXPECT_EQ(write.minTicks, -200);
+    EXPECT_EQ(write.maxTicks, 1'300);
+
+    // The next interval has its own least and most; the stream keeps both.
+    timing.RecordArrival(true, 30'000, 30'900);
+    write = timing.writeMargin.Take();
+    EXPECT_EQ(write.count, 1U);
+    EXPECT_EQ(write.minTicks, 900);
+    EXPECT_EQ(write.maxTicks, 900);
+    EXPECT_EQ(timing.writeMargin.Take().count, 0U);
+    const IoOffsetSpan stream = timing.writeMargin.Stream();
+    EXPECT_EQ(stream.count, 3U);
+    EXPECT_EQ(stream.ticks, 2'000);
+    EXPECT_EQ(stream.minTicks, -200);
+    EXPECT_EQ(stream.maxTicks, 1'300);
+    timing.Reset(0, 50, 200, 0, 0);
+    EXPECT_EQ(timing.writeMargin.Stream().count, 0U);
+    EXPECT_EQ(timing.readArrival.Take().count, 0U);
+}
+
+// Render: from this device's BeginRead returning to its WriteEnd beginning.
+// A WriteEnd with no BeginRead since the last one (an output-only client)
+// has none.
+TEST(IoOpTimingTests, RenderRunsFromBeginReadsReturnToWriteEndsEntry) {
+    IoOpTiming timing;
+    timing.Reset(0, 50, 200, 0, 0);
+    timing.RecordWriteEntry(900, 64);  // no BeginRead before it
+    timing.RecordReadReturn(1'000);
+    timing.RecordWriteEntry(1'450, 64);
+    timing.RecordWriteEntry(1'500, 64);  // a second WriteEnd of the same cycle
+    timing.RecordReadReturn(2'000);
+    timing.RecordReadReturn(3'000);  // a read without a write between
+    timing.RecordWriteEntry(3'700, 64);
+    const IoStepSpan render = timing.render.Stream();
+    EXPECT_EQ(render.count, 2U);
+    EXPECT_EQ(render.ticks, 1'150U);
+    EXPECT_EQ(render.maxTicks, 700U);
+    EXPECT_EQ(timing.writtenFrames.load(), 256U);
+}
+
+// Render by position in 8192 written frames: a client that is slow once in
+// every 128 cycles of 64 frames shows as one position, in an interval's
+// report and in the stream's.
+TEST(IoOpTimingTests, APeriodicLongRenderShowsAtItsPosition) {
+    IoOpTiming timing;
+    timing.Reset(0, 50, 200, 0, 0);
+    uint64_t now = 1'000;
+    const auto cycles = [&](uint32_t count, uint32_t slowCycle) {
+        for (uint32_t index = 0; index < count; ++index) {
+            const uint64_t written = timing.writtenFrames.load();
+            const bool slow = (written / 64) % 128 == slowCycle;
+            timing.RecordReadReturn(now);
+            now += slow ? 700 : 400 + (index % 3);
+            timing.RecordWriteEntry(now, 64);
+            now += 100;
+        }
+    };
+    cycles(128 * 40, 37);
+    IoRenderPhaseSpan span = timing.renderPhases.Span(/*take=*/true);
+    EXPECT_EQ(span.positions, 128U);
+    EXPECT_EQ(span.highFrame, 37U * 64U);
+    EXPECT_EQ(span.highCount, 40U);
+    EXPECT_EQ(span.highTicks, 40U * 700U);
+    EXPECT_LE(span.lowTicks / span.lowCount, 402U);
+
+    // The next interval's position is its own.
+    cycles(128 * 10, 90);
+    span = timing.renderPhases.Span(/*take=*/true);
+    EXPECT_EQ(span.highFrame, 90U * 64U);
+    EXPECT_EQ(span.highCount, 10U);
+    // The stream has both; the earlier, longer one has as high a mean.
+    span = timing.renderPhases.Span(/*take=*/false);
+    EXPECT_EQ(span.positions, 128U);
+    EXPECT_GE(span.highTicks / span.highCount, 400U + 300U * 10U / 50U);
+
+    // A position only a few stray renders fell on is left out.
+    timing.Reset(0, 50, 200, 0, 0);
+    now = 1'000;
+    cycles(128 * 40, 37);
+    timing.writtenFrames.fetch_add(32);  // one odd-sized write
+    timing.RecordReadReturn(now);
+    timing.RecordWriteEntry(now + 5'000, 64);
+    span = timing.renderPhases.Span(/*take=*/false);
+    EXPECT_EQ(span.positions, 129U);
+    EXPECT_EQ(span.highFrame, 37U * 64U);
+
+    timing.Reset(0, 50, 200, 0, 0);
+    EXPECT_EQ(timing.renderPhases.Span(false).positions, 0U);
+    EXPECT_EQ(timing.render.Stream().count, 0U);
 }
 
 } // namespace

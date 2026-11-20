@@ -355,6 +355,15 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                     ioTiming.RecordFollow(ioStartTicks - previousTicks);
                 }
             }
+            // When CoreAudio got here, against the host time it gives for the
+            // operation's first frame; and for a WriteEnd, how long since this
+            // device's BeginRead returned (the client's render).
+            if (isWriteEnd) {
+                ioTiming.RecordArrival(true, ioStartTicks, hostTime);
+                ioTiming.RecordWriteEntry(ioStartTicks, ioBufferFrameSize);
+            } else if (operation == IOUserAudioIOOperationBeginRead) {
+                ioTiming.RecordArrival(false, ioStartTicks, hostTime);
+            }
             // The operation's return: its time, with its pull's or its fill's
             // (`partTicks`), into the figures; a slow one is kept whole, and at
             // debug level every one goes into the IO trace (`capture`: with
@@ -396,6 +405,9 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                     ASFW::Audio::Runtime::IoOpFollowTag(driverIvars, isWriteEnd),
                     std::memory_order_relaxed);
                 gLastIoReturn.ticks.store(endTicks, std::memory_order_relaxed);
+                if (!isWriteEnd) {
+                    ioTiming.RecordReadReturn(endTicks);
+                }
                 return took;
             };
             if (operation == IOUserAudioIOOperationBeginRead) {
