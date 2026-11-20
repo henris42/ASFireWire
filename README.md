@@ -83,6 +83,10 @@ Reports identify the tested build where available and preserve known regressions
 Generic AV/C or DICE discovery does not guarantee working audio. A device appearing
 in the app, or telemetry showing packets, does not establish playback or capture.
 
+The host's FireWire card matters as much as the device. [README-PCIe-Cards.md](README-PCIe-Cards.md)
+lists the PCIe cards this fork has been tested with, how to identify a card's chip, and
+what to check on a new one.
+
 ## Testing and contributing
 
 Hardware tests, reproducible failures, diagnostic traces, and regression reports are

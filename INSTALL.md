@@ -33,12 +33,16 @@ Each build comes as `ASFW-<version>-<macos>-b<build>.zip` and contains:
      the boot disk's `EFI/OC/config.plist`, after a dated backup next to it. `--disarm`
      undoes it, `--dry-run` shows the change, `--esp diskXsY` picks another EFI partition.
    - **By hand:** find the PCI path of the FireWire controller, for example with
-     [gfxutil](https://github.com/acidanthera/gfxutil): `gfxutil | grep -i 104c:8025`
-     for the TI XIO2213B. It sits behind the card's bridge, so expect something like
+     [gfxutil](https://github.com/acidanthera/gfxutil): `gfxutil | grep -i 104c:823f`
+     for the TI XIO2213 (`104c:8025` is the TSB82AA2 of cards with a separate bridge chip;
+     [README-PCIe-Cards.md](README-PCIe-Cards.md) has the IDs and what to check on a card).
+     The controller sits behind the card's bridge, so expect something like
      `PciRoot(0x0)/Pci(0x1C,0x4)/Pci(0x0,0x0)/Pci(0x0,0x0)`. In OpenCore `config.plist`,
      under `DeviceProperties` > `Add` > *that path*, add the key `asfw-armed`, type
      **Data**, value exactly `01` (one byte; `0001` or a string does not arm). Reboot.
    - Check: `ioreg -rc IOPCIDevice | grep -i asfw-armed`
+   - Which cards have been tested, and what a new card should be checked for (GUID, ASPM,
+     risers, several cards): [README-PCIe-Cards.md](README-PCIe-Cards.md).
    - **To disarm, delete that key (or run `--disarm`) and reboot.** The EFI partition can
      be edited from another OS if this one no longer boots.
 
