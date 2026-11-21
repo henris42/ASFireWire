@@ -119,6 +119,12 @@ CONFIG_AGENT_BIN="/usr/local/libexec/asfw-config-agent"
 BOOT_TRACE_LABEL="net.asfw.boot-trace"
 BOOT_TRACE_PLIST="/Library/LaunchDaemons/${BOOT_TRACE_LABEL}.plist"
 
+# Boot check of asfw-opencore-arm.sh --install-boot-check: arms a controller again
+# whose PCI path moved. It runs its own copy of the arm script.
+REARM_LABEL="net.asfw.rearm"
+REARM_PLIST="/Library/LaunchDaemons/${REARM_LABEL}.plist"
+REARM_SCRIPT="/usr/local/libexec/asfw-opencore-arm.sh"
+
 install_config_agent() {
   local tmp
   if [[ ! -f "$SCRIPT_DIR/asfw-config-agent" ]]; then
@@ -201,6 +207,12 @@ PLIST
   rm -f "$tmp"
   sudo launchctl bootout "system/${BOOT_TRACE_LABEL}" 2>/dev/null || true
   sudo launchctl bootstrap system "$BOOT_TRACE_PLIST" 2>/dev/null || true
+  # An installed boot check runs this package's arm script from now on.
+  if [[ -e "$REARM_PLIST" && -f "$SCRIPT_DIR/asfw-opencore-arm.sh" ]] \
+     && ! cmp -s "$SCRIPT_DIR/asfw-opencore-arm.sh" "$REARM_SCRIPT" 2>/dev/null; then
+    sudo install -o root -g wheel -m 0755 "$SCRIPT_DIR/asfw-opencore-arm.sh" "$REARM_SCRIPT"
+    info "Updated ${REARM_SCRIPT} (boot check)."
+  fi
 }
 
 remove_config_agent() {
@@ -208,6 +220,11 @@ remove_config_agent() {
   if [[ -e "$BOOT_TRACE_PLIST" ]]; then
     sudo rm -f "$BOOT_TRACE_PLIST"
     info "Removed ${BOOT_TRACE_PLIST}."
+  fi
+  sudo launchctl bootout "system/${REARM_LABEL}" 2>/dev/null || true
+  if [[ -e "$REARM_PLIST" ]]; then
+    sudo rm -f "$REARM_PLIST" "$REARM_SCRIPT"
+    info "Removed ${REARM_PLIST}."
   fi
   launchctl bootout "gui/$(id -u)/${CONFIG_AGENT_LABEL}" 2>/dev/null || true
   if [[ -e "$CONFIG_AGENT_PLIST" ]]; then
@@ -245,6 +262,8 @@ offer_opencore_arming() {
   if [[ "$answer" == [yY]* ]]; then
     if sudo /bin/bash "$OPENCORE_ARM_SCRIPT" --arm; then
       info "Armed. It takes effect at the next boot."
+      info "The PCI path changes when cards or drives are added; to have a moved controller"
+      info "armed again at boot: sudo ./asfw-opencore-arm.sh --install-boot-check"
     else
       info "Arming did not complete; see above."
     fi
