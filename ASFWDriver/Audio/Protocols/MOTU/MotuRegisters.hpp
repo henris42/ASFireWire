@@ -35,6 +35,11 @@ enum class Reg : uint32_t {
     InOutConfV2 = 0x0c04,
     InputLevelV2 = 0x0c08,
     InputBoostV2 = 0x0c14,
+    MixReturnEnableV2 = 0x0c18,
+    MixOutput1V2 = 0x0c20,
+    MixOutput2V2 = 0x0c24,
+    MixOutput3V2 = 0x0c28,
+    MixOutput4V2 = 0x0c2c,
     OpticalBanksV3 = 0x0c94,
     StreamConfigV3 = 0x0b1c,
 };
@@ -114,6 +119,39 @@ enum class ClockSourceV2 : uint32_t {
     default:
         return 0;
     }
+}
+
+//==============================================================================
+// The monitor mixer's four mix buses (0x0c20, 0x0c24, 0x0c28, 0x0c2c) and the
+// mix return (0x0c18). A bus register reads fader [7:0], destination [11:8] and
+// mute bit 12. A write changes only what its set-enable bits name: bit 24 the
+// fader, bit 25 mute and destination together, so a mute change carries the
+// destination read before (FFADO 2.5.0 motu_controls.cpp MixMute::setValue,
+// MixFader::setValue; motu_mixerdefs.cpp MixerCtrls_828Mk2). The mix return
+// register is 0 or 1: whether a mix comes back to the host in the first two
+// capture chunks (snd-firewire-ctl-services protocols/motu/src/register_dsp.rs,
+// MIXER_RETURN_ENABLE_OFFSET, MIXER_OUTPUT_*).
+//==============================================================================
+
+inline constexpr uint32_t kMixBusMuted = 0x00001000u;
+inline constexpr uint32_t kMixBusDestinationMask = 0x00000f00u;
+inline constexpr uint32_t kMixBusSetMuteAndDestination = 0x02000000u;
+
+inline constexpr Reg kMixBusRegistersV2[] = {
+    Reg::MixOutput1V2, Reg::MixOutput2V2, Reg::MixOutput3V2, Reg::MixOutput4V2,
+};
+
+/// True for the v2 models whose mix buses the host mutes and unmutes. The
+/// registers are the same on the Traveler, 896HD, UltraLite and 8pre; only the
+/// 828mk2 has been run with it.
+[[nodiscard]] constexpr bool HasMixBusesV2(uint32_t unitSwVersion) noexcept {
+    return unitSwVersion == 0x3;
+}
+
+/// The word that mutes or unmutes a mix bus whose register reads `current`.
+[[nodiscard]] constexpr uint32_t MixBusMuteCommand(uint32_t current, bool mute) noexcept {
+    return kMixBusSetMuteAndDestination | (current & kMixBusDestinationMask) |
+           (mute ? kMixBusMuted : 0u);
 }
 
 //==============================================================================

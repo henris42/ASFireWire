@@ -1135,6 +1135,7 @@ void MotuProtocol::PatchLastSettings(DeviceSetting setting, uint32_t value) noex
         case DeviceSetting::InputBoosts:
             last.inputBoostRaw = (last.inputBoostRaw & ~last.analogInputSwitches) | value;
             break;
+        case DeviceSetting::HardwareMonitoring: last.hardwareMonitoring = value; break;
         }
     }
     lastSettingsBusy_.clear(std::memory_order_release);
@@ -1187,9 +1188,59 @@ void MotuProtocol::ReadDeviceSettings(std::function<void(IOReturn, DeviceSetting
                     snapshot.opticalInputMode = optical ? static_cast<uint32_t>(optical->input) : 0;
                     snapshot.opticalOutputMode = optical ? static_cast<uint32_t>(optical->output) : 0;
                 }
-                ReadAnalogInputSwitches(snapshot, std::move(callback));
+                ReadAnalogInputSwitches(
+                    snapshot, [this, callback = std::move(callback)](
+                                  IOReturn switchStatus, DeviceSettingsSnapshot withSwitches) mutable {
+                        if (switchStatus != kIOReturnSuccess || !HasMixBusesV2(unitSwVersion_)) {
+                            if (callback) callback(switchStatus, withSwitches);
+                            return;
+                        }
+                        ReadHardwareMix(0, false, withSwitches, std::move(callback));
+                    });
             });
     });
+}
+
+void MotuProtocol::ReadHardwareMix(size_t index, bool passing, DeviceSettingsSnapshot snapshot,
+                                   std::function<void(IOReturn, DeviceSettingsSnapshot)> callback) {
+    const size_t buses = std::size(kMixBusRegistersV2);
+    const bool isBus = index < buses;
+    (void)io_.ReadQuadBE(
+        AddressOf(isBus ? kMixBusRegistersV2[index] : Reg::MixReturnEnableV2),
+        [this, index, isBus, passing, snapshot, callback = std::move(callback)](
+            Async::AsyncStatus status, uint32_t raw) mutable {
+            if (status != Async::AsyncStatus::kSuccess) {
+                // A failed read leaves the setting out; the others stay settable.
+                ASFW_LOG(Audio, "MotuProtocol: mixer register %zu not read (%{public}s); hardware monitoring not offered",
+                         index, Logging::IOReturnName(Protocols::Ports::MapAsyncStatusToIOReturn(status)));
+                if (callback) callback(kIOReturnSuccess, snapshot);
+                return;
+            }
+            passing = passing || (isBus ? (raw & kMixBusMuted) == 0 : raw != 0);
+            if (isBus) {
+                ReadHardwareMix(index + 1, passing, snapshot, std::move(callback));
+                return;
+            }
+            snapshot.hardwareMonitoring = passing ? 1U : 0U;
+            snapshot.supportedSettings |= SettingBit(DeviceSetting::HardwareMonitoring);
+            if (callback) callback(kIOReturnSuccess, snapshot);
+        });
+}
+
+void MotuProtocol::ApplyHardwareMix(size_t index, bool on, CompletionCallback callback) {
+    if (index < std::size(kMixBusRegistersV2)) {
+        ModifyRegister(kMixBusRegistersV2[index],
+                       [on](uint32_t current) { return MixBusMuteCommand(current, !on); },
+                       [this, index, on, callback = std::move(callback)](IOReturn status) mutable {
+                           if (status != kIOReturnSuccess) {
+                               if (callback) callback(status);
+                               return;
+                           }
+                           ApplyHardwareMix(index + 1, on, std::move(callback));
+                       });
+        return;
+    }
+    ModifyRegister(Reg::MixReturnEnableV2, [on](uint32_t) { return on ? 1U : 0U; }, std::move(callback));
 }
 
 void MotuProtocol::ReadAnalogInputSwitches(DeviceSettingsSnapshot snapshot,
@@ -1297,6 +1348,19 @@ void MotuProtocol::ApplyDeviceSetting(DeviceSetting setting, uint32_t value,
                        std::move(callback));
         return;
     }
+    case DeviceSetting::HardwareMonitoring:
+        if (!HasMixBusesV2(unitSwVersion_)) {
+            if (callback) callback(kIOReturnUnsupported);
+            return;
+        }
+        if (value > 1) {
+            if (callback) callback(kIOReturnBadArgument);
+            return;
+        }
+        ASFW_LOG(Audio, "MotuProtocol: hardware monitoring -> %{public}s (the unit's four mix buses and the mix return)",
+                 value != 0 ? "on" : "off");
+        ApplyHardwareMix(0, value != 0, std::move(callback));
+        return;
     }
     if (callback) callback(kIOReturnBadArgument);
 }

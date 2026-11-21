@@ -25,6 +25,10 @@ enum class DeviceSetting : uint32_t {
     /// Analog input boost, one bit per input: bit n set adds 6 dB to analog
     /// input n+1.
     InputBoosts = 5,
+    /// The unit's own monitor mixer (MOTU CueMix): 0 mutes every mix bus and
+    /// the mix return to the host, 1 lets the mixes through as the unit holds
+    /// them. The host puts a unit at 0 when it first attaches.
+    HardwareMonitoring = 6,
 };
 
 /// Clock source codes. The MOTU v2 register codes are used as they are
@@ -65,6 +69,8 @@ struct DeviceSettingsSnapshot {
     uint32_t analogInputSwitches{0};
     uint32_t inputLevelRaw{0};
     uint32_t inputBoostRaw{0};
+    /// 0: every mix bus muted and the mix return off; 1: any of them passes.
+    uint32_t hardwareMonitoring{0};
 };
 
 [[nodiscard]] constexpr uint32_t SettingBit(DeviceSetting setting) noexcept {

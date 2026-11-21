@@ -1592,6 +1592,87 @@ TEST(MotuDeviceSettingsTests, TheTravelerSwitchesOnlyAnalog5To8) {
     EXPECT_EQ(bus.writes[0].value, 0x0000003fU);  // analog 1-4 bits untouched
 }
 
+TEST(MotuDeviceSettingsTests, HardwareMonitoringReadsOnWhileAnyMixBusPasses) {
+    RecordingBus bus;
+    ProgramClockAndOptical(bus);
+    for (const Reg reg : ASFW::Audio::Motu::kMixBusRegistersV2) bus.readValues[LowOf(reg)] = 0x1180U;
+    bus.readValues[LowOf(Reg::MixOutput3V2)] = 0x00000280U;  // mix 3 unmuted
+    bus.readValues[LowOf(Reg::MixReturnEnableV2)] = 0U;
+    RouteState routes;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    auto snapshot = ReadSettings(protocol);
+    ASSERT_TRUE(snapshot.has_value());
+    EXPECT_NE(snapshot->supportedSettings & SettingBit(DeviceSetting::HardwareMonitoring), 0U);
+    EXPECT_EQ(snapshot->hardwareMonitoring, 1U);
+
+    // Every bus muted, and the return still on: a mix still reaches the host.
+    bus.readValues[LowOf(Reg::MixOutput3V2)] = 0x1280U;
+    bus.readValues[LowOf(Reg::MixReturnEnableV2)] = 1U;
+    snapshot = ReadSettings(protocol);
+    ASSERT_TRUE(snapshot.has_value());
+    EXPECT_EQ(snapshot->hardwareMonitoring, 1U);
+
+    bus.readValues[LowOf(Reg::MixReturnEnableV2)] = 0U;
+    snapshot = ReadSettings(protocol);
+    ASSERT_TRUE(snapshot.has_value());
+    EXPECT_EQ(snapshot->hardwareMonitoring, 0U);
+}
+
+TEST(MotuDeviceSettingsTests, HardwareMonitoringOffMutesEveryMixBusAndTheReturn) {
+    RecordingBus bus;
+    bus.readValues[LowOf(Reg::MixOutput1V2)] = 0x00000180U;  // to destination 1, fader 0x80
+    bus.readValues[LowOf(Reg::MixOutput2V2)] = 0x00000b40U;
+    bus.readValues[LowOf(Reg::MixOutput3V2)] = 0x00001000U;  // muted already
+    bus.readValues[LowOf(Reg::MixOutput4V2)] = 0x00000000U;
+    bus.readValues[LowOf(Reg::MixReturnEnableV2)] = 1U;
+    RouteState routes;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    EXPECT_EQ(Apply(protocol, DeviceSetting::HardwareMonitoring, 0U), kIOReturnSuccess);
+
+    // Mute and destination are set together; the fader has no set-enable bit here.
+    ASSERT_EQ(bus.writes.size(), 5U);
+    EXPECT_EQ(bus.writes[0].addressLo, LowOf(Reg::MixOutput1V2));
+    EXPECT_EQ(bus.writes[0].value, 0x02001100U);
+    EXPECT_EQ(bus.writes[1].value, 0x02001b00U);
+    EXPECT_EQ(bus.writes[2].value, 0x02001000U);
+    EXPECT_EQ(bus.writes[3].addressLo, LowOf(Reg::MixOutput4V2));
+    EXPECT_EQ(bus.writes[3].value, 0x02001000U);
+    EXPECT_EQ(bus.writes[4].addressLo, LowOf(Reg::MixReturnEnableV2));
+    EXPECT_EQ(bus.writes[4].value, 0U);
+}
+
+TEST(MotuDeviceSettingsTests, HardwareMonitoringOnUnmutesAndKeepsTheDestinations) {
+    RecordingBus bus;
+    for (const Reg reg : ASFW::Audio::Motu::kMixBusRegistersV2) bus.readValues[LowOf(reg)] = 0x1000U;
+    bus.readValues[LowOf(Reg::MixOutput1V2)] = 0x00001180U;
+    bus.readValues[LowOf(Reg::MixReturnEnableV2)] = 0U;
+    RouteState routes;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, k828mk2SwVersion);
+
+    EXPECT_EQ(Apply(protocol, DeviceSetting::HardwareMonitoring, 1U), kIOReturnSuccess);
+
+    ASSERT_EQ(bus.writes.size(), 5U);
+    EXPECT_EQ(bus.writes[0].value, 0x02000100U);
+    EXPECT_EQ(bus.writes[4].value, 1U);
+    EXPECT_EQ(Apply(protocol, DeviceSetting::HardwareMonitoring, 2U), kIOReturnBadArgument);
+}
+
+TEST(MotuDeviceSettingsTests, OnlyThe828mk2OffersHardwareMonitoring) {
+    RecordingBus bus;
+    ProgramClockAndOptical(bus);
+    RouteState routes;
+    MotuProtocol protocol(bus, bus, routes.registry, routes.route, kTravelerSwVersion);
+
+    const auto snapshot = ReadSettings(protocol);
+    ASSERT_TRUE(snapshot.has_value());
+    EXPECT_EQ(snapshot->supportedSettings & SettingBit(DeviceSetting::HardwareMonitoring), 0U);
+    EXPECT_EQ(std::count(bus.reads.begin(), bus.reads.end(), LowOf(Reg::MixOutput1V2)), 0);
+    EXPECT_EQ(Apply(protocol, DeviceSetting::HardwareMonitoring, 0U), kIOReturnUnsupported);
+    EXPECT_TRUE(bus.writes.empty());
+}
+
 TEST(MotuDeviceSettingsTests, AModelWithoutSwitchesNeitherReadsNorWritesThem) {
     RecordingBus bus;
     ProgramClockAndOptical(bus);

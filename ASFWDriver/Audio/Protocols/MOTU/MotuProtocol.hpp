@@ -203,6 +203,13 @@ private:
     /// Completes `snapshot` with the analog input switches, on a model that has them.
     void ReadAnalogInputSwitches(DeviceSettingsSnapshot snapshot,
                                  std::function<void(IOReturn, DeviceSettingsSnapshot)> callback);
+    /// Completes `snapshot` with the monitor mixer's state, on a model whose mix
+    /// buses the host handles: reads mix bus `index` and those after it, then the
+    /// mix return. `passing` is whether a register read so far lets a mix through.
+    void ReadHardwareMix(size_t index, bool passing, DeviceSettingsSnapshot snapshot,
+                         std::function<void(IOReturn, DeviceSettingsSnapshot)> callback);
+    /// Mutes or unmutes mix bus `index` and those after it, then the mix return.
+    void ApplyHardwareMix(size_t index, bool on, CompletionCallback callback);
     [[nodiscard]] Reg ClockRegister() const noexcept { return unitSwVersion_ == 1 ? Reg::IsocCommControl : Reg::ClockStatusV2; }
     void EnsureAsyncAddress(CompletionCallback callback);
     void SetSampleRateV3(uint32_t rate, ClockStatus clock, CompletionCallback callback);
