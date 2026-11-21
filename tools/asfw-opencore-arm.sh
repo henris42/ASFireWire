@@ -109,7 +109,9 @@ fi
 
 # ------------------------------------------------------------ boot check
 # The LaunchDaemon runs --boot-check, which runs --follow and reports. A notification
-# needs the logged-in user's session, so it waits for one (five minutes at most).
+# needs the logged-in user's session, so it waits for one (ten minutes at most): the
+# console belongs to root and then to _windowserver until somebody has logged in, and
+# a notification posted before that user's Notification Centre runs is lost.
 if [ "$MODE" = installcheck ]; then
     self=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
     install -d -o root -g wheel -m 0755 "$(dirname "$REARM_SCRIPT")" /var/log/asfw || exit 1
@@ -151,10 +153,20 @@ if [ "$MODE" = bootcheck ]; then
         11) msg="The FireWire controller moved to a new PCI path, and arming it again failed. See $REARM_LOG." ;;
         *) exit 0 ;;
     esac
-    u=root
-    for _ in $(seq 60); do u=$(stat -f %Su /dev/console); [ "$u" != root ] && break; sleep 5; done
-    [ "$u" != root ] && launchctl asuser "$(id -u "$u")" sudo -u "$u" \
-        osascript -e "display notification \"$msg\" with title \"ASFireWire\"" 2>/dev/null
+    uid=0
+    for _ in $(seq 120); do
+        uid=$(id -u "$(stat -f %Su /dev/console)" 2>/dev/null || echo 0)
+        [ "$uid" -ge 500 ] && pgrep -u "$uid" -x NotificationCenter >/dev/null && break
+        uid=0; sleep 5
+    done
+    if [ "$uid" -ge 500 ]; then
+        sleep 5
+        launchctl asuser "$uid" sudo -u "#$uid" \
+            osascript -e "display notification \"$msg\" with title \"ASFireWire\"" 2>/dev/null
+        echo "notified uid $uid" >> "$REARM_LOG"
+    else
+        echo "nobody logged in within ten minutes; not notified" >> "$REARM_LOG"
+    fi
     exit 0
 fi
 
