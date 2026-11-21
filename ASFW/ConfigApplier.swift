@@ -153,6 +153,12 @@ final class ConfigApplier {
         if applied.spec != current.spec {
             Self.say("Log level \(current.spec) -> \(applied.spec).")
         }
+        // The command line sets the driver and then saves: a level saved while
+        // this one was being set is newer than what the driver now has.
+        if (store.logLevel ?? "") != wanted {
+            Self.say("The saved log level changed meanwhile; setting it again.")
+            applyLogLevel(to: connector, id: id)
+        }
     }
 
     /// Sets the remembered CPU idle limit (DriverConnector+BusStall.swift)
