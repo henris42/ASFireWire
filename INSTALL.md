@@ -111,6 +111,15 @@ the driver's log level (see "Log level and start steps"). Changing an optical mo
 count, so the audio device is republished with the new layout. Every change is remembered
 per device GUID, in the app's preferences.
 
+**Internal mixer (828mkII).** The unit has a monitor mixer of its own (CueMix), which keeps
+whatever mix it was last given, by its front panel or another computer. When a unit attaches
+the driver switches that off: it mutes the four mix buses and the mix return, so an input is
+heard only where an application sends it and the *Mix Return* channels are silent. The
+`[Attach]` log line says `internal mix off`. **Device Settings → Internal Mixer → Hardware
+monitoring** switches the mixes back on as the unit holds them; the choice is remembered per
+unit like the other settings. The driver changes mutes only, never a mix's levels or its
+output assignment.
+
 Each unit is published to Core Audio under its own name, **"828mkII #128791 — ASFW"**, and
 its own device UID, both derived from the unit's GUID (the EUI-64 in its config ROM). So the
 Sound pane, Audio MIDI Setup and DAW selections stay with the physical unit whichever card or
