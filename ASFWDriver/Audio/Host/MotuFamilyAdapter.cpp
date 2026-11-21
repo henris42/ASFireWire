@@ -111,6 +111,7 @@ const char* SettingName(DeviceSetting setting) noexcept {
     case DeviceSetting::OpticalOutputMode: return "optical out";
     case DeviceSetting::InputLevels: return "input levels";
     case DeviceSetting::InputBoosts: return "input boosts";
+    case DeviceSetting::HardwareMonitoring: return "internal mix";
     }
     return "?";
 }
@@ -140,6 +141,20 @@ std::vector<PendingSetting> SettingsToPutBack(const DeviceSettingsSnapshot& now,
         offer(DeviceSetting::InputLevels, now.inputLevelRaw & switches, left.inputLevelRaw & switches);
         offer(DeviceSetting::InputBoosts, now.inputBoostRaw & switches, left.inputBoostRaw & switches);
     }
+    offer(DeviceSetting::HardwareMonitoring, now.hardwareMonitoring, left.hardwareMonitoring);
+    return pending;
+}
+
+// A unit the host has not seen since the driver started comes with whatever
+// monitor mix it was left with, by its front panel or another computer. The
+// host's applications do the monitoring, so the mix is switched off; the
+// setting switches it on again, and a returning unit keeps what it left with.
+std::vector<PendingSetting> SettingsForFirstAttach(const DeviceSettingsSnapshot& now) {
+    std::vector<PendingSetting> pending;
+    if ((now.supportedSettings & SettingBit(DeviceSetting::HardwareMonitoring)) != 0 &&
+        now.hardwareMonitoring != 0) {
+        pending.push_back({DeviceSetting::HardwareMonitoring, 0});
+    }
     return pending;
 }
 
@@ -156,11 +171,13 @@ public:
           done_(std::move(done)) {}
 
     void Start() {
-        if (remembered_ && remembered_->settings) {
+        if (remembered_ ? remembered_->settings.has_value() : newPublication_) {
             auto self = shared_from_this();
             protocol_->ReadDeviceSettings([self](IOReturn status, DeviceSettingsSnapshot now) {
                 if (status == kIOReturnSuccess) {
-                    self->pending_ = SettingsToPutBack(now, *self->remembered_->settings);
+                    self->pending_ = self->remembered_
+                                         ? SettingsToPutBack(now, *self->remembered_->settings)
+                                         : SettingsForFirstAttach(now);
                 }
                 self->PutBackNextSetting();
             });
@@ -178,7 +195,10 @@ private:
         const PendingSetting step = pending_[nextSetting_++];
         auto self = shared_from_this();
         protocol_->ApplyDeviceSetting(step.setting, step.value, [self, step](IOReturn status) {
-            self->Note(status == kIOReturnSuccess ? "" : "failed ", SettingName(step.setting));
+            self->Note(status == kIOReturnSuccess ? "" : "failed ",
+                       !self->remembered_ && step.setting == DeviceSetting::HardwareMonitoring
+                           ? "internal mix switched off"
+                           : SettingName(step.setting));
             self->PutBackNextSetting();
         });
     }
@@ -272,13 +292,19 @@ private:
                               : changes_.empty() ? "as it left" : "put back";
         ASFW_LOG_WARNING(Audio,
                          "[Attach] %{public}s GUID=0x%016llx: %u Hz, %u in/%u out, clock %{public}s, "
-                         "optical %{public}s/%{public}s, levels 0x%02x boosts 0x%02x; %{public}s%{public}s%{public}s",
+                         "optical %{public}s/%{public}s, levels 0x%02x boosts 0x%02x, internal mix %{public}s; "
+                         "%{public}s%{public}s%{public}s",
                          config.deviceName.c_str(), record_.guid, config.currentSampleRate,
                          config.inputChannelCount, config.outputChannelCount, clockName,
                          settings ? OpticalModeName(settings->opticalInputMode) : "?",
                          settings ? OpticalModeName(settings->opticalOutputMode) : "?",
                          settings ? (settings->inputLevelRaw & switches) : 0U,
-                         settings ? (settings->inputBoostRaw & switches) : 0U, outcome,
+                         settings ? (settings->inputBoostRaw & switches) : 0U,
+                         !settings || (settings->supportedSettings &
+                                       SettingBit(DeviceSetting::HardwareMonitoring)) == 0
+                             ? "?"
+                             : settings->hardwareMonitoring != 0 ? "on" : "off",
+                         outcome,
                          changes_.empty() ? "" : ": ", changes_.c_str());
     }
 

@@ -388,22 +388,86 @@ TEST(MotuFamilyAdapterTests, DescribeCarriesTheCatalogProfileBuilder) {
 }
 
 // E7c: the only writes are the notification address registration (V2 too).
+// The mix buses muted and the mix return off: what the host leaves a unit with.
+void ProgramMixerOff(RecordingBus& bus) {
+    for (const Reg reg : ASFW::Audio::Motu::kMixBusRegistersV2) {
+        bus.readValues[LowOf(reg)] = ASFW::Audio::Motu::kMixBusMuted;
+    }
+    bus.readValues[LowOf(Reg::MixReturnEnableV2)] = 0U;
+}
+
 TEST(MotuFamilyAdapterTests, DescribeRegistersNotificationsThenReadsClockAndOptical) {
     MotuRig rig;
     rig.bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptAdat, kOptAdat);
+    ProgramMixerOff(rig.bus);
     MotuFamilyAdapter adapter;
 
     (void)RunDescribe(adapter, rig.Input());
 
-    // Description needs current rate and optical state, not a default 48k guess.
-    // A new publication then reads the settings, for its attach line and the
-    // put-back memory: clock and optical again, then the input switches.
+    // A first attach reads the settings (clock, optical, input switches, mixer)
+    // for what it has to switch off. Description then needs current rate and
+    // optical state, not a default 48k guess, and a new publication reads the
+    // settings again for its attach line and the put-back memory.
+    const auto read = [&](Reg reg) { return std::ranges::count(rig.bus.reads, LowOf(reg)); };
     ASSERT_GE(rig.bus.reads.size(), 4U);
     EXPECT_EQ(rig.bus.reads[0], LowOf(Reg::ClockStatusV2));
     EXPECT_EQ(rig.bus.reads[1], LowOf(Reg::InOutConfV2));
-    EXPECT_EQ(rig.bus.reads[2], LowOf(Reg::ClockStatusV2));
-    EXPECT_EQ(rig.bus.reads[3], LowOf(Reg::InOutConfV2));
+    EXPECT_EQ(read(Reg::ClockStatusV2), 3);
+    EXPECT_EQ(read(Reg::InOutConfV2), 3);
+    EXPECT_EQ(read(Reg::MixOutput1V2), 2);
     EXPECT_EQ(rig.bus.writes, (std::vector<uint32_t>{LowOf(Reg::AsyncAddrHi), LowOf(Reg::AsyncAddrLo)}));
+}
+
+// The unit comes with the monitor mix it was left with by another computer;
+// the host's applications do the monitoring.
+TEST(MotuFamilyAdapterTests, AFirstAttachSwitchesTheInternalMixOff) {
+    MotuRig rig;
+    rig.bus.applyWrites = true;
+    rig.bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptAdat, kOptAdat);
+    for (const Reg reg : ASFW::Audio::Motu::kMixBusRegistersV2) rig.bus.readValues[LowOf(reg)] = 0U;
+    rig.bus.readValues[LowOf(Reg::MixOutput1V2)] = 0x00000180U;  // mix 1 to an output, open
+    rig.bus.readValues[LowOf(Reg::MixReturnEnableV2)] = 1U;
+    MotuFamilyAdapter adapter;
+
+    ASSERT_NE(AsDescription(RunDescribe(adapter, rig.Input())), nullptr);
+
+    const auto written = [&](Reg reg) { return std::ranges::count(rig.bus.writes, LowOf(reg)); };
+    for (const Reg reg : ASFW::Audio::Motu::kMixBusRegistersV2) {
+        EXPECT_EQ(written(reg), 1);
+        EXPECT_NE(rig.bus.readValues[LowOf(reg)] & ASFW::Audio::Motu::kMixBusMuted, 0U);
+    }
+    EXPECT_EQ(rig.bus.readValues[LowOf(Reg::MixOutput1V2)] & 0x0f00U, 0x0100U) << "destination kept";
+    EXPECT_EQ(rig.bus.readValues[LowOf(Reg::MixReturnEnableV2)], 0U);
+    const auto settings = rig.protocol->LastDeviceSettings();
+    ASSERT_TRUE(settings.has_value());
+    EXPECT_EQ(settings->hardwareMonitoring, 0U);
+}
+
+// Switched on by the user, a unit that returns keeps its mixes.
+TEST(MotuFamilyAdapterTests, AReturningUnitKeepsHardwareMonitoringOn) {
+    MotuRig rig;
+    rig.bus.applyWrites = true;
+    rig.bus.readValues[LowOf(Reg::InOutConfV2)] = OpticalWord(kOptAdat, kOptAdat);
+    ProgramMixerOff(rig.bus);
+    MotuFamilyAdapter adapter;
+    const auto first = RunDescribe(adapter, rig.Input());
+    ASSERT_NE(AsDescription(first), nullptr);
+    std::optional<IOReturn> applied;
+    rig.protocol->ApplyDeviceSetting(ASFW::Audio::DeviceSetting::HardwareMonitoring, 1U,
+                                     [&](IOReturn status) { applied = status; });
+    ASSERT_EQ(applied, kIOReturnSuccess);
+    const auto left = rig.protocol->LastDeviceSettings();
+    ASSERT_TRUE(left.has_value());
+    EXPECT_EQ(left->hardwareMonitoring, 1U);
+    rig.bus.writes.clear();
+
+    auto input = rig.Input();
+    input.remembered = RememberedConfiguration{
+        .sampleRateHz = AsDescription(first)->currentSampleRate, .settings = left};
+    ASSERT_NE(AsDescription(RunDescribe(adapter, input)), nullptr);
+
+    EXPECT_EQ(std::ranges::count(rig.bus.writes, LowOf(Reg::MixOutput1V2)), 0);
+    EXPECT_EQ(rig.bus.readValues[LowOf(Reg::MixOutput1V2)] & ASFW::Audio::Motu::kMixBusMuted, 0U);
 }
 
 TEST(MotuFamilyAdapterTests, ARefreshOfALiveEndpointReadsOnlyClockAndOptical) {
