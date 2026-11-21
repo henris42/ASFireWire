@@ -11,7 +11,17 @@
 #
 #   sudo ./asfw-opencore-arm.sh --report            show controllers, paths and config state; change nothing
 #   sudo ./asfw-opencore-arm.sh                     arm every FireWire OHCI found (same as --arm)
-#   sudo ./asfw-opencore-arm.sh --disarm            remove asfw-armed (and asfw-log-level) from every path
+#   sudo ./asfw-opencore-arm.sh --disarm            remove asfw-armed (and asfw-log-level) from every path,
+#                                                   also from armed paths that have no controller now
+#   sudo ./asfw-opencore-arm.sh --follow            arm a controller whose PCI path has moved: only when a
+#                                                   controller is unarmed and the config has an armed path with
+#                                                   no controller at it. The old path stays armed. Exit status
+#                                                   10: armed, reboot; 11: it moved and the write failed
+#   sudo ./asfw-opencore-arm.sh --install-boot-check   run --follow at every boot (LaunchDaemon net.asfw.rearm):
+#                                                   the PCI path changes when cards or NVMe drives are added
+#                                                   or moved. Logs to /var/log/asfw/rearm.log and tells the
+#                                                   logged-in user when one more reboot is needed
+#   sudo ./asfw-opencore-arm.sh --remove-boot-check    remove it again
 #   options:
 #     --esp diskXsY      use this EFI partition (default: the ESP on the boot disk)
 #     --vtd              also set Kernel → Quirks → DisableIoMapper = false. Needed with more than
@@ -54,12 +64,21 @@ info() { printf '        %s\n' "$*"; }
 # missing key's error on stdout, so its exit status decides, not its output.
 plget() { local v; v=$(plutil -extract "$1" raw -o - "$2" 2>/dev/null) || return 0; printf '%s' "$v"; }
 
-MODE=arm; ESP=""; VTD=0; DRY=0; LOGLEVEL=""; NO_LOGLEVEL=0; BOOTTRACE=""; NO_BOOTTRACE=0; START=""; NO_START=0; GIVEN=""; KEEP_ASPM=0
+REARM_LABEL=net.asfw.rearm
+REARM_PLIST=/Library/LaunchDaemons/$REARM_LABEL.plist
+REARM_SCRIPT=/usr/local/libexec/asfw-opencore-arm.sh
+REARM_LOG=${ASFW_REARM_LOG:-/var/log/asfw/rearm.log}
+
+MODE=arm; FOLLOW=0; ESP=""; VTD=0; DRY=0; LOGLEVEL=""; NO_LOGLEVEL=0; BOOTTRACE=""; NO_BOOTTRACE=0; START=""; NO_START=0; GIVEN=""; KEEP_ASPM=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --arm) MODE=arm ;;
         --disarm) MODE=disarm ;;
         --report) MODE=report ;;
+        --follow) MODE=arm; FOLLOW=1 ;;
+        --boot-check) MODE=bootcheck ;;
+        --install-boot-check) MODE=installcheck ;;
+        --remove-boot-check) MODE=removecheck ;;
         --esp) ESP="${2:-}"; shift ;;
         --log-level) LOGLEVEL="${2:-}"; shift ;;
         --no-log-level) NO_LOGLEVEL=1 ;;
@@ -75,7 +94,7 @@ while [ $# -gt 0 ]; do
         --vtd) VTD=1 ;;
         --keep-aspm) KEEP_ASPM=1 ;;
         --dry-run) DRY=1 ;;
-        -h|--help) sed -n '2,44p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,55p' "$0"; exit 0 ;;
         *) echo "unknown option: $1 (see --help)"; exit 2 ;;
     esac
     shift
@@ -86,6 +105,57 @@ if [ -n "$LOGLEVEL" ] && ! grep -Eqi "^ *($LEVELS)( *[, ] *[a-z]+=($LEVELS))* *\
 fi
 if [ "$MODE" != report ] && [ "$DRY" = 0 ] && [ "$(id -u)" != 0 ]; then
     echo "Run with sudo (it mounts the EFI partition and edits config.plist)."; exit 2
+fi
+
+# ------------------------------------------------------------ boot check
+# The LaunchDaemon runs --boot-check, which runs --follow and reports. A notification
+# needs the logged-in user's session, so it waits for one (five minutes at most).
+if [ "$MODE" = installcheck ]; then
+    self=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
+    install -d -o root -g wheel -m 0755 "$(dirname "$REARM_SCRIPT")" /var/log/asfw || exit 1
+    [ "$self" -ef "$REARM_SCRIPT" ] || install -o root -g wheel -m 0755 "$self" "$REARM_SCRIPT" || exit 1
+    cat > "$REARM_PLIST" <<PLIST || exit 1
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$REARM_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>$REARM_SCRIPT</string>
+    <string>--boot-check</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><false/>
+</dict>
+</plist>
+PLIST
+    chown root:wheel "$REARM_PLIST"; chmod 0644 "$REARM_PLIST"
+    ok "installed $REARM_PLIST and $REARM_SCRIPT"
+    info "From the next boot on, a controller whose PCI path moved is armed again by itself"
+    info "(log: $REARM_LOG). --remove-boot-check removes it."
+    exit 0
+fi
+if [ "$MODE" = removecheck ]; then
+    launchctl bootout "system/$REARM_LABEL" 2>/dev/null
+    rm -f "$REARM_PLIST" "$REARM_SCRIPT" && ok "removed $REARM_PLIST and $REARM_SCRIPT"
+    exit 0
+fi
+if [ "$MODE" = bootcheck ]; then
+    mkdir -p "$(dirname "$REARM_LOG")"
+    out=$(/bin/bash "$0" --follow 2>&1); rc=$?
+    { date '+%F %T'; printf '%s\n' "$out" | sed -E $'s/\x1b\\[[0-9;]*m//g'; echo "exit status $rc"; } >> "$REARM_LOG"
+    case "$rc" in
+        10) msg="The FireWire controller moved to a new PCI path and is armed again. Restart once more to start ASFireWire." ;;
+        11) msg="The FireWire controller moved to a new PCI path, and arming it again failed. See $REARM_LOG." ;;
+        *) exit 0 ;;
+    esac
+    u=root
+    for _ in $(seq 60); do u=$(stat -f %Su /dev/console); [ "$u" != root ] && break; sleep 5; done
+    [ "$u" != root ] && launchctl asuser "$(id -u "$u")" sudo -u "$u" \
+        osascript -e "display notification \"$msg\" with title \"ASFireWire\"" 2>/dev/null
+    exit 0
 fi
 
 OCGUID=7C436110-AB2A-4BBB-A880-FE41995C9F82
@@ -171,9 +241,11 @@ while IFS=$'\t' read -r p n ids; do
     if [ -n "$aspm" ]; then info "         bridge $bridge: pci-aspm-default = $aspm (ASPM off; XIO2213B erratum #2)"
     else warn "bridge $bridge: no pci-aspm-default in the config; L1 stays as the firmware left it (XIO2213B erratum #2: hang on L1 exit)"; fi
 done <<< "$PATHS"
+[ -f "$REARM_PLIST" ] && info "boot check installed ($REARM_PLIST): a controller whose path moved is armed again at boot"
 # Paths in the config that carry asfw-* properties but are not in the list above:
-# a card that was pulled, or a slot armed with --path.
-plutil -extract DeviceProperties.Add xml1 -o - "$C" 2>/dev/null | perl -e '
+# a card that was pulled, a slot armed with --path, or where a controller was before
+# the PCI layout changed.
+OTHERS=$(plutil -extract DeviceProperties.Add xml1 -o - "$C" 2>/dev/null | perl -e '
     my $depth = 0; my $cur = ""; my %paths;
     while (<STDIN>) {
         if ($depth == 1 && m{<key>(PciRoot[^<]*)</key>}) { $cur = $1; $paths{$cur} = ""; }
@@ -182,8 +254,20 @@ plutil -extract DeviceProperties.Add xml1 -o - "$C" 2>/dev/null | perl -e '
     }
     for (sort keys %paths) { print "$_\t$paths{$_}\n" if $paths{$_} ne ""; }' |
 while IFS=$'\t' read -r p props; do
-    grep -q "^$p"$'\t' <<< "$PATHS" || warn "no controller at $p; config has:$props"
-done
+    grep -qF "$p"$'\t' <<< "$PATHS" || printf '%s\t%s\n' "$p" "$props"
+done)
+STALE_ARMED=""; UNARMED=""
+while IFS=$'\t' read -r p props; do
+    [ -z "$p" ] && continue
+    warn "no controller at $p; config has:$props"
+    [[ "$props " == *" asfw-armed "* ]] && STALE_ARMED+="$p"$'\n'
+done <<< "$OTHERS"
+while IFS=$'\t' read -r p n ids; do
+    [ "$(armed_count "$p")" -gt 0 ] || UNARMED+="$p"$'\n'
+done <<< "$PATHS"
+if [ -n "$UNARMED" ] && [ -n "$STALE_ARMED" ]; then
+    warn "an unarmed controller and an armed path without one: the PCI path has probably moved (--follow arms the new path)"
+fi
 bootargs=$(plget "NVRAM.Add.$OCGUID.boot-args" "$C")
 info "boot-args: ${bootargs:-<none>}"
 if [ "$mem" -gt 4 ]; then
@@ -198,6 +282,18 @@ acpi_delete=$(plutil -extract ACPI.Delete xml1 -o - "$C" 2>/dev/null || true)
 grep -qi 'DMAR' <<< "$acpi_delete" && warn "config deletes an ACPI DMAR table: VT-d will not be available"
 
 [ "$MODE" = report ] && exit 0
+if [ "$FOLLOW" = 1 ]; then
+    [ -z "$UNARMED" ] && { ok "every controller present is armed"; exit 0; }
+    if [ -z "$STALE_ARMED" ]; then
+        info "an unarmed controller, and no armed path without a controller: not a move, nothing done"; exit 0
+    fi
+fi
+# --disarm means every path, also the armed ones no controller sits at now.
+if [ "$MODE" = disarm ] && [ -z "$GIVEN" ] && [ -n "$STALE_ARMED" ]; then
+    PATHS+=$'\n'$(sed -e '/^$/d' -e $'s/$/\tgone\t/' <<< "$STALE_ARMED")
+fi
+# In the change section a failure after a detected move has its own exit status.
+give_up() { [ "$FOLLOW" = 1 ] && exit 11; exit 1; }
 
 # ------------------------------------------------------------ change
 TMP=$(mktemp /tmp/asfw-oc.XXXXXX); cp "$C" "$TMP"
@@ -267,7 +363,7 @@ done <<< "$PATHS"
 if [ "$VTD" = 1 ] && [ "$iomapper" != false ]; then
     plutil -replace Kernel.Quirks.DisableIoMapper -bool NO "$TMP" && { ok "DisableIoMapper → false"; changed=1; }
 fi
-plutil -lint "$TMP" >/dev/null || { bad "edited config does not lint; nothing written"; rm -f "$TMP"; exit 1; }
+plutil -lint "$TMP" >/dev/null || { bad "edited config does not lint; nothing written"; rm -f "$TMP"; give_up; }
 
 if [ "$changed" = 0 ]; then ok "nothing to change"; rm -f "$TMP"; exit 0; fi
 if [ "$DRY" = 1 ]; then
@@ -275,6 +371,8 @@ if [ "$DRY" = 1 ]; then
     rm -f "$TMP"; exit 0
 fi
 bak="$C.bak-$(date +%Y%m%d-%H%M%S)-asfw-$MODE"
-cp "$C" "$bak" && cp "$TMP" "$C" && rm -f "$TMP" || { bad "write failed; config unchanged (backup: $bak)"; exit 1; }
+cp "$C" "$bak" && cp "$TMP" "$C" && rm -f "$TMP" || { bad "write failed; config unchanged (backup: $bak)"; give_up; }
 ok "written; backup $(basename "$bak")"
 bold "Takes effect at the next boot. If that boot fails, boot another OpenCore (e.g. the installer stick) and run --disarm, or restore the backup."
+[ "$FOLLOW" = 1 ] && exit 10
+exit 0
