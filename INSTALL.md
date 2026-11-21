@@ -11,6 +11,7 @@ Each build comes as `ASFW-<version>-<macos>-b<build>.zip` and contains:
 | `ASFW.app` | The app, with the driver (`net.asfw.driver.dext`) inside it. On Monterey/Ventura it is the **lite** ASFW app: configuration and diagnostics (install, bus inspector, controller status, AV/C and DICE reports, logs, logging settings, Core Audio, Duet) without the Metal audio analyzer, meters, DV capture and MCP; on Sonoma and later it is the full app |
 | `install.sh` | Installs, updates, checks and removes it |
 | `asfw-opencore-arm.sh` | Arms or disarms the FireWire controller in OpenCore's `config.plist` (see below) |
+| `README-Hackintosh.md`, `README-PCIe-Cards.md` | What is specific to OpenCore machines, and to the PCIe card |
 | `Entitlements/` | Used by `install.sh` to sign the app and driver |
 | `BUILDINFO.txt` | Which source, macOS target and options this build was made from |
 
@@ -43,6 +44,12 @@ Each build comes as `ASFW-<version>-<macos>-b<build>.zip` and contains:
    - Check: `ioreg -rc IOPCIDevice | grep -i asfw-armed`
    - Which cards have been tested, and what a new card should be checked for (GUID, ASPM,
      risers, several cards): [README-PCIe-Cards.md](README-PCIe-Cards.md).
+   - **The path changes when the PCIe layout does** (an NVMe drive or a card added or moved,
+     some BIOS changes). The controller is then unarmed and the driver no longer starts:
+     `sudo ./asfw-opencore-arm.sh --follow` arms the new path, and
+     `sudo ./asfw-opencore-arm.sh --install-boot-check` does that at every boot and tells you when
+     one more reboot is needed. More on OpenCore machines:
+     [README-Hackintosh.md](README-Hackintosh.md).
    - **To disarm, delete that key (or run `--disarm`) and reboot.** The EFI partition can
      be edited from another OS if this one no longer boots.
 
@@ -252,7 +259,8 @@ the process.
 ./install.sh --uninstall
 ```
 
-This deactivates the driver and removes `/Applications/ASFW.app`. If it reports state
+This deactivates the driver and removes `/Applications/ASFW.app`, the login agent and the boot
+daemons (the boot check of `--install-boot-check` too). It does not disarm the controller. If it reports state
 left over, reboot.
 
 ## Over ssh

@@ -85,7 +85,8 @@ in the app, or telemetry showing packets, does not establish playback or capture
 
 The host's FireWire card matters as much as the device. [README-PCIe-Cards.md](README-PCIe-Cards.md)
 lists the PCIe cards this fork has been tested with, how to identify a card's chip, and
-what to check on a new one.
+what to check on a new one. [README-Hackintosh.md](README-Hackintosh.md) covers what is specific
+to OpenCore machines: arming and the PCI path that moves, VT-d, hybrid Intel CPUs, diagnostics.
 
 ## Testing and contributing
 

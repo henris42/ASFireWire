@@ -109,7 +109,8 @@ The XIO2213 has four isochronous contexts in each direction, and ASFireWire uses
 per streaming unit, so at most four units stream on one card. The bus fills first.
 
 Each card needs its own OpenCore arming entry: `asfw-opencore-arm.sh --report` lists every
-controller's path, and the script arms all of them.
+controller's path, and the script arms all of them. A card added later changes the PCI paths of
+the others; see "The PCI path moves" in [README-Hackintosh.md](README-Hackintosh.md).
 
 ## FireWire cables
 
