@@ -42,9 +42,11 @@ struct DeviceSettingsResultWire {
     uint32_t analogInputSwitches;
     uint32_t inputLevelRaw;
     uint32_t inputBoostRaw;
+    // Added the same way: there when the size is 64 bytes.
+    uint32_t hardwareMonitoring;
 } __attribute__((packed));
 
-static_assert(sizeof(DeviceSettingsResultWire) == 60,
+static_assert(sizeof(DeviceSettingsResultWire) == 64,
               "the app reads the extended fields by size, and its result buffer is 64 bytes");
 
 } // namespace ASFW::UserClient::Wire

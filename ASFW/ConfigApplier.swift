@@ -237,6 +237,7 @@ final class ConfigApplier {
             case .inputBoosts:
                 now = current.inputBoosts
                 target = value & current.analogInputSwitches
+            case .hardwareMonitoring: now = current.hardwareMonitoring
             }
             guard now != target else { continue }
             switch await connector.performDeviceSettings(guid: device.guid, set: setting, value: target) {
@@ -300,6 +301,7 @@ final class ConfigApplier {
     private static func shown(_ value: UInt32, _ setting: DeviceSetting) -> String {
         switch setting {
         case .inputLevels, .inputBoosts: return String(format: "0x%02X", value)
+        case .hardwareMonitoring: return value != 0 ? "on" : "off"
         case .clockSource, .opticalInputMode, .opticalOutputMode: return "\(value)"
         }
     }

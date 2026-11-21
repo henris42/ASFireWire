@@ -109,6 +109,7 @@ struct DeviceSettingsView: View {
         case .opticalInputMode, .opticalOutputMode: return DeviceOpticalMode(rawValue: value)?.title ?? "\(value)"
         case .inputLevels: return inputsTitle(value, set: "+4 dBu on", none: "−10 dBV on all")
         case .inputBoosts: return inputsTitle(value, set: "on for", none: "off")
+        case .hardwareMonitoring: return value != 0 ? "on" : "off"
         }
     }
 
@@ -217,6 +218,23 @@ struct DeviceSettingsView: View {
                 .frame(maxWidth: 520, alignment: .leading)
             }
             // Each change is built from the state last read: one at a time.
+            .disabled(viewModel.isBusy)
+        }
+
+        if snapshot.supports(.hardwareMonitoring) {
+            GroupBox("Internal Mixer") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("Hardware monitoring (the unit's own mixes)", isOn: Binding(
+                        get: { snapshot.hardwareMonitoring != 0 },
+                        set: { on in Task { await viewModel.apply(.hardwareMonitoring, value: on ? 1 : 0) } }
+                    ))
+                    Text("Off, the unit's four mix buses are muted and no mix comes back on Mix Return: an input is heard only where an application sends it. ASFW switches the mixes off when a unit attaches. On, the mixes pass as the unit holds them (set at its front panel or by another computer); ASFW does not change their levels.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .padding(6)
+                .frame(maxWidth: 520, alignment: .leading)
+            }
             .disabled(viewModel.isBusy)
         }
 

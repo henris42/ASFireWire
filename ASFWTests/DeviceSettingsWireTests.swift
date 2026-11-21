@@ -46,6 +46,17 @@ struct DeviceSettingsWireTests {
         #expect(snapshot.inputLevels == 0x03)
         #expect(snapshot.inputBoosts == 0x80)
         #expect(snapshot.inputLevelRaw == 0xA5A5_0003)
+        // 60 bytes: a driver without the monitor mixer field.
+        #expect(snapshot.hardwareMonitoring == 0)
+    }
+
+    @Test func theMixerResultCarriesHardwareMonitoring() throws {
+        let supported: UInt32 = 0b111_1110
+        let data = wire(baseWords(supported: supported) + [0x0000_00FF, 0, 0, 1])
+        let snapshot = try #require(DeviceSettingsSnapshot(wire: data))
+        #expect(data.count == DeviceSettingsSnapshot.mixerWireSize)
+        #expect(snapshot.supports(.hardwareMonitoring))
+        #expect(snapshot.hardwareMonitoring == 1)
     }
 
     @Test func aTravelerOffersAnalog5To8() throws {

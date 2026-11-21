@@ -170,6 +170,7 @@ kern_return_t DeviceSettingsHandler::GetDeviceSettingsResult(IOUserClientMethodA
     wire.analogInputSwitches = result.snapshot.analogInputSwitches;
     wire.inputLevelRaw = result.snapshot.inputLevelRaw;
     wire.inputBoostRaw = result.snapshot.inputBoostRaw;
+    wire.hardwareMonitoring = result.snapshot.hardwareMonitoring;
     args->structureOutput = OSData::withBytes(&wire, sizeof(wire));
     return args->structureOutput ? kIOReturnSuccess : kIOReturnNoMemory;
 }

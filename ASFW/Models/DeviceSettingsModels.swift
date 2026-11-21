@@ -18,6 +18,9 @@ enum DeviceSetting: UInt32, CaseIterable {
     case inputLevels = 4
     /// One bit per analog input: set = boost (+6 dB) on.
     case inputBoosts = 5
+    /// The unit's own monitor mixer: 0 = every mix bus muted and the mix
+    /// return off, 1 = the mixes pass as the unit holds them.
+    case hardwareMonitoring = 6
 
     var title: String {
         switch self {
@@ -26,6 +29,7 @@ enum DeviceSetting: UInt32, CaseIterable {
         case .opticalOutputMode: return "Optical Out"
         case .inputLevels: return "Input Levels"
         case .inputBoosts: return "Input Boost"
+        case .hardwareMonitoring: return "Hardware Monitoring"
         }
     }
 }
@@ -84,6 +88,8 @@ struct DeviceSettingsSnapshot: Equatable {
     var analogInputSwitches: UInt32 = 0
     var inputLevelRaw: UInt32 = 0
     var inputBoostRaw: UInt32 = 0
+    /// 0: every mix bus muted and the mix return off; 1: any of them passes.
+    var hardwareMonitoring: UInt32 = 0
 
     func supports(_ setting: DeviceSetting) -> Bool {
         supportedSettings & (1 << setting.rawValue) != 0
@@ -115,10 +121,12 @@ struct DeviceSettingsSnapshot: Equatable {
         return set ? mask | bit : mask & ~bit
     }
 
-    /// DeviceSettingsResultWire, little-endian: 48 bytes, or 60 with the analog
-    /// input switches (a driver that predates them sends 48).
+    /// DeviceSettingsResultWire, little-endian: 48 bytes, 60 with the analog
+    /// input switches, 64 with the monitor mixer (a driver that predates a
+    /// field sends the shorter structure).
     static let wireSize = 48
     static let extendedWireSize = 60
+    static let mixerWireSize = 64
 
     init() {}
 
@@ -141,6 +149,9 @@ struct DeviceSettingsSnapshot: Equatable {
             analogInputSwitches = u32(48)
             inputLevelRaw = u32(52)
             inputBoostRaw = u32(56)
+        }
+        if data.count >= Self.mixerWireSize {
+            hardwareMonitoring = u32(60)
         }
     }
 

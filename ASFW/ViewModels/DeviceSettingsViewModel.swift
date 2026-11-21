@@ -110,7 +110,7 @@ final class DeviceSettingsViewModel: ObservableObject {
             switch setting {
             case .opticalInputMode, .opticalOutputMode:
                 message = "Optical mode changed; the device's streams are republished with the new channel layout."
-            case .clockSource, .inputLevels, .inputBoosts:
+            case .clockSource, .inputLevels, .inputBoosts, .hardwareMonitoring:
                 message = nil
             }
             store.remember(guid: guid, setting: setting, value: value)
