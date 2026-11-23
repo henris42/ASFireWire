@@ -25,8 +25,8 @@ enum DeviceSetting: UInt32, CaseIterable {
     var title: String {
         switch self {
         case .clockSource: return "Clock Source"
-        case .opticalInputMode: return "Optical In"
-        case .opticalOutputMode: return "Optical Out"
+        case .opticalInputMode: return "Digital In"
+        case .opticalOutputMode: return "Digital Out"
         case .inputLevels: return "Input Levels"
         case .inputBoosts: return "Input Boost"
         case .hardwareMonitoring: return "Hardware Monitoring"
@@ -71,6 +71,13 @@ enum DeviceOpticalMode: UInt32, CaseIterable, Identifiable {
         case .adat: return "ADAT"
         case .spdif: return "TOSLINK (S/PDIF)"
         }
+    }
+
+    /// The title among a device's choices. A model whose optical port can carry
+    /// S/PDIF has that pair on its coax jacks while the port does not, so there
+    /// "off" is the coax choice; on a model without it the port is simply off.
+    func title(among choices: [DeviceOpticalMode]) -> String {
+        self == .off && choices.contains(.spdif) ? "Coax (S/PDIF)" : title
     }
 }
 

@@ -50,6 +50,15 @@ struct DeviceSettingsWireTests {
         #expect(snapshot.hardwareMonitoring == 0)
     }
 
+    @Test func offIsTheCoaxChoiceWhereTheOpticalPortCanCarrySpdif() {
+        // 828mkII, Traveler: S/PDIF is on coax unless the optical port takes it.
+        let withSpdif: [DeviceOpticalMode] = [.off, .adat, .spdif]
+        #expect(DeviceOpticalMode.off.title(among: withSpdif) == "Coax (S/PDIF)")
+        #expect(DeviceOpticalMode.adat.title(among: withSpdif) == "ADAT")
+        // 8pre: the optical port is ADAT or off.
+        #expect(DeviceOpticalMode.off.title(among: [.off, .adat]) == "Off")
+    }
+
     @Test func theMixerResultCarriesHardwareMonitoring() throws {
         let supported: UInt32 = 0b111_1110
         let data = wire(baseWords(supported: supported) + [0x0000_00FF, 0, 0, 1])

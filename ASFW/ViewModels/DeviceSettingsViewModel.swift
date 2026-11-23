@@ -109,7 +109,7 @@ final class DeviceSettingsViewModel: ObservableObject {
             snapshot = fresh
             switch setting {
             case .opticalInputMode, .opticalOutputMode:
-                message = "Optical mode changed; the device's streams are republished with the new channel layout."
+                message = "Digital I/O changed; the audio device takes the new channel layout."
             case .clockSource, .inputLevels, .inputBoosts, .hardwareMonitoring:
                 message = nil
             }

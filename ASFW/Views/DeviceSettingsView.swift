@@ -106,7 +106,9 @@ struct DeviceSettingsView: View {
     private func rememberedTitle(_ setting: DeviceSetting, _ value: UInt32) -> String {
         switch setting {
         case .clockSource: return DeviceClockSource(rawValue: value)?.title ?? "\(value)"
-        case .opticalInputMode, .opticalOutputMode: return DeviceOpticalMode(rawValue: value)?.title ?? "\(value)"
+        case .opticalInputMode, .opticalOutputMode:
+            return DeviceOpticalMode(rawValue: value)?
+                .title(among: viewModel.snapshot?.opticalModeChoices ?? [.spdif]) ?? "\(value)"
         case .inputLevels: return inputsTitle(value, set: "+4 dBu on", none: "−10 dBV on all")
         case .inputBoosts: return inputsTitle(value, set: "on for", none: "off")
         case .hardwareMonitoring: return value != 0 ? "on" : "off"
@@ -146,29 +148,29 @@ struct DeviceSettingsView: View {
         }
 
         if snapshot.supports(.opticalInputMode) || snapshot.supports(.opticalOutputMode) {
-            GroupBox("Optical Ports") {
+            GroupBox("Digital I/O") {
                 VStack(alignment: .leading, spacing: 12) {
                     if snapshot.supports(.opticalInputMode) {
-                        Picker("Optical in", selection: Binding(
+                        Picker("Digital in", selection: Binding(
                             get: { snapshot.opticalInputMode },
                             set: { value in Task { await viewModel.apply(.opticalInputMode, value: value) } }
                         )) {
                             ForEach(snapshot.opticalModeChoices) { mode in
-                                Text(mode.title).tag(mode.rawValue)
+                                Text(mode.title(among: snapshot.opticalModeChoices)).tag(mode.rawValue)
                             }
                         }
                     }
                     if snapshot.supports(.opticalOutputMode) {
-                        Picker("Optical out", selection: Binding(
+                        Picker("Digital out", selection: Binding(
                             get: { snapshot.opticalOutputMode },
                             set: { value in Task { await viewModel.apply(.opticalOutputMode, value: value) } }
                         )) {
                             ForEach(snapshot.opticalModeChoices) { mode in
-                                Text(mode.title).tag(mode.rawValue)
+                                Text(mode.title(among: snapshot.opticalModeChoices)).tag(mode.rawValue)
                             }
                         }
                     }
-                    Text("ADAT adds eight channels per direction at 1x rates; TOSLINK carries stereo S/PDIF. Changing a mode republishes the audio device with the new channel count.")
+                    Text("Where the unit's digital audio goes. Coax: stereo S/PDIF on the coax jacks, the optical port unused. TOSLINK: the same S/PDIF pair on the optical port instead. ADAT: the optical port carries ADAT (eight channels at 44.1 and 48 kHz, four at 88.2 and 96 kHz) and S/PDIF stays on coax. Changing to or from ADAT changes the audio device's channel count.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }

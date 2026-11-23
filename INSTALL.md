@@ -105,10 +105,10 @@ are deliberately not kept.
 
 ## Device settings and the login agent
 
-The app's **Device Settings** page sets a MOTU device's clock source, what its optical
-ports carry (ADAT or TOSLINK S/PDIF) and its analog input levels, and under **Diagnostics**
-the driver's log level (see "Log level and start steps"). Changing an optical mode changes the channel
-count, so the audio device is republished with the new layout. Every change is remembered
+The app's **Device Settings** page sets a MOTU device's clock source, its digital I/O
+(S/PDIF on coax, or the optical port as ADAT or TOSLINK S/PDIF) and its analog input levels, and under **Diagnostics**
+the driver's log level (see "Log level and start steps"). Changing to or from ADAT changes the channel
+count of the audio device, in place. Every change is remembered
 per device GUID, in the app's preferences.
 
 **Internal mixer (828mkII).** The unit has a monitor mixer of its own (CueMix), which keeps
